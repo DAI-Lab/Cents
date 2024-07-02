@@ -1,6 +1,6 @@
 # Synthetic Household-Level Electricity Load Timeseries Generation
 
-![DAI Logo](docs/images/dai_logo.png)
+<img src="docs/images/dai_logo.png" alt="DAI Logo" width="100" height="100">
 
 Repository for experimentation on algorithms for synthetic household-level electricity load timeseries generation.
 
@@ -65,4 +65,9 @@ datasets:
 The Pecan Street Dataset can be downloaded [here](https://www.pecanstreet.org/dataport/).
 
 Note: Access to the dataset requires a working university account. Metadata reports and the data dictionary can also be found on the Pecan Street Dataport website.
+
+## License
+
+This project is licensed under the MIT License. For more details, refer to the [LICENSE](LICENSE) file.
+
 
