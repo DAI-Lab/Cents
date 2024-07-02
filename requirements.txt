@@ -1,0 +1,11 @@
+numpy
+openai
+pandas
+matplotlib
+scikit-learn
+tiktoken
+transformers
+torch
+accelerate
+torch
+pyyaml
