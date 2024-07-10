@@ -5,7 +5,6 @@ import os
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-
 class Dataset:
     def __init__(self, name, config_path="config/config.yaml"):
         self.name = name
@@ -49,8 +48,4 @@ class PecanStreetDataset(Dataset):
     def format_data(self, data):
         data = super().format_data(data)
         return data
-    
-if __name__ == "__main__":
-    data = PecanStreetDataset(geography="california")
-    print(data.data.head())
     

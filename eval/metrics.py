@@ -5,7 +5,8 @@ import pandas as pd
 def K(x_i, y_j, sigma):
     return np.exp((-np.abs(x_i - y_j) ** 2) / (2 * (sigma ** 2)))
 
-def max_mean_discrepancy(X, Y, sigma):
+
+def max_mean_discrepancy(X, Y, sigma=1.0):
     """
     Compute the Maximum Mean Discrepancy (MMD) between two time series.
 
@@ -33,8 +34,8 @@ def max_mean_discrepancy(X, Y, sigma):
     N = len(X)
     M = len(Y)
 
-    term_1 = sum([sum([K(x_i, x_j) for x_j in X]) for x_i in X])
-    term_2 = sum([sum([K(x_i, y_j) for y_j in Y]) for x_i in X])
-    term_3 = sum([sum([K(y_i, y_j) for y_j in Y]) for y_i in Y])
+    term_1 = sum([sum([K(x_i, x_j, sigma) for x_j in X]) for x_i in X])
+    term_2 = sum([sum([K(x_i, y_j, sigma) for y_j in Y]) for x_i in X])
+    term_3 = sum([sum([K(y_i, y_j, sigma) for y_j in Y]) for y_i in Y])
 
     return ((1 / N ** 2) * term_1 - (2 / M * N) * term_2 + (1 / M ** 2) * term_3) ** 0.5
