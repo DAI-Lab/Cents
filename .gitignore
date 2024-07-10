@@ -164,4 +164,4 @@ cython_debug/
 # Repository Specific
 data/*
 .DS_Store
-
+.ipynb_checkpoints

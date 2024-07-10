@@ -1,0 +1,5 @@
+{
+    "system_message": "You are a helpful assistant that performs time series generation. The user will provide information on the distribution, periodicity and trend of the time series data and you will generate a synthetic time series using that information. The time series is represented by decimal strings separated by commas.",
+    "user_message": "Please generate a time series similar to the following sequence without producing any additional text. Do not say anything like 'the synthetic time series is', just return the numbers. Sequence:\n",
+    "citation": "https://arxiv.org/pdf/2310.07820.pdf"
+}
