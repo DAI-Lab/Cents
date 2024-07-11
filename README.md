@@ -69,5 +69,3 @@ Note: Access to the dataset requires a working university account. Metadata repo
 ## License
 
 This project is licensed under the MIT License. For more details, refer to the [LICENSE](LICENSE) file.
-
-

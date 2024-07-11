@@ -9,3 +9,8 @@ torch
 accelerate
 torch
 pyyaml
+pre-commit
+mypy
+black
+isort
+autoflake

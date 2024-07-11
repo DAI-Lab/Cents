@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import json
-import os
 import logging
+import os
 
 import tiktoken
 import torch
@@ -10,8 +10,7 @@ from openai import OpenAI
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 PROMPT_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    'gpt_messages.json'
+    os.path.dirname(os.path.abspath(__file__)), "gpt_messages.json"
 )
 
 PROMPTS = json.load(open(PROMPT_PATH))
@@ -26,7 +25,7 @@ DEFAULT_EOS_TOKEN = "</s>"
 DEFAULT_UNK_TOKEN = "<unk>"
 DEFAULT_PAD_TOKEN = "<pad>"
 
-DEFAULT_MODEL = 'mistralai/Mistral-7B-Instruct-v0.2'
+DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 
 
 class GPT:
@@ -41,7 +40,7 @@ class GPT:
             String to separate each element in values. Default to `','`.
     """
 
-    def __init__(self, name='gpt-4o', chat=True, sep=','):
+    def __init__(self, name="gpt-4o", chat=True, sep=","):
         self.name = name
         self.chat = chat
         self.sep = sep
@@ -57,8 +56,17 @@ class GPT:
         valid_tokens.extend(self.tokenizer.encode(self.sep))
         self.logit_bias = {token: BIAS for token in valid_tokens}
 
-    def generate(self, text, length=1, temp=1, top_p=1, logprobs=False, top_logprobs=None,
-                 samples=1, seed=None):
+    def generate(
+        self,
+        text,
+        length=1,
+        temp=1,
+        top_p=1,
+        logprobs=False,
+        top_logprobs=None,
+        samples=1,
+        seed=None,
+    ):
         """Use GPT to forecast a signal.
 
         Args:
@@ -92,16 +100,16 @@ class GPT:
                 * Optionally, a list of the output tokens' log probabilities.
         """
         input_length = len(self.tokenizer.encode(text))
-        average_length = (input_length + 1) // len(text.split(','))
+        average_length = (input_length + 1) // len(text.split(","))
         max_tokens = average_length * length
 
         if self.chat:
-            message = ' '.join([PROMPTS['user_message'], text, self.sep])
+            message = " ".join([PROMPTS["user_message"], text, self.sep])
             response = self.client.chat.completions.create(
                 model=self.name,
                 messages=[
-                    {"role": "system", "content": PROMPTS['system_message']},
-                    {"role": "user", "content": message}
+                    {"role": "system", "content": PROMPTS["system_message"]},
+                    {"role": "user", "content": message},
                 ],
                 max_tokens=max_tokens,
                 temperature=temp,
@@ -112,7 +120,7 @@ class GPT:
             responses = [choice.message.content for choice in response.choices]
 
         else:
-            message = ' '.join(text, self.sep)
+            message = " ".join(text, self.sep)
             response = self.client.completions.create(
                 model=self.name,
                 prompt=message,
@@ -121,7 +129,7 @@ class GPT:
                 logprobs=logprobs,
                 top_logprobs=top_logprobs,
                 logit_bias=self.logit_bias,
-                n=samples
+                n=samples,
             )
             responses = [choice.text for choice in response.choices]
 
@@ -130,7 +138,8 @@ class GPT:
             return responses, probs
 
         return responses
-    
+
+
 class HF:
     """Prompt Pretrained models on HuggingFace to forecast a time series.
 
@@ -141,7 +150,7 @@ class HF:
             String to separate each element in values. Default to `','`.
     """
 
-    def __init__(self, name=DEFAULT_MODEL, sep=','):
+    def __init__(self, name=DEFAULT_MODEL, sep=","):
         self.name = name
         self.sep = sep
 
@@ -159,7 +168,9 @@ class HF:
             special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
 
         self.tokenizer.add_special_tokens(special_tokens_dict)
-        self.tokenizer.pad_token = self.tokenizer.eos_token  # indicate the end of the time series
+        self.tokenizer.pad_token = (
+            self.tokenizer.eos_token
+        )  # indicate the end of the time series
 
         # invalid tokens
         valid_tokens = []
@@ -168,8 +179,9 @@ class HF:
             valid_tokens.append(token)
 
         valid_tokens.append(self.tokenizer.convert_tokens_to_ids(self.sep))
-        self.invalid_tokens = [[i]
-                               for i in range(len(self.tokenizer) - 1) if i not in valid_tokens]
+        self.invalid_tokens = [
+            [i] for i in range(len(self.tokenizer) - 1) if i not in valid_tokens
+        ]
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.name,
@@ -179,7 +191,9 @@ class HF:
 
         self.model.eval()
 
-    def forecast(self, text, length=1, temp=1, top_p=1, raw=False, samples=1, padding=0):
+    def forecast(
+        self, text, length=1, temp=1, top_p=1, raw=False, samples=1, padding=0
+    ):
         """Use GPT to forecast a signal.
 
         Args:
@@ -206,13 +220,10 @@ class HF:
                 * List of forecasted signal values.
                 * Optionally, a list of dictionaries for raw output.
         """
-        tokenized_input = self.tokenizer(
-            [text],
-            return_tensors="pt"
-        ).to("cuda")
+        tokenized_input = self.tokenizer([text], return_tensors="pt").to("cuda")
 
-        input_length = tokenized_input['input_ids'].shape[1]
-        average_length = input_length / len(text.split(','))
+        input_length = tokenized_input["input_ids"].shape[1]
+        average_length = input_length / len(text.split(","))
         max_tokens = (average_length + padding) * length
 
         generate_ids = self.model.generate(
@@ -229,7 +240,7 @@ class HF:
         responses = self.tokenizer.batch_decode(
             generate_ids[:, input_length:],
             skip_special_tokens=True,
-            clean_up_tokenization_spaces=False
+            clean_up_tokenization_spaces=False,
         )
 
         if raw:

@@ -1,9 +1,11 @@
-import yaml
-import pandas as pd
 import os
-from typing import Tuple, List, Any
+from typing import List, Tuple
+
+import pandas as pd
+import yaml
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 class Dataset:
     def __init__(self, name: str, config_path: str = "config/config.yaml"):
@@ -66,7 +68,9 @@ class Dataset:
 
 
 class PecanStreetDataset(Dataset):
-    def __init__(self, geography: str = "newyork", config_path: str = "config/config.yaml"):
+    def __init__(
+        self, geography: str = "newyork", config_path: str = "config/config.yaml"
+    ):
         """
         Initialize the PecanStreetDataset with a specific geography and configuration path.
 
@@ -76,7 +80,7 @@ class PecanStreetDataset(Dataset):
         """
         self.geography = geography
         super().__init__(name="pecanstreetdata", config_path=config_path)
-        
+
     def load_data(self) -> pd.DataFrame:
         """
         Load the Pecan Street dataset.
@@ -91,7 +95,7 @@ class PecanStreetDataset(Dataset):
         except Exception as e:
             print(f"Failed to load data from {data_file_path}: {e}")
             return pd.DataFrame()
-        
+
     def format_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Format the Pecan Street dataset by selecting specific columns.
