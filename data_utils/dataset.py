@@ -110,5 +110,13 @@ class PecanStreetDataset(Dataset):
         return data
 
     def get_user_data(self, user_id: int) -> pd.DataFrame:
+        """
+        Select data from a specific user.
 
-        return self.data["id" == user_id]
+        Args:
+            user_id: The desired user's id.
+
+        Returns:
+            A pandas DataFrame with the selected user data.
+        """
+        return self.data[self.data["dataid"] == user_id]
