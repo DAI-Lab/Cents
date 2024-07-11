@@ -108,3 +108,7 @@ class PecanStreetDataset(Dataset):
         """
         data = super().format_data(data)
         return data
+
+    def get_user_data(self, user_id: int) -> pd.DataFrame:
+
+        return self.data["id" == user_id]
