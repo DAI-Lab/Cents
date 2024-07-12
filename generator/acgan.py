@@ -90,8 +90,8 @@ class ACGAN:
         self.learning_rate = learning_rate
         self.weight_path = weight_path
 
-        self.generator = Generator(noise_dim, day_dim, month_dim, output_dim).cuda()
-        self.discriminator = Discriminator(output_dim, day_dim, month_dim).cuda()
+        self.generator = Generator(noise_dim, day_dim, month_dim, output_dim).to(device)
+        self.discriminator = Discriminator(output_dim, day_dim, month_dim).to(device)
 
         self.adversarial_loss = nn.BCELoss()
         self.auxiliary_loss = nn.CrossEntropyLoss()
@@ -232,8 +232,8 @@ class ACGAN:
         num_samples = labels[0].shape[0]
         z = np.random.normal(0, 1, size=[num_samples, self.code_size])
         return self._generate(
-            [torch.tensor(z, dtype=torch.float32).cuda()]
-            + [torch.tensor(l, dtype=torch.long).cuda() for l in labels]
+            [torch.tensor(z, dtype=torch.float32).to(device)]
+            + [torch.tensor(l, dtype=torch.long).to(device) for l in labels]
         )
 
     def generate_by_date(self, num_samples, starting_date_str="2013-01-01"):
