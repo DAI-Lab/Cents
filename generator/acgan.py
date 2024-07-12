@@ -90,8 +90,8 @@ class ACGAN:
         self.learning_rate = learning_rate
         self.weight_path = weight_path
 
-        self.generator = Generator(noise_dim, day_dim, month_dim, output_dim).to(device)
-        self.discriminator = Discriminator(output_dim, day_dim, month_dim).to(device)
+        self.generator = Generator(noise_dim, day_dim, month_dim, output_dim).cuda()
+        self.discriminator = Discriminator(output_dim, day_dim, month_dim).cuda()
 
         self.adversarial_loss = nn.BCELoss()
         self.auxiliary_loss = nn.CrossEntropyLoss()
