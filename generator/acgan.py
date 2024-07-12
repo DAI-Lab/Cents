@@ -11,6 +11,10 @@ from tensorboardX import SummaryWriter
 from torch.autograd import Variable
 from tqdm import tqdm
 
+from data_utils.dataset import prepare_dataloader
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 class Generator(nn.Module):
     def __init__(self, noise_dim, day_dim, month_dim, output_dim):
@@ -99,115 +103,125 @@ class ACGAN:
             self.discriminator.parameters(), lr=self.learning_rate, betas=(0.5, 0.999)
         )
 
-    def train(self, x_train, x_val, num_epoch=5):
-        summary_writer = SummaryWriter()
-        self.gen_losses = []
-        self.dis_losses = []
-        self.mmd_losses = []
+        def train(self, x_train, x_val, num_epoch=5):
+            summary_writer = SummaryWriter()
+            self.gen_losses = []
+            self.dis_losses = []
+            self.mmd_losses = []
 
-        train_samples, month_label, day_label = x_train
-        num_train = train_samples.shape[0]
-        step = 0
+            train_loader = prepare_dataloader(x_train, self.batch_size)
+            val_loader = prepare_dataloader(x_val, self.batch_size, shuffle=False)
 
-        index_array = np.arange(num_train)
-        validation_data = x_val
+            step = 0
 
-        for epoch in range(num_epoch):
-            np.random.shuffle(index_array)
-            for i in tqdm(
-                range(num_train // self.batch_size), desc=f"Epoch {epoch + 1}"
-            ):
-                current_index = index_array[
-                    i * self.batch_size : (i + 1) * self.batch_size
-                ]
-                time_series_batch = torch.tensor(
-                    train_samples[current_index], dtype=torch.float32
-                ).cuda()
-                month_label_batch = torch.tensor(
-                    month_label[current_index], dtype=torch.long
-                ).cuda()
-                day_label_batch = torch.tensor(
-                    day_label[current_index], dtype=torch.long
-                ).cuda()
-
-                noise = torch.randn((self.batch_size, self.code_size)).cuda()
-                generated_time_series = self.generator(
-                    noise, day_label_batch, month_label_batch
-                )
-
-                soft_zero, soft_one = 0, 0.95
-
-                self.optimizer_D.zero_grad()
-                real_pred, real_day, real_month = self.discriminator(time_series_batch)
-                fake_pred, fake_day, fake_month = self.discriminator(
-                    generated_time_series.detach()
-                )
-
-                d_real_loss = (
-                    self.adversarial_loss(
-                        real_pred, torch.ones_like(real_pred) * soft_one
+            for epoch in range(num_epoch):
+                for i, (
+                    time_series_batch,
+                    month_label_batch,
+                    day_label_batch,
+                ) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}")):
+                    time_series_batch, month_label_batch, day_label_batch = (
+                        time_series_batch.to(device),
+                        month_label_batch.to(device),
+                        day_label_batch.to(device),
                     )
-                    + self.auxiliary_loss(real_day, day_label_batch)
-                    + self.auxiliary_loss(real_month, month_label_batch)
-                )
-
-                d_fake_loss = (
-                    self.adversarial_loss(
-                        fake_pred, torch.ones_like(fake_pred) * soft_zero
+                    noise = torch.randn((self.batch_size, self.code_size)).to(device)
+                    generated_time_series = self.generator(
+                        noise, day_label_batch, month_label_batch
                     )
-                    + self.auxiliary_loss(fake_day, day_label_batch)
-                    + self.auxiliary_loss(fake_month, month_label_batch)
-                )
 
-                d_loss = 0.5 * (d_real_loss + d_fake_loss)
-                d_loss.backward()
-                self.optimizer_D.step()
+                    soft_zero, soft_one = 0, 0.95
 
-                self.optimizer_G.zero_grad()
-                noise = torch.randn((self.batch_size, self.code_size)).cuda()
-                gen_day_labels = torch.randint(0, 7, (self.batch_size,)).cuda()
-                gen_month_labels = torch.randint(0, 12, (self.batch_size,)).cuda()
-                generated_time_series = self.generator(
-                    noise, gen_day_labels, gen_month_labels
-                )
-
-                validity, pred_day, pred_month = self.discriminator(
-                    generated_time_series
-                )
-
-                g_loss = (
-                    self.adversarial_loss(
-                        validity, torch.ones_like(validity) * soft_one
+                    self.optimizer_D.zero_grad()
+                    real_pred, real_day, real_month = self.discriminator(
+                        time_series_batch
                     )
-                    + self.auxiliary_loss(pred_day, gen_day_labels)
-                    + self.auxiliary_loss(pred_month, gen_month_labels)
-                )
+                    fake_pred, fake_day, fake_month = self.discriminator(
+                        generated_time_series.detach()
+                    )
 
-                g_loss.backward()
-                self.optimizer_G.step()
+                    d_real_loss = (
+                        self.adversarial_loss(
+                            real_pred, torch.ones_like(real_pred) * soft_one
+                        )
+                        + self.auxiliary_loss(real_day, day_label_batch)
+                        + self.auxiliary_loss(real_month, month_label_batch)
+                    )
 
-                summary_writer.add_scalars(
-                    "data/train_loss",
-                    {"gen": g_loss.item(), "dis": d_loss.item()},
-                    global_step=step,
-                )
+                    d_fake_loss = (
+                        self.adversarial_loss(
+                            fake_pred, torch.ones_like(fake_pred) * soft_zero
+                        )
+                        + self.auxiliary_loss(fake_day, day_label_batch)
+                        + self.auxiliary_loss(fake_month, month_label_batch)
+                    )
 
-                step += 1
+                    d_loss = 0.5 * (d_real_loss + d_fake_loss)
+                    d_loss.backward()
+                    self.optimizer_D.step()
 
-            x_val = torch.tensor(validation_data[0], dtype=torch.float32).cuda()
-            y_val = validation_data[1:3]
-            x_generated = self.generate(y_val)
-            mmd_loss_vec = np.zeros(shape=(x_val.shape[-1]))
-            for j in range(x_val.shape[-1]):
-                mmd_loss_vec[j] = mmd_loss(
-                    x_val[:, :, j], x_generated[:, :, j], weight=1.0
-                )
-            summary_writer.add_scalars(
-                "data/mmd_loss",
-                {"load": mmd_loss_vec[0], "pv": mmd_loss_vec[1]},
-                global_step=epoch,
-            )
-        self.save_weight()
+                    self.optimizer_G.zero_grad()
+                    noise = torch.randn((self.batch_size, self.code_size)).to(device)
+                    gen_day_labels = torch.randint(0, 7, (self.batch_size,)).to(device)
+                    gen_month_labels = torch.randint(0, 12, (self.batch_size,)).to(
+                        device
+                    )
+                    generated_time_series = self.generator(
+                        noise, gen_day_labels, gen_month_labels
+                    )
+
+                    validity, pred_day, pred_month = self.discriminator(
+                        generated_time_series
+                    )
+
+                    g_loss = (
+                        self.adversarial_loss(
+                            validity, torch.ones_like(validity) * soft_one
+                        )
+                        + self.auxiliary_loss(pred_day, gen_day_labels)
+                        + self.auxiliary_loss(pred_month, gen_month_labels)
+                    )
+
+                    g_loss.backward()
+                    self.optimizer_G.step()
+
+                    summary_writer.add_scalars(
+                        "data/train_loss",
+                        {"gen": g_loss.item(), "dis": d_loss.item()},
+                        global_step=step,
+                    )
+
+                    step += 1
+
+                # Validation step
+                with torch.no_grad():
+                    for (
+                        time_series_batch,
+                        month_label_batch,
+                        day_label_batch,
+                    ) in val_loader:
+                        time_series_batch, month_label_batch, day_label_batch = (
+                            time_series_batch.to(device),
+                            month_label_batch.to(device),
+                            day_label_batch.to(device),
+                        )
+                        x_generated = self.generate(
+                            [time_series_batch, month_label_batch, day_label_batch]
+                        )
+                        mmd_loss_vec = np.zeros(shape=(time_series_batch.shape[-1]))
+                        for j in range(time_series_batch.shape[-1]):
+                            mmd_loss_vec[j] = mmd_loss(
+                                time_series_batch[:, :, j],
+                                x_generated[:, :, j],
+                                weight=1.0,
+                            )
+                        summary_writer.add_scalars(
+                            "data/mmd_loss",
+                            {"load": mmd_loss_vec[0], "pv": mmd_loss_vec[1]},
+                            global_step=epoch,
+                        )
+
+            self.save_weight()
 
     def _generate(self, x):
         self.generator.eval()

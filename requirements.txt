@@ -8,6 +8,8 @@ transformers
 torch
 accelerate
 torch
+torchvision
+tensorboard
 pyyaml
 pre-commit
 mypy

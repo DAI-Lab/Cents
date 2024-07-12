@@ -1,25 +1,34 @@
 import os
+import warnings
 from typing import List, Tuple
 
+import numpy as np
 import pandas as pd
+import torch
 import yaml
+from torch.utils.data import DataLoader, Dataset
 
+warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class Dataset:
-    def __init__(self, name: str, config_path: str = "config/config.yaml"):
+class PecanStreetDataset(Dataset):
+    def __init__(
+        self, geography: str = "newyork", config_path: str = "config/config.yaml"
+    ):
         """
-        Initialize the Dataset with a name and configuration path.
+        Initialize the PecanStreetDataset with a specific geography and configuration path.
 
         Args:
-            name: Name of the dataset.
+            geography: Geography of the dataset (e.g., 'newyork').
             config_path: Path to the configuration file.
         """
-        self.name = name
+        self.geography = geography
         self.config_path = os.path.join(ROOT_DIR, config_path)
+        self.name = "pecanstreet"
         self.path, self.columns = self._get_dataset_info()
-        self.data = self.get_data()
+        self.data = self.load_data()
 
     def _get_dataset_info(self) -> Tuple[str, List[str]]:
         """
@@ -37,52 +46,6 @@ class Dataset:
 
     def load_data(self) -> pd.DataFrame:
         """
-        Load the dataset. To be implemented by subclasses.
-
-        Returns:
-            A pandas DataFrame containing the dataset.
-        """
-        raise NotImplementedError("Subclasses should implement this method")
-
-    def format_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Format the dataset by selecting specific columns.
-
-        Args:
-            data: The raw dataset.
-
-        Returns:
-            A pandas DataFrame with the selected columns.
-        """
-        return data[self.columns]
-
-    def get_data(self) -> pd.DataFrame:
-        """
-        Get the formatted dataset.
-
-        Returns:
-            A pandas DataFrame with the formatted dataset.
-        """
-        data = self.load_data()
-        return self.format_data(data)
-
-
-class PecanStreetDataset(Dataset):
-    def __init__(
-        self, geography: str = "newyork", config_path: str = "config/config.yaml"
-    ):
-        """
-        Initialize the PecanStreetDataset with a specific geography and configuration path.
-
-        Args:
-            geography: Geography of the dataset (e.g., 'newyork').
-            config_path: Path to the configuration file.
-        """
-        self.geography = geography
-        super().__init__(name="pecanstreetdata", config_path=config_path)
-
-    def load_data(self) -> pd.DataFrame:
-        """
         Load the Pecan Street dataset.
 
         Returns:
@@ -91,22 +54,13 @@ class PecanStreetDataset(Dataset):
         data_file_path = f"/{self.path}15minute_data_{self.geography}.csv"
         try:
             data = pd.read_csv(data_file_path)
-            return data
+            data = data[self.columns]
         except Exception as e:
             print(f"Failed to load data from {data_file_path}: {e}")
             return pd.DataFrame()
 
-    def format_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Format the Pecan Street dataset by selecting specific columns.
-
-        Args:
-            data: The raw dataset.
-
-        Returns:
-            A pandas DataFrame with the selected columns.
-        """
-        data = super().format_data(data)
+        data["month"] = pd.to_datetime(data["local_15min"]).dt.month
+        data["day"] = pd.to_datetime(data["local_15min"]).dt.weekday
         return data
 
     def get_user_data(self, user_id: int) -> pd.DataFrame:
@@ -119,6 +73,24 @@ class PecanStreetDataset(Dataset):
         Returns:
             A pandas DataFrame with the selected user data.
         """
-        user_data = self.data[self.data["dataid"] == user_id]
+        user_data = self.data[self.data["dataid"] == user_id].copy()
         user_data.reset_index(inplace=True)
         return user_data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = self.data.iloc[idx]
+        time_series = sample["grid"].astype(np.float32)
+        month = sample["month"]
+        day = sample["day"]
+        return (
+            torch.tensor(time_series),
+            torch.tensor(month, dtype=torch.long),
+            torch.tensor(day, dtype=torch.long),
+        )
+
+
+def prepare_dataloader(dataset, batch_size, shuffle=True):
+    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
