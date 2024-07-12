@@ -119,4 +119,6 @@ class PecanStreetDataset(Dataset):
         Returns:
             A pandas DataFrame with the selected user data.
         """
-        return self.data[self.data["dataid"] == user_id]
+        user_data = self.data[self.data["dataid"] == user_id]
+        user_data.reset_index(inplace=True)
+        return user_data

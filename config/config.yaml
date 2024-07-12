@@ -5,3 +5,4 @@ datasets:
   goinerdata:
     path: "Users/michaelfuest/Research/DAI/EnData/data/goiner/"
     columns: ["pv", "id"]
+device: cpu
