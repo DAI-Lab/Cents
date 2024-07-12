@@ -14,42 +14,45 @@ from tqdm import tqdm
 from data_utils.dataset import prepare_dataloader
 from eval.loss import mmd_loss
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cpu"
 
 
 class Generator(nn.Module):
-    def __init__(self, noise_dim, embedding_dim, final_window_length):
+    def __init__(self, noise_dim, embedding_dim, final_window_length, input_dim):
         super(Generator, self).__init__()
         self.noise_dim = noise_dim
         self.embedding_dim = embedding_dim
         self.final_window_length = final_window_length
+        self.input_dim = input_dim
 
         self.month_embedding = nn.Embedding(12, embedding_dim)
         self.day_embedding = nn.Embedding(7, embedding_dim)
-        
+
         self.fc = nn.Linear(noise_dim + 2 * embedding_dim, final_window_length * 64)
-        
+
         self.conv_transpose_layers = nn.Sequential(
-            nn.BatchNorm1d(final_window_length),
-            nn.ReLU(True),
-            nn.ConvTranspose1d(64, 32, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm1d(32),
-            nn.ReLU(True),
-            nn.ConvTranspose1d(32, 16, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm1d(16),
-            nn.ReLU(True),
-            nn.ConvTranspose1d(16, 1, kernel_size=4, stride=2, padding=1),
-            nn.Tanh()
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose2d(64, 32, kernel_size=(4, 1), stride=(2, 1), padding=(1, 0)),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose2d(32, 16, kernel_size=(4, 1), stride=(2, 1), padding=(1, 0)),
+            nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose2d(16, input_dim, kernel_size=(4, 1), stride=(2, 1), padding=(1, 0)),
+            nn.Sigmoid()
         )
 
-    def forward(self, noise, month_labels, day_labels):
+    def forward(self, noise, day_labels, month_labels):
         month_embedded = self.month_embedding(month_labels).view(-1, self.embedding_dim)
         day_embedded = self.day_embedding(day_labels).view(-1, self.embedding_dim)
         
         x = torch.cat((noise, month_embedded, day_embedded), dim=1)
         x = self.fc(x)
-        x = x.view(-1, 64, self.final_window_length)
+        x = x.view(-1, 64, self.final_window_length, 1)
         x = self.conv_transpose_layers(x)
+        x = x.squeeze(3)  # Squeeze the last dimension
         
         return x
 
@@ -89,7 +92,7 @@ class ACGAN:
 
         final_window_length = output_dim 
 
-        self.generator = Generator(noise_dim, embedding_dim, final_window_length).cuda()
+        self.generator = Generator(noise_dim, embedding_dim, final_window_length, 1).to(device)
         self.discriminator = Discriminator(final_window_length).cuda()
 
         self.adversarial_loss = nn.BCELoss()
