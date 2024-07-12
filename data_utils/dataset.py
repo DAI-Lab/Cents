@@ -1,12 +1,11 @@
 import os
 import warnings
 from typing import List, Tuple
-
 import numpy as np
 import pandas as pd
 import torch
+from torch.utils.data import DataLoader, Dataset, random_split
 import yaml
-from torch.utils.data import DataLoader, Dataset
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,9 +13,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class PecanStreetDataset(Dataset):
-    def __init__(
-        self, geography: str = "newyork", config_path: str = "config/config.yaml"
-    ):
+    def __init__(self, geography: str = "newyork", config_path: str = "config/config.yaml"):
         """
         Initialize the PecanStreetDataset with a specific geography and configuration path.
 
@@ -61,7 +58,35 @@ class PecanStreetDataset(Dataset):
 
         data["month"] = pd.to_datetime(data["local_15min"]).dt.month
         data["day"] = pd.to_datetime(data["local_15min"]).dt.weekday
+        data = self.preprocess_data(data)
         return data
+    
+    def preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalize the 'grid' column in the data based on groupings of 'dataid', 'month', and 'day'.
+
+        Args:
+            data (pd.DataFrame): The input data with columns 'dataid', 'month', 'day', and 'grid'.
+
+        Returns:
+            pd.DataFrame: The normalized data.
+        """
+        if not all(col in data.columns for col in ['dataid', 'month', 'day', 'grid']):
+            raise ValueError("Input data must contain 'dataid', 'month', 'day', and 'grid' columns")
+        
+        grouped = data.groupby(['dataid', 'month', 'day'])
+
+        def normalize(group):
+            mean = group['grid'].mean()
+            std = group['grid'].std()
+            group['grid'] = (group['grid'] - mean) / std
+            return group
+
+        normalized_data = grouped.apply(normalize)
+        normalized_data = normalized_data.reset_index(drop=True)
+
+        return normalized_data
+
 
     def get_user_data(self, user_id: int) -> pd.DataFrame:
         """
@@ -92,6 +117,12 @@ class PecanStreetDataset(Dataset):
             torch.tensor(day, dtype=torch.long),
         )
 
-
 def prepare_dataloader(dataset, batch_size, shuffle=True):
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+
+def split_dataset(dataset: Dataset, val_split: float = 0.2, random_seed: int = 42):
+    val_size = int(len(dataset) * val_split)
+    train_size = len(dataset) - val_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=torch.Generator().manual_seed(random_seed))
+    return train_dataset, val_dataset
+

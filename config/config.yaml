@@ -1,8 +1,8 @@
 datasets:
   pecanstreet:
-    path: "Users/michaelfuest/Research/DAI/EnData/data/pecanstreet/"
+    path: "home/fuest/EnData/data/pecanstreet/"
     columns: ["dataid", "local_15min", "car1", "car2", "grid", "solar", "solar2"]
   goinerdata:
-    path: "Users/michaelfuest/Research/DAI/EnData/data/goiner/"
+    path: "home/fuest/EnData/data/pecanstreet/"
     columns: ["pv", "id"]
 device: cpu
