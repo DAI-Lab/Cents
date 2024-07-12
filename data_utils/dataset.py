@@ -75,6 +75,7 @@ class PecanStreetDataset(Dataset):
         """
         user_data = self.data[self.data["dataid"] == user_id].copy()
         user_data.reset_index(inplace=True)
+        user_data = user_data[["grid", "month", "day"]]
         return user_data
 
     def __len__(self):
