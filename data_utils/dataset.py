@@ -92,9 +92,9 @@ class PecanStreetDataset(Dataset):
         Returns:
             pd.DataFrame: The normalized data.
         """
-        data["month"] = pd.to_datetime(data["local_15min"]).dt.month
-        data["weekday"] = pd.to_datetime(data["local_15min"]).dt.weekday
-        data["date_day"] = pd.to_datetime(data["local_15min"]).dt.day
+        data["month"] = pd.to_datetime(data["local_15min"], utc=True).dt.month
+        data["weekday"] = pd.to_datetime(data["local_15min"], utc=True).dt.weekday
+        data["date_day"] = pd.to_datetime(data["local_15min"], utc=True).dt.day
 
         if not all(
             col in data.columns for col in ["dataid", "month", "weekday", "grid"]
