@@ -1,11 +1,12 @@
 import os
 import warnings
 from typing import List, Tuple
+
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split
 import yaml
+from torch.utils.data import DataLoader, Dataset, random_split
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -13,7 +14,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class PecanStreetDataset(Dataset):
-    def __init__(self, geography: str = "newyork", config_path: str = "config/config.yaml"):
+    def __init__(
+        self,
+        geography: str = "newyork",
+        config_path: str = "config/config.yaml",
+        normalize=False,
+    ):
         """
         Initialize the PecanStreetDataset with a specific geography and configuration path.
 
@@ -23,6 +29,7 @@ class PecanStreetDataset(Dataset):
         """
         self.geography = geography
         self.config_path = os.path.join(ROOT_DIR, config_path)
+        self.normalize = normalize
         self.name = "pecanstreet"
         self.path, self.columns = self._get_dataset_info()
         self.data = self.load_data()
@@ -59,7 +66,7 @@ class PecanStreetDataset(Dataset):
         data = self.preprocess_data(data)
 
         return data
-    
+
     def preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Normalize the 'grid' column in the data based on groupings of 'dataid', 'month', and 'weekday'.
@@ -74,30 +81,45 @@ class PecanStreetDataset(Dataset):
         data["weekday"] = pd.to_datetime(data["local_15min"]).dt.weekday
         data["date_day"] = pd.to_datetime(data["local_15min"]).dt.day
 
-        if not all(col in data.columns for col in ['dataid', 'month', 'weekday', 'grid']):
-            raise ValueError("Input data must contain 'dataid', 'month', 'weekday', and 'grid' columns")
-        
-        # normalize according to weekday month combo
-        grouped = data.groupby(['dataid', 'month', 'weekday'])
+        if not all(
+            col in data.columns for col in ["dataid", "month", "weekday", "grid"]
+        ):
+            raise ValueError(
+                "Input data must contain 'dataid', 'month', 'weekday', and 'grid' columns"
+            )
 
-        def normalize(group):
-            mean = group['grid'].mean()
-            std = group['grid'].std()
-            group['grid'] = (group['grid'] - mean) / std
-            return group
-
-        normalized_data = grouped.apply(normalize)
-        normalized_data = normalized_data.reset_index(drop=True)
-        data["grid"] = normalized_data["grid"]
-
-        # make grid column lists of 96 vals for each date day month combo
         grouped_data = data.groupby(["dataid", "month", "date_day", "weekday"])
         grouped_data = grouped_data["grid"].apply(list).reset_index()
 
         # Remove columns without full day of available data
-        filtered_data = grouped_data[grouped_data['grid'].apply(len) == 96]
-        return filtered_data
+        filtered_data = grouped_data[grouped_data["grid"].apply(len) == 96]
 
+        if self.normalize:
+
+            def calculate_stats(group):
+                all_values = np.concatenate(group["grid"].values)
+                return pd.Series(
+                    {"mean": np.mean(all_values), "std": np.std(all_values)}
+                )
+
+            grouped_stats = (
+                filtered_data.groupby(["dataid", "month", "weekday"])
+                .apply(calculate_stats)
+                .reset_index()
+            )
+            filtered_data = filtered_data.merge(
+                grouped_stats, on=["dataid", "month", "weekday"]
+            )
+
+            def normalize(grid, mean, std):
+                return [(val - mean) / std for val in grid]
+
+            filtered_data["grid"] = filtered_data.apply(
+                lambda row: normalize(row["grid"], row["mean"], row["std"]), axis=1
+            )
+            filtered_data = filtered_data.drop(columns=["mean", "std"])
+
+        return filtered_data
 
     def get_user_data(self, user_id: int) -> pd.DataFrame:
         """
@@ -128,12 +150,17 @@ class PecanStreetDataset(Dataset):
             torch.tensor(day, dtype=torch.long),
         )
 
+
 def prepare_dataloader(dataset, batch_size, shuffle=True):
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+
 
 def split_dataset(dataset: Dataset, val_split: float = 0.2, random_seed: int = 42):
     val_size = int(len(dataset) * val_split)
     train_size = len(dataset) - val_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=torch.Generator().manual_seed(random_seed))
+    train_dataset, val_dataset = random_split(
+        dataset,
+        [train_size, val_size],
+        generator=torch.Generator().manual_seed(random_seed),
+    )
     return train_dataset, val_dataset
-
