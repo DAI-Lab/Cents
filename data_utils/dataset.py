@@ -16,16 +16,17 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class PecanStreetDataset(Dataset):
     def __init__(
         self,
-        geography: str = "newyork",
+        geography: str = None,
         config_path: str = "config/config.yaml",
         normalize=False,
     ):
         """
-        Initialize the PecanStreetDataset with a specific geography and configuration path.
+        Initialize the PecanStreetDataset with a specific geography, configuration path and user.
 
         Args:
             geography: Geography of the dataset (e.g., 'newyork').
             config_path: Path to the configuration file.
+            normalize: Flag indicating whether data is normalized.
         """
         self.geography = geography
         self.config_path = os.path.join(ROOT_DIR, config_path)
@@ -55,16 +56,30 @@ class PecanStreetDataset(Dataset):
         Returns:
             A pandas DataFrame containing the dataset.
         """
-        data_file_path = f"/{self.path}15minute_data_{self.geography}.csv"
-        try:
-            data = pd.read_csv(data_file_path)
-            data = data[self.columns]
-        except Exception as e:
-            print(f"Failed to load data from {data_file_path}: {e}")
-            return pd.DataFrame()
+        if self.geography:
+            data_file_path = f"/{self.path}15minute_data_{self.geography}.csv"
+            try:
+                data = pd.read_csv(data_file_path)
+                data = data[self.columns]
+            except Exception as e:
+                print(f"Failed to load data from {data_file_path}: {e}")
+                return pd.DataFrame()
+        else:
+            ny_file_path = f"/{self.path}15minute_data_newyork.csv"
+            cali_file_path = f"/{self.path}15minute_data_california.csv"
+            austin_file_path = f"/{self.path}15minute_data_austin.csv"
+
+            try:
+                ny_data = pd.read_csv(ny_file_path)
+                cali_data = pd.read_csv(cali_file_path)
+                austin_data = pd.read_csv(austin_file_path)
+                data = pd.concat([ny_data, cali_data, austin_data], axis=0)
+                data = data[self.columns]
+            except Exception as e:
+                print(f"Failed to load full dataset!")
+                return pd.DataFrame()
 
         data = self.preprocess_data(data)
-
         return data
 
     def preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -121,9 +136,9 @@ class PecanStreetDataset(Dataset):
 
         return filtered_data
 
-    def get_user_data(self, user_id: int) -> pd.DataFrame:
+    def filter_by_user(self, user_id: int) -> None:
         """
-        Select data from a specific user.
+        Filter the dataset for a specific user.
 
         Args:
             user_id: The desired user's id.
@@ -134,7 +149,7 @@ class PecanStreetDataset(Dataset):
         user_data = self.data[self.data["dataid"] == user_id].copy()
         user_data.reset_index(inplace=True)
         user_data = user_data[["grid", "month", "weekday"]]
-        return user_data
+        self.data = user_data
 
     def __len__(self):
         return len(self.data)

@@ -5,4 +5,4 @@ datasets:
   goinerdata:
     path: "home/fuest/EnData/data/pecanstreet/"
     columns: ["pv", "id"]
-device: cpu
+#device: cpu
