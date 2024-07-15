@@ -10,9 +10,11 @@ accelerate
 torch
 torchvision
 tensorboard
+tensorboardX
 pyyaml
 pre-commit
 mypy
 black
 isort
 autoflake
+tensorflow

@@ -56,25 +56,29 @@ class PecanStreetDataset(Dataset):
             print(f"Failed to load data from {data_file_path}: {e}")
             return pd.DataFrame()
 
-        data["month"] = pd.to_datetime(data["local_15min"]).dt.month
-        data["day"] = pd.to_datetime(data["local_15min"]).dt.weekday
         data = self.preprocess_data(data)
+
         return data
     
     def preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Normalize the 'grid' column in the data based on groupings of 'dataid', 'month', and 'day'.
+        Normalize the 'grid' column in the data based on groupings of 'dataid', 'month', and 'weekday'.
 
         Args:
-            data (pd.DataFrame): The input data with columns 'dataid', 'month', 'day', and 'grid'.
+            data (pd.DataFrame): The input data with columns 'dataid', 'month', 'weekday', and 'grid'.
 
         Returns:
             pd.DataFrame: The normalized data.
         """
-        if not all(col in data.columns for col in ['dataid', 'month', 'day', 'grid']):
-            raise ValueError("Input data must contain 'dataid', 'month', 'day', and 'grid' columns")
+        data["month"] = pd.to_datetime(data["local_15min"]).dt.month
+        data["weekday"] = pd.to_datetime(data["local_15min"]).dt.weekday
+        data["date_day"] = pd.to_datetime(data["local_15min"]).dt.day
+
+        if not all(col in data.columns for col in ['dataid', 'month', 'weekday', 'grid']):
+            raise ValueError("Input data must contain 'dataid', 'month', 'weekday', and 'grid' columns")
         
-        grouped = data.groupby(['dataid', 'month', 'day'])
+        # normalize according to weekday month combo
+        grouped = data.groupby(['dataid', 'month', 'weekday'])
 
         def normalize(group):
             mean = group['grid'].mean()
@@ -84,8 +88,15 @@ class PecanStreetDataset(Dataset):
 
         normalized_data = grouped.apply(normalize)
         normalized_data = normalized_data.reset_index(drop=True)
+        data["grid"] = normalized_data["grid"]
 
-        return normalized_data
+        # make grid column lists of 96 vals for each date day month combo
+        grouped_data = data.groupby(["dataid", "month", "date_day", "weekday"])
+        grouped_data = grouped_data["grid"].apply(list).reset_index()
+
+        # Remove columns without full day of available data
+        filtered_data = grouped_data[grouped_data['grid'].apply(len) == 96]
+        return filtered_data
 
 
     def get_user_data(self, user_id: int) -> pd.DataFrame:
@@ -100,7 +111,7 @@ class PecanStreetDataset(Dataset):
         """
         user_data = self.data[self.data["dataid"] == user_id].copy()
         user_data.reset_index(inplace=True)
-        user_data = user_data[["grid", "month", "day"]]
+        user_data = user_data[["grid", "month", "weekday"]]
         return user_data
 
     def __len__(self):
@@ -108,9 +119,9 @@ class PecanStreetDataset(Dataset):
 
     def __getitem__(self, idx):
         sample = self.data.iloc[idx]
-        time_series = sample["grid"].astype(np.float32)
+        time_series = sample["grid"]
         month = sample["month"]
-        day = sample["day"]
+        day = sample["weekday"]
         return (
             torch.tensor(time_series),
             torch.tensor(month, dtype=torch.long),
