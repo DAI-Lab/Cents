@@ -5,7 +5,7 @@ from generator.acgan import ACGAN
 
 if __name__ == "__main__":
 
-    data = PecanStreetDataset(normalize=True, geography="austin")
+    data = PecanStreetDataset(normalize=True, user_id=661)
     train_dataset, val_dataset = split_dataset(data)
     model = ACGAN(
         input_dim=1,
@@ -15,4 +15,4 @@ if __name__ == "__main__":
         learning_rate=1e-4,
         weight_path="runs/",
     )
-    model.train(train_dataset, val_dataset, batch_size=32, num_epoch=25)
+    model.train(train_dataset, val_dataset, batch_size=32, num_epoch=100)

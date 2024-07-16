@@ -15,6 +15,7 @@ from data_utils.dataset import prepare_dataloader
 from eval.loss import mmd_loss
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cpu"
 
 
 class Generator(nn.Module):
@@ -22,9 +23,7 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.noise_dim = noise_dim
         self.embedding_dim = embedding_dim
-        self.final_window_length = (
-            final_window_length // 8
-        )  # Ensure the final window length is correctly calculated
+        self.final_window_length = final_window_length // 8
         self.input_dim = input_dim
 
         self.month_embedding = nn.Embedding(12, embedding_dim)
@@ -54,8 +53,12 @@ class Generator(nn.Module):
         )
 
     def forward(self, noise, day_labels, month_labels):
-        month_embedded = self.month_embedding(month_labels).view(-1, self.embedding_dim)
-        day_embedded = self.day_embedding(day_labels).view(-1, self.embedding_dim)
+        month_embedded = (
+            self.month_embedding(month_labels).view(-1, self.embedding_dim).to(device)
+        )
+        day_embedded = (
+            self.day_embedding(day_labels).view(-1, self.embedding_dim).to(device)
+        )
 
         x = torch.cat((noise, month_embedded, day_embedded), dim=1)
         x = self.fc(x)
@@ -85,12 +88,21 @@ class Discriminator(nn.Module):
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        x = x.unsqueeze(1)  # Adding channel dimension
+        x = x.unsqueeze(1)
         x = self.conv_layers(x)
-        x = x.view(x.size(0), -1)  # Flatten
+        x = x.view(x.size(0), -1)
         validity = torch.sigmoid(self.fc_discriminator(x))
         aux_day = self.softmax(self.fc_aux_day(x))
         aux_month = self.softmax(self.fc_aux_month(x))
+
+        if (
+            torch.isnan(validity).any()
+            or torch.isnan(aux_day).any()
+            or torch.isnan(aux_month).any()
+        ):
+            print("NaN detected in Discriminator output")
+            print(f"x stats: min={x.min()}, max={x.max()}, mean={x.mean()}")
+
         return validity, aux_day, aux_month
 
 
@@ -125,7 +137,10 @@ class ACGAN:
             self.generator.parameters(), lr=self.learning_rate, betas=(0.5, 0.999)
         )
         self.optimizer_D = optim.Adam(
-            self.discriminator.parameters(), lr=self.learning_rate, betas=(0.5, 0.999)
+            self.discriminator.parameters(),
+            lr=self.learning_rate,
+            betas=(0.5, 0.999),
+            weight_decay=1e-4,
         )
 
     def train(self, x_train, x_val, batch_size=32, num_epoch=5):
@@ -135,7 +150,7 @@ class ACGAN:
         self.mmd_losses = []
 
         train_loader = prepare_dataloader(x_train, batch_size)
-        val_loader = prepare_dataloader(x_val, batch_size, shuffle=False)
+        val_loader = prepare_dataloader(x_val, batch_size)
 
         step = 0
 
@@ -148,9 +163,7 @@ class ACGAN:
                     month_label_batch.to(device),
                     day_label_batch.to(device),
                 )
-                current_batch_size = time_series_batch.size(
-                    0
-                )  # Get the actual batch size
+                current_batch_size = time_series_batch.size(0)
                 noise = torch.randn((current_batch_size, self.code_size)).to(device)
                 generated_time_series = self.generator(
                     noise, day_label_batch, month_label_batch
@@ -182,32 +195,39 @@ class ACGAN:
 
                 d_loss = 0.5 * (d_real_loss + d_fake_loss)
                 d_loss.backward()
+                # print("Discriminator gradients:")
+                # for name, param in self.discriminator.named_parameters():
+                #   if param.grad is not None:
+                #      print(f"{name} - grad mean: {param.grad.mean()}, grad std: {param.grad.std()}")
+
                 self.optimizer_D.step()
-
-                self.optimizer_G.zero_grad()
-                noise = torch.randn((current_batch_size, self.code_size)).to(device)
-                gen_day_labels = torch.randint(0, 7, (current_batch_size,)).to(device)
-                gen_month_labels = torch.randint(5, 11, (current_batch_size,)).to(
-                    device
-                )
-                generated_time_series = self.generator(
-                    noise, gen_day_labels, gen_month_labels
-                )
-
-                validity, pred_day, pred_month = self.discriminator(
-                    generated_time_series.detach().squeeze()
-                )
-
-                g_loss = (
-                    self.adversarial_loss(
-                        validity, torch.ones_like(validity) * soft_one
+                for _ in range(10):
+                    self.optimizer_G.zero_grad()
+                    noise = torch.randn((current_batch_size, self.code_size)).to(device)
+                    gen_day_labels = torch.randint(0, 7, (current_batch_size,)).to(
+                        device
                     )
-                    + self.auxiliary_loss(pred_day, gen_day_labels)
-                    + self.auxiliary_loss(pred_month, gen_month_labels)
-                )
+                    gen_month_labels = torch.randint(0, 12, (current_batch_size,)).to(
+                        device
+                    )
+                    generated_time_series = self.generator(
+                        noise, gen_day_labels, gen_month_labels
+                    )
 
-                g_loss.backward()
-                self.optimizer_G.step()
+                    validity, pred_day, pred_month = self.discriminator(
+                        generated_time_series.detach().squeeze()
+                    )
+
+                    g_loss = (
+                        self.adversarial_loss(
+                            validity, torch.ones_like(validity) * soft_one
+                        )
+                        + self.auxiliary_loss(pred_day, gen_day_labels)
+                        + self.auxiliary_loss(pred_month, gen_month_labels)
+                    )
+
+                    g_loss.backward()
+                    self.optimizer_G.step()
 
                 summary_writer.add_scalars(
                     "data/train_loss",
@@ -251,16 +271,6 @@ class ACGAN:
             [torch.tensor(z, dtype=torch.float32).to(device)]
             + [l.clone().detach() for l in labels]
         )
-
-    def generate_by_date(self, num_samples, starting_date_str="2013-01-01"):
-        month_labels = np.zeros(shape=(num_samples))
-        day_labels = np.zeros(shape=(num_samples))
-        starting_date = datetime.datetime.strptime(starting_date_str, date_format_day)
-        for i in range(num_samples):
-            current_date = starting_date + datetime.timedelta(i)
-            month_labels[i] = current_date.month - 1
-            day_labels[i] = current_date.weekday()
-        return self.generate([month_labels, day_labels])
 
     def save_weight(self):
         torch.save(

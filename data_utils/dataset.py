@@ -19,6 +19,7 @@ class PecanStreetDataset(Dataset):
         geography: str = None,
         config_path: str = "config/config.yaml",
         normalize=False,
+        user_id=None,
     ):
         """
         Initialize the PecanStreetDataset with a specific geography, configuration path and user.
@@ -27,10 +28,12 @@ class PecanStreetDataset(Dataset):
             geography: Geography of the dataset (e.g., 'newyork').
             config_path: Path to the configuration file.
             normalize: Flag indicating whether data is normalized.
+            user_id: ID of the desired user. If None, all user data is loaded.
         """
         self.geography = geography
         self.config_path = os.path.join(ROOT_DIR, config_path)
         self.normalize = normalize
+        self.user_id = user_id
         self.name = "pecanstreet"
         self.path, self.columns = self._get_dataset_info()
         self.data = self.load_data()
@@ -82,7 +85,7 @@ class PecanStreetDataset(Dataset):
         data = self.preprocess_data(data)
         return data
 
-    def preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
+    def preprocess_data(self, data: pd.DataFrame, threshold=(-2, 2)) -> pd.DataFrame:
         """
         Normalize the 'grid' column in the data based on groupings of 'dataid', 'month', and 'weekday'.
 
@@ -92,9 +95,17 @@ class PecanStreetDataset(Dataset):
         Returns:
             pd.DataFrame: The normalized data.
         """
-        data["month"] = pd.to_datetime(data["local_15min"], utc=True).dt.month
-        data["weekday"] = pd.to_datetime(data["local_15min"], utc=True).dt.weekday
-        data["date_day"] = pd.to_datetime(data["local_15min"], utc=True).dt.day
+        if self.user_id:
+            data = data[data["dataid"] == self.user_id].copy()
+
+        data["local_15min"] = pd.to_datetime(data["local_15min"], utc=True)
+        data["month"] = data["local_15min"].dt.month - 1
+        data["weekday"] = data["local_15min"].dt.weekday
+        data["date_day"] = data["local_15min"].dt.day
+        data = data.sort_values(by=["local_15min"], axis=0)
+
+        # Drop rows where grid is na
+        data = data[~data["grid"].isna()].copy()
 
         if not all(
             col in data.columns for col in ["dataid", "month", "weekday", "grid"]
@@ -114,8 +125,15 @@ class PecanStreetDataset(Dataset):
             def calculate_stats(group):
                 all_values = np.concatenate(group["grid"].values)
                 return pd.Series(
-                    {"mean": np.mean(all_values), "std": np.std(all_values)}
+                    {
+                        "mean": np.mean(all_values),
+                        "std": np.std(all_values),
+                        "min": np.min(all_values),
+                        "max": np.max(all_values),
+                    }
                 )
+
+            # per user weekday month mean std min and max value
 
             grouped_stats = (
                 filtered_data.groupby(["dataid", "month", "weekday"])
@@ -126,15 +144,66 @@ class PecanStreetDataset(Dataset):
                 grouped_stats, on=["dataid", "month", "weekday"]
             )
 
-            def normalize(grid, mean, std):
-                return [(val - mean) / std for val in grid]
+            def normalize_and_scale(grid, mean, std, min_val, max_val):
+                normalized = [(val - mean) / std for val in grid]
+                thresholded = np.clip(normalized, threshold[0], threshold[1])
+                return [
+                    (val - threshold[0]) / (threshold[1] - threshold[0])
+                    for val in thresholded
+                ]
 
             filtered_data["grid"] = filtered_data.apply(
-                lambda row: normalize(row["grid"], row["mean"], row["std"]), axis=1
+                lambda row: normalize_and_scale(
+                    row["grid"], row["mean"], row["std"], row["min"], row["max"]
+                ),
+                axis=1,
             )
-            filtered_data = filtered_data.drop(columns=["mean", "std"])
+
+            # Store statistics for inverse transformation
+            self.stats = grouped_stats.set_index(
+                ["dataid", "month", "weekday"]
+            ).to_dict("index")
+
+            filtered_data = filtered_data.drop(columns=["mean", "std", "min", "max"])
 
         return filtered_data
+
+    def inverse_transform(
+        self, preprocessed_data: pd.DataFrame, dataid, month, weekday
+    ) -> np.array:
+        """
+        Convert a preprocessed time series back to its original scale.
+
+        Args:
+            preprocessed_data (pd.DataFrame): The preprocessed data.
+            dataid: The dataid of the time series.
+            month: The month of the time series.
+            weekday: The weekday of the time series.
+
+        Returns:
+            np.array: The time series in its original scale.
+        """
+        if not self.normalize:
+            return preprocessed_data["grid"].values
+
+        stats = self.stats.get((dataid, month, weekday))
+        if stats is None:
+            raise ValueError(
+                f"No statistics found for dataid={dataid}, month={month}, weekday={weekday}"
+            )
+
+        mean, std = stats["mean"], stats["std"]
+        low, high = self.threshold
+
+        def inverse_transform_single(val):
+            # Inverse min-max scaling
+            unscaled = val * (high - low) + low
+            # Inverse normalization
+            return unscaled * std + mean
+
+        return np.array(
+            [inverse_transform_single(val) for val in preprocessed_data["grid"]]
+        )
 
     def filter_by_user(self, user_id: int) -> None:
         """
@@ -160,7 +229,7 @@ class PecanStreetDataset(Dataset):
         month = sample["month"]
         day = sample["weekday"]
         return (
-            torch.tensor(time_series),
+            torch.tensor(time_series, dtype=torch.float32),
             torch.tensor(month, dtype=torch.long),
             torch.tensor(day, dtype=torch.long),
         )
@@ -170,12 +239,11 @@ def prepare_dataloader(dataset, batch_size, shuffle=True):
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
-def split_dataset(dataset: Dataset, val_split: float = 0.2, random_seed: int = 42):
+def split_dataset(dataset: Dataset, val_split: float = 0.2):
     val_size = int(len(dataset) * val_split)
     train_size = len(dataset) - val_size
-    train_dataset, val_dataset = random_split(
-        dataset,
-        [train_size, val_size],
-        generator=torch.Generator().manual_seed(random_seed),
-    )
+
+    train_dataset = torch.utils.data.Subset(dataset, range(train_size))
+    val_dataset = torch.utils.data.Subset(dataset, range(train_size, len(dataset)))
+
     return train_dataset, val_dataset
