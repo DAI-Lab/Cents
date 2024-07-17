@@ -262,6 +262,8 @@ class ACGAN:
 
             # Validation step
             with torch.no_grad():
+                total_mmd_loss = 0.0
+                num_batches = 0
                 for time_series_batch, month_label_batch, day_label_batch in val_loader:
                     time_series_batch, month_label_batch, day_label_batch = (
                         time_series_batch.to(device),
@@ -269,16 +271,22 @@ class ACGAN:
                         day_label_batch.to(device),
                     )
                     x_generated = self.generate([day_label_batch, month_label_batch])
-                    mmd = mmd_loss(
+                    mmd_values = mmd_loss(
                         time_series_batch.cpu().numpy(), x_generated.squeeze()
                     )
-                    summary_writer.add_scalars(
-                        "data/mmd_loss",
-                        {"load": mmd},
-                        global_step=epoch,
-                    )
+                    batch_mmd_loss = np.mean(mmd_values)
+                    total_mmd_loss += batch_mmd_loss
+                    num_batches += 1
 
-                print(f"Epoch [{epoch + 1}/{num_epoch}], MMD Loss: {mmd}")
+                mean_mmd_loss = total_mmd_loss / num_batches
+                summary_writer.add_scalar(
+                    "data/mean_mmd_loss",
+                    mean_mmd_loss,
+                    global_step=epoch,
+                )
+                print(
+                    f"Epoch [{epoch + 1}/{num_epoch}], Mean MMD Loss: {mean_mmd_loss}"
+                )
 
             with torch.no_grad():
                 sample_noise = torch.randn((3, self.code_size)).to(device)

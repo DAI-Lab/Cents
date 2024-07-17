@@ -15,10 +15,10 @@ def compute_pairwise_distances(x, y):
     """
 
     if not len(x.shape) == len(y.shape) == 2:
-        raise ValueError('Both inputs should be matrices.')
+        raise ValueError("Both inputs should be matrices.")
 
     if x.shape[1] != y.shape[1]:
-        raise ValueError('The number of features should be the same.')
+        raise ValueError("The number of features should be the same.")
 
     norm = lambda x: np.sum(np.square(x), 1)
 
@@ -45,7 +45,7 @@ def gaussian_kernel_matrix(x, y, sigmas):
     Returns:
       A tensor of shape [num_samples{x}, num_samples{y}] with the RBF kernel.
     """
-    beta = 1. / (2. * (np.expand_dims(sigmas, 1)))
+    beta = 1.0 / (2.0 * (np.expand_dims(sigmas, 1)))
 
     dist = compute_pairwise_distances(x, y)
 
@@ -81,23 +81,21 @@ def maximum_mean_discrepancy(x, y, kernel):
     return cost
 
 
-def mmd_loss(source_samples, target_samples, weight=1.):
-    """Adds a similarity loss term, the MMD between two representations.
-    This Maximum Mean Discrepancy (MMD) loss is calculated with a number of
-    different Gaussian kernels.
-    Args:
-      source_samples: a tensor of shape [num_samples, num_features].
-      target_samples: a tensor of shape [num_samples, num_features].
-      weight: the weight of the MMD loss.
-      scope: optional name scope for summary tags.
-    Returns:
-      a scalar tensor representing the MMD loss value.
-    """
-    assert source_samples.shape[0] < 1000, 'This is a memory issue for running large number of samples'
+def mmd_loss(source_samples, target_samples, weight=1.0):
+    """Computes the MMD loss for each pair of corresponding samples."""
+    assert (
+        source_samples.shape == target_samples.shape
+    ), "Shapes of source and target samples must match."
+    num_samples = source_samples.shape[0]
+    mmd_values = np.zeros(num_samples)
     sigmas = [1]
     gaussian_kernel = partial(gaussian_kernel_matrix, sigmas=np.array(sigmas))
 
-    loss_value = maximum_mean_discrepancy(
-        source_samples, target_samples, kernel=gaussian_kernel)
-    loss_value = np.maximum(1e-4, loss_value) * weight
-    return loss_value
+    for i in range(num_samples):
+        mmd_values[i] = maximum_mean_discrepancy(
+            np.expand_dims(source_samples[i], axis=1),
+            np.expand_dims(target_samples[i], axis=1),
+            kernel=gaussian_kernel,
+        )
+    mmd_values = np.maximum(1e-4, mmd_values) * weight
+    return mmd_values
