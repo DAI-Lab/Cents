@@ -59,6 +59,7 @@ class PecanStreetDataset(Dataset):
         Returns:
             A pandas DataFrame containing the dataset.
         """
+        self.metadata = pd.read_csv(f"{self.path}metadata.csv")
         if self.geography:
             data_file_path = f"/{self.path}15minute_data_{self.geography}.csv"
             try:
@@ -97,6 +98,14 @@ class PecanStreetDataset(Dataset):
         """
         if self.user_id:
             data = data[data["dataid"] == self.user_id].copy()
+
+            if not len(data):
+                raise ValueError(f"No data found for user {self.user_id}!")
+
+            self.user_metadata = self.metadata.loc[
+                self.metadata["dataid"] == self.user_id
+            ].copy()
+            self.is_pv_user = self.user_metadata["pv"].isna()
 
         data["local_15min"] = pd.to_datetime(data["local_15min"], utc=True)
         data["month"] = data["local_15min"].dt.month - 1
