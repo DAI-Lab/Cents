@@ -1,6 +1,7 @@
 from typing import Callable, Tuple
 
 import numpy as np
+import pandas as pd
 
 
 def K(x_i: float, y_j: float, sigma: float) -> float:
@@ -59,3 +60,9 @@ def dynamic_time_warping_dist(
             D[i][j] = norm(X[i - 1] - Y[j - 1]) + m
 
     return D, D[N][M]
+
+
+def get_period_bounds(
+    df: pd.DataFrame, timeseries_colname: str, month: int, weekday: int
+) -> Tuple[float, float]:
+    df = df.loc[(df["month"] == month) & (df["weekday"] == weekday)].copy()

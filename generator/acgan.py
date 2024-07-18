@@ -272,7 +272,7 @@ class ACGAN:
                     )
                     x_generated = self.generate([day_label_batch, month_label_batch])
                     mmd_values = mmd_loss(
-                        time_series_batch.cpu().numpy(), x_generated.squeeze()
+                        time_series_batch.numpy(), x_generated.squeeze()
                     )
                     batch_mmd_loss = np.mean(mmd_values)
                     total_mmd_loss += batch_mmd_loss
@@ -308,7 +308,7 @@ class ACGAN:
     def _generate(self, x):
         self.generator.eval()
         with torch.no_grad():
-            return self.generator(*x).cpu().numpy()
+            return self.generator(*x).numpy()
 
     def generate(self, labels):
         num_samples = labels[0].shape[0]
@@ -337,9 +337,9 @@ class ACGAN:
 
 
 def plot_generated_samples(samples, day_labels, month_labels, epoch, summary_writer):
-    samples = samples.cpu().numpy().squeeze()
-    day_labels = day_labels.cpu().numpy()
-    month_labels = month_labels.cpu().numpy()
+    samples = samples.numpy().squeeze()
+    day_labels = day_labels.numpy()
+    month_labels = month_labels.numpy()
     timestamps = pd.date_range(start="00:00", periods=96, freq="15T").strftime("%H:%M")
 
     fig, axs = plt.subplots(len(samples), 1, figsize=(15, len(samples) * 2))
