@@ -54,7 +54,7 @@ class Generator(nn.Module):
             nn.Sigmoid(),
         )
 
-    def forward(self, noise, day_labels, month_labels):
+    def forward(self, noise, month_labels, day_labels):
         month_embedded = (
             self.month_embedding(month_labels).view(-1, self.embedding_dim).to(device)
         )
@@ -62,7 +62,7 @@ class Generator(nn.Module):
             self.day_embedding(day_labels).view(-1, self.embedding_dim).to(device)
         )
 
-        x = torch.cat((noise, month_embedded, day_embedded), dim=1)
+        x = torch.cat((noise, month_embedded, day_embedded), dim=1).to(device)
         x = self.fc(x)
         x = x.view(-1, 64, self.final_window_length, 1)
         x = self.conv_transpose_layers(x)
@@ -165,14 +165,14 @@ class ACGAN:
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
                 time_series_batch, month_label_batch, day_label_batch = (
-                    time_series_batch.to(device),
-                    month_label_batch.to(device),
-                    day_label_batch.to(device),
+                    time_series_batch,
+                    month_label_batch,
+                    day_label_batch,
                 )
                 current_batch_size = time_series_batch.size(0)
                 noise = torch.randn((current_batch_size, self.code_size)).to(device)
                 generated_time_series = self.generator(
-                    noise, day_label_batch, month_label_batch
+                    noise, month_label_batch, day_label_batch
                 )
 
                 soft_zero, soft_one = 0, 0.95
@@ -215,7 +215,7 @@ class ACGAN:
                     device
                 )
                 generated_time_series = self.generator(
-                    noise, gen_day_labels, gen_month_labels
+                    noise, gen_month_labels, gen_day_labels
                 )
 
                 validity, pred_day, pred_month = self.discriminator(
@@ -266,13 +266,14 @@ class ACGAN:
                 num_batches = 0
                 for time_series_batch, month_label_batch, day_label_batch in val_loader:
                     time_series_batch, month_label_batch, day_label_batch = (
-                        time_series_batch.to(device),
-                        month_label_batch.to(device),
-                        day_label_batch.to(device),
+                        time_series_batch,
+                        month_label_batch,
+                        day_label_batch,
                     )
-                    x_generated = self.generate([day_label_batch, month_label_batch])
+                    x_generated = self.generate([month_label_batch, day_label_batch])
                     mmd_values = mmd_loss(
-                        time_series_batch.numpy(), x_generated.squeeze()
+                        time_series_batch.cpu().numpy(),
+                        x_generated.squeeze().cpu().numpy(),
                     )
                     batch_mmd_loss = np.mean(mmd_values)
                     total_mmd_loss += batch_mmd_loss
@@ -288,35 +289,26 @@ class ACGAN:
                     f"Epoch [{epoch + 1}/{num_epoch}], Mean MMD Loss: {mean_mmd_loss}"
                 )
 
-            with torch.no_grad():
-                sample_noise = torch.randn((3, self.code_size)).to(device)
-                sample_day_labels = torch.randint(0, 7, (3,)).to(device)
-                sample_month_labels = torch.randint(0, 12, (3,)).to(device)
-                generated_samples = self.generator(
-                    sample_noise, sample_day_labels, sample_month_labels
-                )
-                plot_generated_samples(
-                    generated_samples,
-                    sample_day_labels,
-                    sample_month_labels,
-                    epoch,
-                    summary_writer,
-                )
-
         self.save_weight()
 
     def _generate(self, x):
         self.generator.eval()
         with torch.no_grad():
-            return self.generator(*x).numpy()
+            return self.generator(*x)
 
     def generate(self, labels):
         num_samples = labels[0].shape[0]
-        z = np.random.normal(0, 1, size=[num_samples, self.code_size])
-        return self._generate(
-            [torch.tensor(z, dtype=torch.float32).to(device)]
-            + [l.clone() for l in labels]
-        )
+        noise = torch.randn((num_samples, self.code_size)).to(device)
+        return self._generate([noise] + [l.clone() for l in labels])
+
+    def generate_data_for_eval(self, num_samples=1):
+        month_labels = torch.tensor(np.arange(0, 12)).to(device)
+        day_labels = torch.tensor(np.arange(0, 7)).to(device)
+
+        month_labels = month_labels.reshape(num_samples, month_labels.shape[0])
+        day_labels = day_labels.reshape(num_samples, day_labels.shape[0])
+
+        return self.generate([month_labels, day_labels])
 
     def save_weight(self):
         torch.save(
@@ -334,25 +326,3 @@ class ACGAN:
         self.discriminator.load_state_dict(
             torch.load(self.weight_path + "_acgan_discriminator.pth")
         )
-
-
-def plot_generated_samples(samples, day_labels, month_labels, epoch, summary_writer):
-    samples = samples.numpy().squeeze()
-    day_labels = day_labels.numpy()
-    month_labels = month_labels.numpy()
-    timestamps = pd.date_range(start="00:00", periods=96, freq="15T").strftime("%H:%M")
-
-    fig, axs = plt.subplots(len(samples), 1, figsize=(15, len(samples) * 2))
-    if len(samples) == 1:
-        axs = [axs]
-    for i, (sample, day_label, month_label) in enumerate(
-        zip(samples, day_labels, month_labels)
-    ):
-        axs[i].plot(timestamps, sample.squeeze())
-        axs[i].set_title(f"Sample {i + 1} - Day: {day_label}, Month: {month_label}")
-        axs[i].set_xlabel("Time")
-        axs[i].set_ylabel("Value")
-        axs[i].tick_params(axis="x", rotation=45)
-    plt.tight_layout()
-    summary_writer.add_figure("generated_samples", fig, epoch)
-    plt.close(fig)

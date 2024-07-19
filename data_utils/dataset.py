@@ -238,9 +238,9 @@ class PecanStreetDataset(Dataset):
         month = sample["month"]
         day = sample["weekday"]
         return (
-            torch.tensor(time_series, dtype=torch.float32),
-            torch.tensor(month, dtype=torch.long),
-            torch.tensor(day, dtype=torch.long),
+            torch.tensor(time_series, dtype=torch.float32).to(device),
+            torch.tensor(month, dtype=torch.long).to(device),
+            torch.tensor(day, dtype=torch.long).to(device),
         )
 
 
