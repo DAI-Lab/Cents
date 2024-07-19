@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from encoder import TSEncoder
+from t2vec import TSEncoder
 from torch.utils.data import DataLoader, TensorDataset
 from utils import (
     centerize_vary_length_series,

@@ -3,7 +3,7 @@ from typing import Callable, Tuple
 import numpy as np
 import pandas as pd
 import scipy
-from t2vec.t2vec import T2VEC
+from t2vec.t2vec import TS2Vec
 
 
 def dynamic_time_warping_dist(
@@ -97,7 +97,3 @@ def Context_FID(ori_data, generated_data):
     gen_represenation = gen_represenation[idx]
     results = calculate_fid(ori_represenation, gen_represenation)
     return results
-
-
-def calculate_wasserstein_distance():
-    pass

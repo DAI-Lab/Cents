@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from dilated_conv import DilatedConvEncoder
+from t2vec import DilatedConvEncoder
 from torch import nn
 
 

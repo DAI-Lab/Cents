@@ -201,7 +201,7 @@ class ACGAN:
 
                 d_loss = 0.5 * (d_real_loss + d_fake_loss)
                 d_loss.backward()
-                utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
+                # utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
                 self.optimizer_D.step()
 
                 self.optimizer_G.zero_grad()
@@ -232,7 +232,7 @@ class ACGAN:
 
                 g_loss.backward()
 
-                utils.clip_grad_norm_(self.generator.parameters(), max_norm=1.0)
+                # utils.clip_grad_norm_(self.generator.parameters(), max_norm=1.0)
 
                 self.optimizer_G.step()
 
