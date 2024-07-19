@@ -5,13 +5,13 @@ from generator.acgan import ACGAN
 
 if __name__ == "__main__":
 
-    data = PecanStreetDataset(normalize=True, user_id=93)
+    data = PecanStreetDataset(normalize=True, user_id=661, include_generation=True)
     train_dataset, val_dataset = split_dataset(data)
     model = ACGAN(
-        input_dim=1,
+        input_dim=2,
         noise_dim=64,
         embedding_dim=64,
-        output_dim=96,
+        window_length=96,
         learning_rate=5e-4,
         weight_path="runs/",
     )

@@ -19,6 +19,7 @@ class PecanStreetDataset(Dataset):
         geography: str = None,
         config_path: str = "config/config.yaml",
         normalize=False,
+        include_generation=False,
         user_id=None,
     ):
         """
@@ -28,13 +29,16 @@ class PecanStreetDataset(Dataset):
             geography: Geography of the dataset (e.g., 'newyork').
             config_path: Path to the configuration file.
             normalize: Flag indicating whether data is normalized.
+            include_generation: Flag indicating whether to include solar data if available.
             user_id: ID of the desired user. If None, all user data is loaded.
         """
         self.geography = geography
         self.config_path = os.path.join(ROOT_DIR, config_path)
         self.normalize = normalize
+        self.include_generation = include_generation
         self.user_id = user_id
         self.name = "pecanstreet"
+        self.stats = {}
         self.path, self.columns = self._get_dataset_info()
         self.data = self.load_data()
 
@@ -83,19 +87,6 @@ class PecanStreetDataset(Dataset):
                 print(f"Failed to load full dataset!")
                 return pd.DataFrame()
 
-        data = self.preprocess_data(data)
-        return data
-
-    def preprocess_data(self, data: pd.DataFrame, threshold=(-2, 2)) -> pd.DataFrame:
-        """
-        Normalize the 'grid' column in the data based on groupings of 'dataid', 'month', and 'weekday'.
-
-        Args:
-            data (pd.DataFrame): The input data with columns 'dataid', 'month', 'weekday', and 'grid'.
-
-        Returns:
-            pd.DataFrame: The normalized data.
-        """
         if self.user_id:
             data = data[data["dataid"] == self.user_id].copy()
 
@@ -107,32 +98,50 @@ class PecanStreetDataset(Dataset):
             ].copy()
             self.is_pv_user = self.user_metadata["pv"].notna().any()
 
+        grid_data = self.preprocess_data(data, "grid")
+
+        if self.include_generation and self.is_pv_user:
+            grid_data["solar"] = self.preprocess_data(data, "solar")["solar"].copy()
+
+        return grid_data
+
+    def preprocess_data(
+        self, data: pd.DataFrame, column: str, threshold=(-2, 2)
+    ) -> pd.DataFrame:
+        """
+        Normalize the specified column in the data based on groupings of 'dataid', 'month', and 'weekday'.
+
+        Args:
+            data (pd.DataFrame): The input data.
+            column (str): The column to preprocess.
+            threshold (tuple): The normalization threshold.
+
+        Returns:
+            pd.DataFrame: The normalized data.
+        """
         data["local_15min"] = pd.to_datetime(data["local_15min"], utc=True)
         data["month"] = data["local_15min"].dt.month - 1
         data["weekday"] = data["local_15min"].dt.weekday
         data["date_day"] = data["local_15min"].dt.day
         data = data.sort_values(by=["local_15min"], axis=0)
 
-        # Drop rows where grid is na
-        data = data[~data["grid"].isna()].copy()
+        data = data[~data[column].isna()].copy()
 
         if not all(
-            col in data.columns for col in ["dataid", "month", "weekday", "grid"]
+            col in data.columns for col in ["dataid", "month", "weekday", column]
         ):
             raise ValueError(
-                "Input data must contain 'dataid', 'month', 'weekday', and 'grid' columns"
+                f"Input data must contain at least 'dataid', 'month', 'weekday', and '{column}' columns"
             )
 
         grouped_data = data.groupby(["dataid", "month", "date_day", "weekday"])
-        grouped_data = grouped_data["grid"].apply(list).reset_index()
-
-        # Remove columns without full day of available data
-        filtered_data = grouped_data[grouped_data["grid"].apply(len) == 96]
+        grouped_data = grouped_data[column].apply(list).reset_index()
+        filtered_data = grouped_data[grouped_data[column].apply(len) == 96]
 
         if self.normalize:
 
             def calculate_stats(group):
-                all_values = np.concatenate(group["grid"].values)
+                all_values = np.concatenate(group[column].values)
                 return pd.Series(
                     {
                         "mean": np.mean(all_values),
@@ -141,8 +150,6 @@ class PecanStreetDataset(Dataset):
                         "max": np.max(all_values),
                     }
                 )
-
-            # per user weekday month mean std min and max value
 
             grouped_stats = (
                 filtered_data.groupby(["dataid", "month", "weekday"])
@@ -153,23 +160,26 @@ class PecanStreetDataset(Dataset):
                 grouped_stats, on=["dataid", "month", "weekday"]
             )
 
-            def normalize_and_scale(grid, mean, std, min_val, max_val):
-                normalized = [(val - mean) / std for val in grid]
+            def normalize_and_scale(values, mean, std, min_val, max_val):
+                normalized = [(val - mean) / std for val in values]
                 thresholded = np.clip(normalized, threshold[0], threshold[1])
                 return [
                     (val - threshold[0]) / (threshold[1] - threshold[0])
                     for val in thresholded
                 ]
 
-            filtered_data["grid"] = filtered_data.apply(
+            filtered_data[column] = filtered_data.apply(
                 lambda row: normalize_and_scale(
-                    row["grid"], row["mean"], row["std"], row["min"], row["max"]
+                    row[column], row["mean"], row["std"], row["min"], row["max"]
                 ),
                 axis=1,
             )
 
             # Store statistics for inverse transformation
-            self.stats = grouped_stats.set_index(
+            if column not in self.stats:
+                self.stats[column] = {}
+
+            self.stats[column] = grouped_stats.set_index(
                 ["dataid", "month", "weekday"]
             ).to_dict("index")
 
@@ -178,7 +188,12 @@ class PecanStreetDataset(Dataset):
         return filtered_data
 
     def inverse_transform(
-        self, preprocessed_data: pd.DataFrame, dataid, month, weekday
+        self,
+        preprocessed_data: pd.DataFrame,
+        dataid: int,
+        month: int,
+        weekday: int,
+        colname: str,
     ) -> np.array:
         """
         Convert a preprocessed time series back to its original scale.
@@ -188,14 +203,17 @@ class PecanStreetDataset(Dataset):
             dataid: The dataid of the time series.
             month: The month of the time series.
             weekday: The weekday of the time series.
+            colname: The name of the column in the data.
 
         Returns:
             np.array: The time series in its original scale.
         """
+        stats = self.stats[colname]
+
         if not self.normalize:
             return preprocessed_data["grid"].values
 
-        stats = self.stats.get((dataid, month, weekday))
+        stats = stats.get((dataid, month, weekday))
         if stats is None:
             raise ValueError(
                 f"No statistics found for dataid={dataid}, month={month}, weekday={weekday}"
@@ -214,27 +232,16 @@ class PecanStreetDataset(Dataset):
             [inverse_transform_single(val) for val in preprocessed_data["grid"]]
         )
 
-    def filter_by_user(self, user_id: int) -> None:
-        """
-        Filter the dataset for a specific user.
-
-        Args:
-            user_id: The desired user's id.
-
-        Returns:
-            A pandas DataFrame with the selected user data.
-        """
-        user_data = self.data[self.data["dataid"] == user_id].copy()
-        user_data.reset_index(inplace=True)
-        user_data = user_data[["grid", "month", "weekday"]]
-        self.data = user_data
-
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         sample = self.data.iloc[idx]
         time_series = sample["grid"]
+
+        if self.include_generation and self.is_pv_user:
+            time_series = np.array([time_series, sample["solar"]])
+
         month = sample["month"]
         day = sample["weekday"]
         return (

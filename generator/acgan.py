@@ -74,6 +74,8 @@ class Generator(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self, input_length, input_dim=1):
         super(Discriminator, self).__init__()
+        self.input_dim = input_dim
+        self.input_length = input_length
         self.conv_layers = nn.Sequential(
             nn.Conv1d(input_dim, 16, kernel_size=4, stride=2, padding=1),
             nn.LeakyReLU(0.2, inplace=True),
@@ -84,26 +86,18 @@ class Discriminator(nn.Module):
             nn.BatchNorm1d(64),
             nn.LeakyReLU(0.2, inplace=True),
         )
-        self.fc_discriminator = nn.Linear(input_length // 8 * 64, 1)
-        self.fc_aux_day = nn.Linear(input_length // 8 * 64, 7)
-        self.fc_aux_month = nn.Linear(input_length // 8 * 64, 12)
+        self.fc_discriminator = nn.Linear(self.input_length // 8 * 64, 1)
+        self.fc_aux_day = nn.Linear(self.input_length // 8 * 64, 7)
+        self.fc_aux_month = nn.Linear(self.input_length // 8 * 64, 12)
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        x = x.unsqueeze(1)
+        x = x.reshape((x.shape[0], self.input_dim, self.input_length))
         x = self.conv_layers(x)
         x = x.view(x.size(0), -1)
         validity = torch.sigmoid(self.fc_discriminator(x))
         aux_day = self.softmax(self.fc_aux_day(x))
         aux_month = self.softmax(self.fc_aux_month(x))
-
-        if (
-            torch.isnan(validity).any()
-            or torch.isnan(aux_day).any()
-            or torch.isnan(aux_month).any()
-        ):
-            print("NaN detected in Discriminator output")
-            print(f"x stats: min={x.min()}, max={x.max()}, mean={x.mean()}")
 
         return validity, aux_day, aux_month
 
@@ -114,23 +108,25 @@ class ACGAN:
         input_dim,
         noise_dim,
         embedding_dim,
-        output_dim,
+        window_length,
         learning_rate,
         weight_path,
     ):
         self.code_size = noise_dim
+        self.input_dim = input_dim
         self.learning_rate = learning_rate
         self.weight_path = weight_path
 
         assert (
-            output_dim % 8 == 0
-        ), "output_dim must be a multiple of 8 in this architecture!"
-        final_window_length = output_dim
+            window_length % 8 == 0
+        ), "window_length must be a multiple of 8 in this architecture!"
+        final_window_length = window_length
+        self.window_length = final_window_length
 
         self.generator = Generator(
             noise_dim, embedding_dim, final_window_length, input_dim
         ).to(device)
-        self.discriminator = Discriminator(output_dim).to(device)
+        self.discriminator = Discriminator(window_length, input_dim).to(device)
 
         self.adversarial_loss = nn.BCELoss()
         self.auxiliary_loss = nn.CrossEntropyLoss()
@@ -262,7 +258,7 @@ class ACGAN:
 
             # Validation step
             with torch.no_grad():
-                total_mmd_loss = 0.0
+                total_mmd_loss = np.zeros(shape=(self.input_dim,))
                 num_batches = 0
                 for time_series_batch, month_label_batch, day_label_batch in val_loader:
                     time_series_batch, month_label_batch, day_label_batch = (
@@ -271,18 +267,35 @@ class ACGAN:
                         day_label_batch,
                     )
                     x_generated = self.generate([month_label_batch, day_label_batch])
-                    mmd_values = mmd_loss(
-                        time_series_batch.cpu().numpy(),
-                        x_generated.squeeze().cpu().numpy(),
+                    mmd_values = np.zeros(
+                        shape=(time_series_batch.shape[0], self.input_dim)
                     )
-                    batch_mmd_loss = np.mean(mmd_values)
+                    time_series_batch = time_series_batch.view(
+                        (time_series_batch.shape[0], self.input_dim, self.window_length)
+                    )
+                    x_generated = x_generated.view(
+                        (x_generated.shape[0], self.input_dim, self.window_length)
+                    )
+
+                    for dim in range(self.input_dim):
+                        mmd_values[:, dim] = mmd_loss(
+                            time_series_batch[:, dim, :].cpu().numpy(),
+                            x_generated[:, dim, :].cpu().numpy(),
+                        )
+
+                    batch_mmd_loss = np.mean(mmd_values, axis=0)
                     total_mmd_loss += batch_mmd_loss
                     num_batches += 1
 
                 mean_mmd_loss = total_mmd_loss / num_batches
-                summary_writer.add_scalar(
+                summary_writer.add_scalars(
                     "data/mean_mmd_loss",
-                    mean_mmd_loss,
+                    {
+                        "grid": total_mmd_loss[0],
+                        "solar": (
+                            total_mmd_loss[1] if total_mmd_loss.shape[0] > 1 else 0
+                        ),
+                    },
                     global_step=epoch,
                 )
                 print(
