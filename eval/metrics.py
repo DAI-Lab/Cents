@@ -3,7 +3,8 @@ from typing import Callable, Tuple
 import numpy as np
 import pandas as pd
 import scipy
-from t2vec.t2vec import TS2Vec
+
+from eval.t2vec.t2vec import TS2Vec
 
 
 def dynamic_time_warping_dist(
@@ -87,7 +88,7 @@ def Context_FID(ori_data, generated_data):
         batch_size=8,
         lr=0.001,
         output_dims=320,
-        max_train_length=3000,
+        max_train_length=50000,
     )
     model.fit(ori_data, verbose=False)
     ori_represenation = model.encode(ori_data, encoding_window="full_series")

@@ -1,8 +1,9 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from t2vec import DilatedConvEncoder
 from torch import nn
+
+from eval.t2vec.dilated_conv import DilatedConvEncoder
 
 
 def generate_continuous_mask(B, T, n=5, l=0.1):

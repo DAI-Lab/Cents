@@ -314,14 +314,22 @@ class ACGAN:
         noise = torch.randn((num_samples, self.code_size)).to(device)
         return self._generate([noise] + [l.clone() for l in labels])
 
-    def generate_data_for_eval(self, num_samples=1):
-        month_labels = torch.tensor(np.arange(0, 12)).to(device)
-        day_labels = torch.tensor(np.arange(0, 7)).to(device)
+    def generate_data_for_eval(self, real_df: pd.DataFrame):
+        syn_ts = []
 
-        month_labels = month_labels.reshape(num_samples, month_labels.shape[0])
-        day_labels = day_labels.reshape(num_samples, day_labels.shape[0])
+        for _, row in real_df.iterrows():
+            month_label = torch.tensor([row["month"]]).to(device)
+            day_label = torch.tensor([row["weekday"]]).to(device)
+            gen_ts = self.generate([month_label, day_label]).squeeze().cpu().numpy()
+            syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
 
-        return self.generate([month_labels, day_labels])
+        syn_ts_df = pd.DataFrame(
+            syn_ts, columns=["month", "weekday", "date_day", "generated_ts"]
+        )
+
+        ori = np.expand_dims(np.array(real_df["grid"].to_list()), axis=-1)
+        syn = np.expand_dims(np.array(syn_ts_df["generated_ts"].tolist()), axis=-1)
+        return ori, syn
 
     def save_weight(self):
         torch.save(
