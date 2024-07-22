@@ -106,7 +106,7 @@ class PecanStreetDataset(Dataset):
         if self.include_generation and self.is_pv_user:
             grid_data["solar"] = self.preprocess_data(data, "solar")["solar"].copy()
 
-        return grid_data
+        return grid_data.sort_values(by=["month", "weekday"])
 
     def preprocess_data(
         self, data: pd.DataFrame, column: str, threshold=(-2, 2)
@@ -252,7 +252,7 @@ class PecanStreetDataset(Dataset):
 
         result_df = pd.DataFrame(result_data)
 
-        return result_df
+        return result_df.sort_values(by=["month", "weekday"])
 
     def __len__(self):
         return len(self.data)
