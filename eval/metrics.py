@@ -8,32 +8,43 @@ from eval.t2vec.t2vec import TS2Vec
 
 
 def dynamic_time_warping_dist(
-    X: np.ndarray, Y: np.ndarray, norm: Callable[[float], float] = np.linalg.norm
+    X: np.ndarray, Y: np.ndarray, norm: Callable[[np.ndarray], float] = np.linalg.norm
 ) -> Tuple[np.ndarray, float]:
     """
     Compute the Dynamic Time Warping (DTW) distance between two time series.
 
     Args:
-        X: Time series data 1.
-        Y: Time series data 2.
+        X: Time series data 1 with shape (n_timeseries, timeseries_length, n_dimensions).
+        Y: Time series data 2 with shape (n_timeseries, timeseries_length, n_dimensions).
         norm: Norm function to compute distances (default is Euclidean norm).
 
     Returns:
-        A tuple containing the DTW distance matrix and the final DTW distance.
+        A tuple containing the mean and standard deviation of the DTW distances.
     """
-    N = len(X)
-    M = len(Y)
-    D = np.zeros((N + 1, M + 1), dtype=float)
-    D[:, 0] = np.inf
-    D[0, :] = np.inf
-    D[0][0] = 0
+    assert X.shape == Y.shape, "Input arrays must have the same shape"
 
-    for i in range(1, N + 1):
-        for j in range(1, M + 1):
-            m = min(D[i - 1][j], D[i][j - 1], D[i - 1][j - 1])
-            D[i][j] = norm(X[i - 1] - Y[j - 1]) + m
+    n_timeseries = X.shape[0]
+    dtw_distances = []
 
-    return D, D[N][M]
+    for idx in range(n_timeseries):
+        xi = X[idx]
+        yi = Y[idx]
+
+        N = len(xi)
+        M = len(yi)
+        D = np.zeros((N + 1, M + 1), dtype=float)
+        D[:, 0] = np.inf
+        D[0, :] = np.inf
+        D[0][0] = 0
+
+        for i in range(1, N + 1):
+            for j in range(1, M + 1):
+                m = min(D[i - 1][j], D[i][j - 1], D[i - 1][j - 1])
+                D[i][j] = norm(xi[i - 1] - yi[j - 1]) + m
+
+        dtw_distances.append(D[N][M])
+
+    return np.mean(dtw_distances)
 
 
 def get_period_bounds(
@@ -47,22 +58,33 @@ def get_period_bounds(
 
 
 def calculate_period_bound_mse(
-    timeseries: np.ndarray,
+    timeseries_array: np.ndarray,
     df: pd.DataFrame,
     timeseries_colname: str,
-    month: int,
-    weekday: int,
-) -> float:
-    min_bounds, max_bounds = get_period_bounds(df, timeseries_colname, month, weekday)
-    mse = 0.0
-    for i, value in enumerate(timeseries):
-        if value < min_bounds[i]:
-            mse += (value - min_bounds[i]) ** 2
-        elif value > max_bounds[i]:
-            mse += (value - max_bounds[i]) ** 2
+) -> Tuple[float, float]:
+    n_timeseries = timeseries_array.shape[0]
+    mse_list = []
 
-    mse /= len(timeseries)
-    return mse
+    for i in range(n_timeseries):
+        row = df.iloc[i]
+        month = row["month"]
+        weekday = row["weekday"]
+
+        min_bounds, max_bounds = get_period_bounds(
+            df, timeseries_colname, month, weekday
+        )
+
+        timeseries = timeseries_array[i]
+        mse = 0.0
+        for j, value in enumerate(timeseries):
+            if value < min_bounds[j]:
+                mse += (value - min_bounds[j]) ** 2
+            elif value > max_bounds[j]:
+                mse += (value - max_bounds[j]) ** 2
+        mse /= len(timeseries)
+        mse_list.append(mse)
+
+    return np.mean(mse_list), np.std(mse_list)
 
 
 def calculate_fid(act1, act2):

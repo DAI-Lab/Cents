@@ -19,6 +19,7 @@ class PecanStreetDataset(Dataset):
         geography: str = None,
         config_path: str = "config/config.yaml",
         normalize=False,
+        threshold=None,
         include_generation=False,
         user_id=None,
     ):
@@ -29,12 +30,14 @@ class PecanStreetDataset(Dataset):
             geography: Geography of the dataset (e.g., 'newyork').
             config_path: Path to the configuration file.
             normalize: Flag indicating whether data is normalized.
+            threshold: Thresholds at which to clip the data.
             include_generation: Flag indicating whether to include solar data if available.
             user_id: ID of the desired user. If None, all user data is loaded.
         """
         self.geography = geography
         self.config_path = os.path.join(ROOT_DIR, config_path)
         self.normalize = normalize
+        self.threshold = threshold
         self.include_generation = include_generation
         self.user_id = user_id
         self.name = "pecanstreet"
@@ -162,11 +165,15 @@ class PecanStreetDataset(Dataset):
 
             def normalize_and_scale(values, mean, std, min_val, max_val):
                 normalized = [(val - mean) / std for val in values]
-                thresholded = np.clip(normalized, threshold[0], threshold[1])
-                return [
-                    (val - threshold[0]) / (threshold[1] - threshold[0])
-                    for val in thresholded
-                ]
+
+                if self.threshold:
+                    thresholded = np.clip(normalized, threshold[0], threshold[1])
+                    return [
+                        (val - threshold[0]) / (threshold[1] - threshold[0])
+                        for val in thresholded
+                    ]
+                else:
+                    return [(val - min_val) / (max_val - min_val) for val in normalized]
 
             filtered_data[column] = filtered_data.apply(
                 lambda row: normalize_and_scale(
@@ -191,46 +198,61 @@ class PecanStreetDataset(Dataset):
         self,
         preprocessed_data: pd.DataFrame,
         dataid: int,
-        month: int,
-        weekday: int,
         colname: str,
-    ) -> np.array:
+    ) -> pd.DataFrame:
         """
         Convert a preprocessed time series back to its original scale.
 
         Args:
             preprocessed_data (pd.DataFrame): The preprocessed data.
             dataid: The dataid of the time series.
-            month: The month of the time series.
-            weekday: The weekday of the time series.
             colname: The name of the column in the data.
 
         Returns:
-            np.array: The time series in its original scale.
+            pd.DataFrame: A DataFrame containing the time series in its original scale along with month and weekday.
         """
-        stats = self.stats[colname]
-
         if not self.normalize:
-            return preprocessed_data["grid"].values
+            return preprocessed_data[[colname, "month", "weekday"]].copy()
 
-        stats = stats.get((dataid, month, weekday))
-        if stats is None:
-            raise ValueError(
-                f"No statistics found for dataid={dataid}, month={month}, weekday={weekday}"
+        def inverse_transform_single(row):
+            month = row["month"]
+            weekday = row["weekday"]
+            stats = self.stats[colname].get((dataid, month, weekday))
+            if stats is None:
+                raise ValueError(
+                    f"No statistics found for dataid={dataid}, month={month}, weekday={weekday}"
+                )
+            mean, std, min_val, max_val = (
+                stats["mean"],
+                stats["std"],
+                stats["min"],
+                stats["max"],
             )
 
-        mean, std = stats["mean"], stats["std"]
-        low, high = self.threshold
+            if self.threshold:
+                low, high = self.threshold
+            else:
+                low, high = (min_val, max_val)
 
-        def inverse_transform_single(val):
-            # Inverse min-max scaling
-            unscaled = val * (high - low) + low
-            # Inverse normalization
-            return unscaled * std + mean
+            unscaled = [value * (high - low) + low for value in row[colname]]
+            unnormalized = [value * std + mean for value in unscaled]
+            return unnormalized
 
-        return np.array(
-            [inverse_transform_single(val) for val in preprocessed_data["grid"]]
-        )
+        result_data = []
+
+        for _, row in preprocessed_data.iterrows():
+            inverse_transformed_values = inverse_transform_single(row)
+            result_data.append(
+                {
+                    "month": row["month"],
+                    "weekday": row["weekday"],
+                    colname: inverse_transformed_values,
+                }
+            )
+
+        result_df = pd.DataFrame(result_data)
+
+        return result_df
 
     def __len__(self):
         return len(self.data)

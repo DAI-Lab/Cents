@@ -1,3 +1,13 @@
+"""Reimplementation of Diffusion-TS.
+
+Reference: Jinsung Yoon, Daniel Jarrett, Mihaela van der Schaar,
+"Time-series Generative Adversarial Networks,"
+Neural Information Processing Systems (NeurIPS), 2019.
+
+Reference: Xinyu Yuan, Yan Qiao, "Diffusion-TS: Interpretable Diffusion for General Time Series Generation".
+
+"""
+
 import numpy as np
 import torch
 import torch.nn.functional as F
