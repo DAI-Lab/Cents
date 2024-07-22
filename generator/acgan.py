@@ -311,7 +311,7 @@ class ACGAN:
         noise = torch.randn((num_samples, self.code_size)).to(device)
         return self._generate([noise] + [l.clone() for l in labels])
 
-    def generate_data_for_eval(self, real_df: pd.DataFrame):
+    def generate_data_for_eval(self, real_df: pd.DataFrame, colname="grid"):
         syn_ts = []
 
         for _, row in real_df.iterrows():
@@ -321,12 +321,12 @@ class ACGAN:
             syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
 
         syn_ts_df = pd.DataFrame(
-            syn_ts, columns=["month", "weekday", "date_day", "generated_ts"]
+            syn_ts, columns=["month", "weekday", "date_day", colname]
         )
 
-        ori = np.expand_dims(np.array(real_df["grid"].to_list()), axis=-1)
-        syn = np.expand_dims(np.array(syn_ts_df["generated_ts"].tolist()), axis=-1)
-        return ori, syn
+        ori = np.expand_dims(np.array(real_df[colname].to_list()), axis=-1)
+        syn = np.expand_dims(np.array(syn_ts_df[colname].tolist()), axis=-1)
+        return ori, syn, syn_ts_df
 
     def save_weight(self):
         torch.save(
