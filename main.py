@@ -26,7 +26,7 @@ def main():
             weight_path="runs/",
         )
         model.train(train_dataset, val_dataset, batch_size=32, num_epoch=50)
-        user_evaluator = Evaluator(data.data, model, 2, "runs/")
+        user_evaluator = Evaluator(data, model, 2, "runs/")
         user_evaluator.evaluate_for_user(user)
 
 

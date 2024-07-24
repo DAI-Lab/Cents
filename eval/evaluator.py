@@ -26,21 +26,18 @@ class Evaluator:
 
     def evaluate_for_user(self, user_id):
 
-        real_user_data = self.real_df[self.real_df["user_id"] == user_id]
-        syn_user_data = self.synthetic_df[self.synthetic_df["user_id"] == user_id]
+        real_user_data = self.real_df[self.real_df["dataid"] == user_id]
+        syn_user_data = self.synthetic_df
+        syn_user_data["dataid"] = user_id
 
         relevant_cols = ["grid"]
 
         if self.n_dimensions == 2:
             relevant_cols.append("solar")
 
-        assert (
-            real_user_data.shape == syn_user_data.shape
-        ), "Real and synthetic dataframes need to have similar size."
-
         # Get inverse transformed data
         real_user_data_inv = self.real_dataset.inverse_transform(real_user_data)
-        syn_user_data_inv = self.inverse_transform(syn_user_data)
+        syn_user_data_inv = self.real_dataset.inverse_transform(syn_user_data)
 
         real_data_array = np.expand_dims(
             np.array(real_user_data[relevant_cols].to_list()), axis=-1
@@ -89,7 +86,7 @@ class Evaluator:
         #     self.writer.add_figure()
 
     def evaluate_all_users(self):
-        user_ids = self.real_df["user_id"].unique()
+        user_ids = self.real_df["dataid"].unique()
         for user_id in user_ids:
             self.evaluate_user(user_id)
         self.writer.flush()
@@ -110,7 +107,7 @@ class Evaluator:
             else:
                 syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
 
-        columns = ["month", "weekday", "date_day", "solar"]
+        columns = ["month", "weekday", "date_day", "grid"]
 
         if n_dimensions == 2:
             columns.append("solar")
