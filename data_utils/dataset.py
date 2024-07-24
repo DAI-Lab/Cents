@@ -40,6 +40,7 @@ class PecanStreetDataset(Dataset):
         self.threshold = threshold
         self.include_generation = include_generation
         self.user_id = user_id
+        self.is_pv_user = None
         self.name = "pecanstreet"
         self.stats = {}
         self.path, self.columns = self._get_dataset_info()
@@ -101,12 +102,14 @@ class PecanStreetDataset(Dataset):
             ].copy()
             self.is_pv_user = self.user_metadata["pv"].notna().any()
 
-        grid_data = self.preprocess_data(data, "grid")
+        grid_data = self.preprocess_data(data, "grid", self.threshold)
 
         if self.include_generation and self.is_pv_user:
-            grid_data["solar"] = self.preprocess_data(data, "solar")["solar"].copy()
+            grid_data["solar"] = self.preprocess_data(data, "solar", self.threshold)[
+                "solar"
+            ].copy()
 
-        return grid_data.sort_values(by=["month", "weekday"])
+        return grid_data.sort_values(by=["dataid", "month", "weekday"])
 
     def preprocess_data(
         self, data: pd.DataFrame, column: str, threshold=(-2, 2)
@@ -197,14 +200,12 @@ class PecanStreetDataset(Dataset):
     def inverse_transform(
         self,
         preprocessed_data: pd.DataFrame,
-        dataid: int,
     ) -> pd.DataFrame:
         """
         Convert a preprocessed time series back to its original scale.
 
         Args:
             preprocessed_data (pd.DataFrame): The preprocessed data.
-            dataid: The dataid of the time series.
 
         Returns:
             pd.DataFrame: A DataFrame containing the time series in its original scale along with month and weekday.
@@ -215,6 +216,7 @@ class PecanStreetDataset(Dataset):
         def inverse_transform_column(row, colname, stats):
             month = row["month"]
             weekday = row["weekday"]
+            dataid = row["dataid"]
 
             col_stats = stats.get((dataid, month, weekday))
 
@@ -242,22 +244,26 @@ class PecanStreetDataset(Dataset):
 
         result_data = []
 
-        for _, row in preprocessed_data.iterrows():
-            transformed_row = {
-                "month": row["month"],
-                "weekday": row["weekday"],
-                "grid": inverse_transform_column(row, "grid", self.stats["grid"]),
-            }
+        for dataid in preprocessed_data["dataid"].unique():
+            dataid_df = preprocessed_data[preprocessed_data["dataid"] == dataid]
 
-            if "solar" in preprocessed_data.columns:
-                transformed_row["solar"] = inverse_transform_column(
-                    row, "solar", self.stats["solar"]
-                )
+            for _, row in dataid_df.iterrows():
+                transformed_row = {
+                    "dataid": dataid,
+                    "month": row["month"],
+                    "weekday": row["weekday"],
+                    "grid": inverse_transform_column(row, "grid", self.stats["grid"]),
+                }
 
-            result_data.append(transformed_row)
+                if "solar" in preprocessed_data.columns:
+                    transformed_row["solar"] = inverse_transform_column(
+                        row, "solar", self.stats["solar"]
+                    )
+
+                result_data.append(transformed_row)
 
         result_df = pd.DataFrame(result_data)
-        return result_df.sort_values(by=["month", "weekday"])
+        return result_df.sort_values(by=["dataid", "month", "weekday"])
 
     def __len__(self):
         return len(self.data)
