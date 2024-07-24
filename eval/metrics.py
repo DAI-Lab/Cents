@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -58,29 +58,28 @@ def get_period_bounds(
 
 
 def calculate_period_bound_mse(
-    timeseries_array: np.ndarray,
-    df: pd.DataFrame,
-    timeseries_colname: str,
+    synthetic_timeseries: np.ndarray, real_dataframe: pd.DataFrame, columns: List[str]
 ) -> Tuple[float, float]:
-    n_timeseries = timeseries_array.shape[0]
     mse_list = []
 
-    for i in range(n_timeseries):
-        row = df.iloc[i]
+    for idx, row in real_dataframe.iterrows():
         month = row["month"]
         weekday = row["weekday"]
 
-        min_bounds, max_bounds = get_period_bounds(
-            df, timeseries_colname, month, weekday
-        )
-
-        timeseries = timeseries_array[i]
         mse = 0.0
-        for j, value in enumerate(timeseries):
-            if value < min_bounds[j]:
-                mse += (value - min_bounds[j]) ** 2
-            elif value > max_bounds[j]:
-                mse += (value - max_bounds[j]) ** 2
+        for dim_idx, colname in enumerate(columns):
+            min_bounds, max_bounds = get_period_bounds(
+                real_dataframe, colname, month, weekday
+            )
+            timeseries = synthetic_timeseries[idx, :, dim_idx]
+
+            for j in range(len(timeseries)):
+                value = timeseries[j]
+                if value < min_bounds[j]:
+                    mse += (value - min_bounds[j]) ** 2
+                elif value > max_bounds[j]:
+                    mse += (value - max_bounds[j]) ** 2
+
         mse /= len(timeseries)
         mse_list.append(mse)
 

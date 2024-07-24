@@ -34,5 +34,5 @@ if __name__ == "__main__":
     print(f"Context FID: {Context_FID(ori, syn)}")
     print(f"Dynamic Time Warping Distance: {dynamic_time_warping_dist(ori, syn)}")
     print(
-        f"Period bound MSE: {calculate_period_bound_mse(timeseries_array=syn, df=data.data, timeseries_colname='grid')}"
+        f"Period bound MSE: {calculate_period_bound_mse(synthetic_timeseries=syn, real_dataframe=data.data, colname='grid')}"
     )
