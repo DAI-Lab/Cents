@@ -19,3 +19,5 @@ isort
 autoflake
 tensorflow
 mkl
+dtaidistance
+seaborn

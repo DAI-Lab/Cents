@@ -1,17 +1,20 @@
 from typing import Callable, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy
+import seaborn as sns
+from dtaidistance import dtw
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
 from eval.t2vec.t2vec import TS2Vec
 
 
-def dynamic_time_warping_dist(
-    X: np.ndarray, Y: np.ndarray, norm: Callable[[np.ndarray], float] = np.linalg.norm
-) -> Tuple[np.ndarray, float]:
+def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[np.ndarray, float]:
     """
-    Compute the Dynamic Time Warping (DTW) distance between two time series.
+    Compute the Dynamic Time Warping (DTW) distance between two multivariate time series.
 
     Args:
         X: Time series data 1 with shape (n_timeseries, timeseries_length, n_dimensions).
@@ -21,30 +24,27 @@ def dynamic_time_warping_dist(
     Returns:
         A tuple containing the mean and standard deviation of the DTW distances.
     """
-    assert X.shape == Y.shape, "Input arrays must have the same shape"
+    assert (X.shape[0], X.shape[2]) == (
+        Y.shape[0],
+        Y.shape[2],
+    ), "Input arrays must have the same n_timeseries and n_dimensions!"
 
-    n_timeseries = X.shape[0]
+    n_timeseries, _, n_dimensions = X.shape
+
     dtw_distances = []
 
-    for idx in range(n_timeseries):
-        xi = X[idx]
-        yi = Y[idx]
+    for i in range(n_timeseries):
 
-        N = len(xi)
-        M = len(yi)
-        D = np.zeros((N + 1, M + 1), dtype=float)
-        D[:, 0] = np.inf
-        D[0, :] = np.inf
-        D[0][0] = 0
+        distances = []
+        for dim in range(n_dimensions):
+            dist = dtw.distance(X[i, :, dim], Y[i, :, dim])
+            distances.append(dist**2)
 
-        for i in range(1, N + 1):
-            for j in range(1, M + 1):
-                m = min(D[i - 1][j], D[i][j - 1], D[i - 1][j - 1])
-                D[i][j] = norm(xi[i - 1] - yi[j - 1]) + m
+        dtw_distance = np.sqrt(sum(distances))
+        dtw_distances.append(dtw_distance)
 
-        dtw_distances.append(D[N][M])
-
-    return np.mean(dtw_distances)
+    dtw_distances = np.array(dtw_distances)
+    return np.mean(dtw_distances), np.std(dtw_distances)
 
 
 def get_period_bounds(
@@ -88,17 +88,15 @@ def calculate_period_bound_mse(
 
 
 def calculate_fid(act1, act2):
-    # calculate mean and covariance statistics
+
     mu1, sigma1 = act1.mean(axis=0), np.cov(act1, rowvar=False)
     mu2, sigma2 = act2.mean(axis=0), np.cov(act2, rowvar=False)
-    # calculate sum squared difference between means
     ssdiff = np.sum((mu1 - mu2) ** 2.0)
-    # calculate sqrt of product between cov
     covmean = scipy.linalg.sqrtm(sigma1.dot(sigma2))
-    # check and correct imaginary numbers from sqrt
+
     if np.iscomplexobj(covmean):
         covmean = covmean.real
-    # calculate score
+
     fid = ssdiff + np.trace(sigma1 + sigma2 - 2.0 * covmean)
     return fid
 
@@ -120,3 +118,142 @@ def Context_FID(ori_data, generated_data):
     gen_represenation = gen_represenation[idx]
     results = calculate_fid(ori_represenation, gen_represenation)
     return results
+
+
+def visualization(ori_data, generated_data, analysis, compare=3000):
+    """Using PCA or tSNE for generated and original data visualization.
+
+    Args:
+     - ori_data: original data
+     - generated_data: generated synthetic data
+     - analysis: tsne or pca or kernel
+    """
+    # Analysis sample size (for faster computation)
+    anal_sample_no = min([compare, ori_data.shape[0]])
+    idx = np.random.permutation(ori_data.shape[0])[:anal_sample_no]
+
+    ori_data = ori_data[idx]
+    generated_data = generated_data[idx]
+
+    no, seq_len, dim = ori_data.shape
+
+    for i in range(anal_sample_no):
+        if i == 0:
+            prep_data = np.reshape(np.mean(ori_data[0, :, :], 1), [1, seq_len])
+            prep_data_hat = np.reshape(
+                np.mean(generated_data[0, :, :], 1), [1, seq_len]
+            )
+        else:
+            prep_data = np.concatenate(
+                (prep_data, np.reshape(np.mean(ori_data[i, :, :], 1), [1, seq_len]))
+            )
+            prep_data_hat = np.concatenate(
+                (
+                    prep_data_hat,
+                    np.reshape(np.mean(generated_data[i, :, :], 1), [1, seq_len]),
+                )
+            )
+
+    # Visualization parameter
+    colors = ["red" for i in range(anal_sample_no)] + [
+        "blue" for i in range(anal_sample_no)
+    ]
+
+    if analysis == "pca":
+        # PCA Analysis
+        pca = PCA(n_components=2)
+        pca.fit(prep_data)
+        pca_results = pca.transform(prep_data)
+        pca_hat_results = pca.transform(prep_data_hat)
+
+        # Plotting
+        f, ax = plt.subplots(1)
+        plt.scatter(
+            pca_results[:, 0],
+            pca_results[:, 1],
+            c=colors[:anal_sample_no],
+            alpha=0.2,
+            label="Original",
+        )
+        plt.scatter(
+            pca_hat_results[:, 0],
+            pca_hat_results[:, 1],
+            c=colors[anal_sample_no:],
+            alpha=0.2,
+            label="Synthetic",
+        )
+
+        ax.legend()
+        plt.title("PCA plot")
+        plt.xlabel("x-pca")
+        plt.ylabel("y_pca")
+        plt.show()
+
+    elif analysis == "tsne":
+
+        # Do t-SNE Analysis together
+        prep_data_final = np.concatenate((prep_data, prep_data_hat), axis=0)
+
+        # TSNE anlaysis
+        tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
+        tsne_results = tsne.fit_transform(prep_data_final)
+
+        # Plotting
+        f, ax = plt.subplots(1)
+
+        plt.scatter(
+            tsne_results[:anal_sample_no, 0],
+            tsne_results[:anal_sample_no, 1],
+            c=colors[:anal_sample_no],
+            alpha=0.2,
+            label="Original",
+        )
+        plt.scatter(
+            tsne_results[anal_sample_no:, 0],
+            tsne_results[anal_sample_no:, 1],
+            c=colors[anal_sample_no:],
+            alpha=0.2,
+            label="Synthetic",
+        )
+
+        ax.legend()
+
+        plt.title("t-SNE plot")
+        plt.xlabel("x-tsne")
+        plt.ylabel("y_tsne")
+        plt.show()
+
+    elif analysis == "kernel":
+
+        # Visualization parameter
+        # colors = ["red" for i in range(anal_sample_no)] + ["blue" for i in range(anal_sample_no)]
+
+        f, ax = plt.subplots(1)
+        sns.distplot(
+            prep_data,
+            hist=False,
+            kde=True,
+            kde_kws={"linewidth": 5},
+            label="Original",
+            color="red",
+        )
+        sns.distplot(
+            prep_data_hat,
+            hist=False,
+            kde=True,
+            kde_kws={"linewidth": 5, "linestyle": "--"},
+            label="Synthetic",
+            color="blue",
+        )
+        # Plot formatting
+
+        # plt.legend(prop={'size': 22})
+        plt.legend()
+        plt.xlabel("Data Value")
+        plt.ylabel("Data Density Estimate")
+        # plt.rcParams['pdf.fonttype'] = 42
+
+        # plt.savefig(str(args.save_dir)+"/"+args.model1+"_histo.png", dpi=100,bbox_inches='tight')
+        # plt.ylim((0, 12))
+        plt.show()
+        plt.close()

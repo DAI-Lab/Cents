@@ -198,7 +198,6 @@ class PecanStreetDataset(Dataset):
         self,
         preprocessed_data: pd.DataFrame,
         dataid: int,
-        colname: str,
     ) -> pd.DataFrame:
         """
         Convert a preprocessed time series back to its original scale.
@@ -206,27 +205,29 @@ class PecanStreetDataset(Dataset):
         Args:
             preprocessed_data (pd.DataFrame): The preprocessed data.
             dataid: The dataid of the time series.
-            colname: The name of the column in the data.
 
         Returns:
             pd.DataFrame: A DataFrame containing the time series in its original scale along with month and weekday.
         """
         if not self.normalize:
-            return preprocessed_data[[colname, "month", "weekday"]].copy()
+            return preprocessed_data.copy()
 
-        def inverse_transform_single(row):
+        def inverse_transform_column(row, colname, stats):
             month = row["month"]
             weekday = row["weekday"]
-            stats = self.stats[colname].get((dataid, month, weekday))
-            if stats is None:
+
+            col_stats = stats.get((dataid, month, weekday))
+
+            if col_stats is None:
                 raise ValueError(
-                    f"No statistics found for dataid={dataid}, month={month}, weekday={weekday}"
+                    f"No statistics found for dataid={dataid}, month={month}, weekday={weekday} for {colname}"
                 )
+
             mean, std, min_val, max_val = (
-                stats["mean"],
-                stats["std"],
-                stats["min"],
-                stats["max"],
+                col_stats["mean"],
+                col_stats["std"],
+                col_stats["min"],
+                col_stats["max"],
             )
 
             if self.threshold:
@@ -236,22 +237,26 @@ class PecanStreetDataset(Dataset):
 
             unscaled = [value * (high - low) + low for value in row[colname]]
             unnormalized = [value * std + mean for value in unscaled]
+
             return unnormalized
 
         result_data = []
 
         for _, row in preprocessed_data.iterrows():
-            inverse_transformed_values = inverse_transform_single(row)
-            result_data.append(
-                {
-                    "month": row["month"],
-                    "weekday": row["weekday"],
-                    colname: inverse_transformed_values,
-                }
-            )
+            transformed_row = {
+                "month": row["month"],
+                "weekday": row["weekday"],
+                "grid": inverse_transform_column(row, "grid", self.stats["grid"]),
+            }
+
+            if "solar" in preprocessed_data.columns:
+                transformed_row["solar"] = inverse_transform_column(
+                    row, "solar", self.stats["solar"]
+                )
+
+            result_data.append(transformed_row)
 
         result_df = pd.DataFrame(result_data)
-
         return result_df.sort_values(by=["month", "weekday"])
 
     def __len__(self):
