@@ -54,11 +54,11 @@ class Evaluator:
         self.metrics["mse"].append((user_id, mse_mean, mse_std))
 
         # Compute Context FID using normalized and scaled data
+        print(f"Training TS2Vec for user {user_id}...")
         fid_score = Context_FID(real_data_array, syn_data_array)
+        print("Done!")
         self.writer.add_scalar(f"FID/{user_id}", fid_score)
         self.metrics["fid"].append((user_id, fid_score))
-
-        a = 1
 
         # for col in relevant_cols:
         #     visualization(
@@ -73,6 +73,14 @@ class Evaluator:
         user_ids = self.real_df["dataid"].unique()
         for user_id in user_ids:
             self.evaluate_user(user_id)
+
+        print("Final Results: \n")
+        print("--------------------")
+        dtw, mse, context_fid = self.get_summary_metrics()
+        print(f"Mean User DTW: {dtw}")
+        print(f"Mean User Bound MSE: {mse}")
+        print(f"Mean User Context-FID: {context_fid}")
+        print("--------------------")
         self.writer.flush()
 
     def generate_data_for_eval(self, model):
@@ -88,3 +96,19 @@ class Evaluator:
         columns = ["month", "weekday", "date_day", "timeseries"]
         syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
         return syn_ts_df
+
+    def get_summary_statistics(self):
+        """
+        Calculate the mean values for all users across all metrics.
+
+        Returns:
+            A tuple containing the mean values for dtw, mse, and fid.
+        """
+        metrics_summary = {"dtw": [], "mse": [], "fid": []}
+
+        # Collect mean values for each metric
+        for metric in metrics_summary.keys():
+            mean_values = [value[0] for value in self.metrics[metric]]
+            metrics_summary[metric] = np.mean(mean_values)
+
+        return metrics_summary["dtw"], metrics_summary["mse"], metrics_summary["fid"]
