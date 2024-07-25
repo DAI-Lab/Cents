@@ -12,7 +12,8 @@ def main():
     full_dataset = PecanStreetDataset(
         normalize=True, user_id=None, include_generation=True, threshold=(-2, 2)
     )
-    all_users = full_dataset.data.dataid.unique()
+    # all_users = full_dataset.data.dataid.unique()
+    all_users = [661]
 
     for user in tqdm(all_users):
         print(f"Training for user {user}...")
@@ -33,8 +34,8 @@ def main():
             learning_rate=1e-4,
             weight_path="runs/",
         )
-        model.train(train_dataset, val_dataset, batch_size=32, num_epoch=100)
-        user_evaluator = Evaluator(data, model, 2, "runs/")
+        model.train(train_dataset, val_dataset, batch_size=32, num_epoch=10)
+        user_evaluator = Evaluator(data, model, input_dim, "runs/")
         user_evaluator.evaluate_all_users()
 
 

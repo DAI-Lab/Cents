@@ -265,7 +265,7 @@ class PecanStreetDataset(Dataset):
             unscaled = np.array([value * (high - low) + low for value in row[colname]])
             unnormalized = np.array([value * std + mean for value in unscaled])
 
-            return unnormalized.squeeze()
+            return unnormalized
 
         result_data = []
 
@@ -293,7 +293,8 @@ class PecanStreetDataset(Dataset):
     def merge_columns_into_timeseries(self, df):
         if self.include_generation and self.is_pv_user:
             df["timeseries"] = [
-                np.vstack((g, s)).T for g, s in zip(df["grid"], df["solar"])
+                np.vstack((g.squeeze(), s.squeeze())).T
+                for g, s in zip(df["grid"], df["solar"])
             ]
             df.drop(columns=["grid", "solar"], axis=1, inplace=True)
         else:

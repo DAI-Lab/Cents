@@ -64,14 +64,15 @@ class Evaluator:
         self.writer.add_scalar(f"FID/{user_id}", fid_score)
         self.metrics["fid"].append((user_id, fid_score))
 
-        # for col in relevant_cols:
-        #     visualization(
-        #         real_user_data_inv[col].values, syn_user_data_inv[col].values, "tsne"
-        #     )
-        #     visualization(
-        #         real_user_data_inv[col].values, syn_user_data_inv[col].values, "kernel"
-        #     )
-        #     self.writer.add_figure()
+        self.writer.add_figure(
+            tag=f"TSNE User {user_id}",
+            figure=visualization(real_data_array_inv, syn_data_array_inv, "tsne"),
+        )
+
+        self.writer.add_figure(
+            tag=f"KDE User {user_id}",
+            figure=visualization(real_data_array_inv, syn_data_array_inv, "kernel"),
+        )
 
     def evaluate_all_users(self):
         user_ids = self.real_df["dataid"].unique()
@@ -93,7 +94,7 @@ class Evaluator:
         for _, row in self.real_df.iterrows():
             month_label = torch.tensor([row["month"]]).to(device)
             day_label = torch.tensor([row["weekday"]]).to(device)
-            gen_ts = model.generate([month_label, day_label]).squeeze().cpu().numpy()
+            gen_ts = model.generate([month_label, day_label]).squeeze(0).cpu().numpy()
             gen_ts = gen_ts.reshape(-1, gen_ts.shape[0])
             syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
 

@@ -255,3 +255,5 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
         # plt.ylim((0, 12))
         plt.show()
         plt.close()
+
+    return f
