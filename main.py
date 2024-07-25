@@ -10,15 +10,15 @@ from generator.acgan import ACGAN
 def main():
 
     full_dataset = PecanStreetDataset(
-        normalize=True, user_id=None, include_generation=True, threshold=(-2, 2)
+        normalize=True, user_id=None, include_generation=True, threshold=(-4, 4)
     )
-    # all_users = full_dataset.data.dataid.unique()
-    all_users = [661]
+    all_users = full_dataset.data.dataid.unique()
+    all_users = all_users[:5]
 
     for user in tqdm(all_users):
         print(f"Training for user {user}...")
         data = PecanStreetDataset(
-            normalize=True, user_id=user, include_generation=True, threshold=(-2, 2)
+            normalize=True, user_id=user, include_generation=True, threshold=(-4, 4)
         )
         train_dataset, val_dataset = split_dataset(data)
 
@@ -34,8 +34,8 @@ def main():
             learning_rate=1e-4,
             weight_path="runs/",
         )
-        model.train(train_dataset, val_dataset, batch_size=32, num_epoch=10)
-        user_evaluator = Evaluator(data, model, input_dim, "runs/")
+        model.train(train_dataset, val_dataset, batch_size=32, num_epoch=100)
+        user_evaluator = Evaluator(data, model, input_dim, f"runs/user_{user}")
         user_evaluator.evaluate_all_users()
 
 

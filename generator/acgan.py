@@ -245,12 +245,6 @@ class ACGAN:
                     global_step=step,
                 )
 
-                for name, param in self.generator.named_parameters():
-                    if param.grad is not None:
-                        summary_writer.add_scalar(
-                            f"grad/{name}_norm", param.grad.norm(), global_step=step
-                        )
-
                 step += 1
 
             # Validation step
@@ -299,7 +293,7 @@ class ACGAN:
                     f"Epoch [{epoch + 1}/{num_epoch}], Mean MMD Loss: {mean_mmd_loss}"
                 )
 
-        self.save_weight()
+        # self.save_weight()
 
     def _generate(self, x):
         self.generator.eval()

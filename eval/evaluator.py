@@ -23,6 +23,8 @@ class Evaluator:
         self.metrics = {"dtw": [], "mse": [], "fid": []}
 
     def evaluate_for_user(self, user_id):
+        user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
+        user_writer = SummaryWriter(user_log_dir)
 
         print("----------------------")
         print(f"Starting evaluation for user {user_id}")
@@ -45,34 +47,37 @@ class Evaluator:
         dtw_mean, dtw_std = dynamic_time_warping_dist(
             real_data_array_inv, syn_data_array_inv
         )
-        self.writer.add_scalar(f"DTW/{user_id}/mean", dtw_mean)
-        self.writer.add_scalar(f"DTW/{user_id}/std", dtw_std)
+        user_writer.add_scalar("DTW/mean", dtw_mean)
+        user_writer.add_scalar("DTW/std", dtw_std)
         self.metrics["dtw"].append((user_id, dtw_mean, dtw_std))
 
         # Compute Period Bound MSE using original scale data and dataframe
         mse_mean, mse_std = calculate_period_bound_mse(
             syn_data_array_inv, real_user_data_inv
         )
-        self.writer.add_scalar(f"MSE/{user_id}/mean", mse_mean)
-        self.writer.add_scalar(f"MSE/{user_id}/std", mse_std)
+        user_writer.add_scalar("MSE/mean", mse_mean)
+        user_writer.add_scalar("MSE/std", mse_std)
         self.metrics["mse"].append((user_id, mse_mean, mse_std))
 
         # Compute Context FID using normalized and scaled data
         print(f"Training TS2Vec for user {user_id}...")
         fid_score = Context_FID(real_data_array, syn_data_array)
         print("Done!")
-        self.writer.add_scalar(f"FID/{user_id}", fid_score)
+        user_writer.add_scalar("FID/score", fid_score)
         self.metrics["fid"].append((user_id, fid_score))
 
-        self.writer.add_figure(
-            tag=f"TSNE User {user_id}",
+        user_writer.add_figure(
+            tag="TSNE",
             figure=visualization(real_data_array_inv, syn_data_array_inv, "tsne"),
         )
 
-        self.writer.add_figure(
-            tag=f"KDE User {user_id}",
+        user_writer.add_figure(
+            tag="KDE",
             figure=visualization(real_data_array_inv, syn_data_array_inv, "kernel"),
         )
+
+        user_writer.flush()
+        user_writer.close()
 
     def evaluate_all_users(self):
         user_ids = self.real_df["dataid"].unique()
@@ -87,6 +92,7 @@ class Evaluator:
         print(f"Mean User Context-FID: {context_fid}")
         print("--------------------")
         self.writer.flush()
+        self.writer.close()
 
     def generate_data_for_eval(self, model):
         syn_ts = []
