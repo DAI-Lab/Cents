@@ -108,7 +108,12 @@ class PecanStreetDataset(Dataset):
             grid_data["solar"] = self.preprocess_data(data, "solar", self.threshold)[
                 "solar"
             ].copy()
+        else:
+            grid_data["timeseries"] = [
+                np.array(g).reshape(-1, 1) for g in grid_data["grid"]
+            ]
 
+        grid_data = self.merge_columns_into_timeseries(grid_data)
         return grid_data.sort_values(by=["dataid", "month", "weekday"])
 
     def preprocess_data(
@@ -167,16 +172,20 @@ class PecanStreetDataset(Dataset):
             )
 
             def normalize_and_scale(values, mean, std, min_val, max_val):
-                normalized = [(val - mean) / std for val in values]
+                normalized = np.array([(val - mean) / std for val in values])
 
                 if self.threshold:
                     thresholded = np.clip(normalized, threshold[0], threshold[1])
-                    return [
-                        (val - threshold[0]) / (threshold[1] - threshold[0])
-                        for val in thresholded
-                    ]
+                    return np.array(
+                        [
+                            (val - threshold[0]) / (threshold[1] - threshold[0])
+                            for val in thresholded
+                        ]
+                    )
                 else:
-                    return [(val - min_val) / (max_val - min_val) for val in normalized]
+                    return np.array(
+                        [(val - min_val) / (max_val - min_val) for val in normalized]
+                    )
 
             filtered_data[column] = filtered_data.apply(
                 lambda row: normalize_and_scale(
@@ -210,8 +219,23 @@ class PecanStreetDataset(Dataset):
         Returns:
             pd.DataFrame: A DataFrame containing the time series in its original scale along with month and weekday.
         """
+
+        def split_timeseries(row):
+            grid = row[:, 0].reshape(-1, 1)
+            solar = row[:, 1].reshape(-1, 1)
+            return pd.Series({"grid": grid, "solar": solar})
+
         if not self.normalize:
             return preprocessed_data.copy()
+
+        if self.include_generation and self.is_pv_user:
+            preprocessed_data[["grid", "solar"]] = preprocessed_data[
+                "timeseries"
+            ].apply(split_timeseries)
+        else:
+            preprocessed_data["grid"] = preprocessed_data["timeseries"]
+
+        preprocessed_data = preprocessed_data.drop(columns=["timeseries"])
 
         def inverse_transform_column(row, colname, stats):
             month = row["month"]
@@ -237,10 +261,10 @@ class PecanStreetDataset(Dataset):
             else:
                 low, high = (min_val, max_val)
 
-            unscaled = [value * (high - low) + low for value in row[colname]]
-            unnormalized = [value * std + mean for value in unscaled]
+            unscaled = np.array([value * (high - low) + low for value in row[colname]])
+            unnormalized = np.array([value * std + mean for value in unscaled])
 
-            return unnormalized
+            return unnormalized.squeeze()
 
         result_data = []
 
@@ -262,18 +286,26 @@ class PecanStreetDataset(Dataset):
 
                 result_data.append(transformed_row)
 
-        result_df = pd.DataFrame(result_data)
+        result_df = self.merge_columns_into_timeseries(pd.DataFrame(result_data))
         return result_df.sort_values(by=["dataid", "month", "weekday"])
+
+    def merge_columns_into_timeseries(self, df):
+        if self.include_generation and self.is_pv_user:
+            df["timeseries"] = [
+                np.vstack((g, s)).T for g, s in zip(df["grid"], df["solar"])
+            ]
+            df.drop(columns=["grid", "solar"], axis=1, inplace=True)
+        else:
+            df["timeseries"] = df["grid"]
+            df.drop(columns=["grid"], axis=1, inplace=True)
+        return df
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         sample = self.data.iloc[idx]
-        time_series = sample["grid"]
-
-        if self.include_generation and self.is_pv_user:
-            time_series = np.array([time_series, sample["solar"]])
+        time_series = sample["timeseries"]
 
         month = sample["month"]
         day = sample["weekday"]

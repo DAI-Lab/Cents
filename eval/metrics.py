@@ -48,39 +48,38 @@ def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[np.ndarray,
 
 
 def get_period_bounds(
-    df: pd.DataFrame, timeseries_colname: str, month: int, weekday: int
-) -> Tuple[float, float]:
+    df: pd.DataFrame, month: int, weekday: int
+) -> Tuple[np.ndarray, np.ndarray]:
     df = df.loc[(df["month"] == month) & (df["weekday"] == weekday)].copy()
-    array_timeseries = np.array(df[timeseries_colname].to_list())
+    array_timeseries = np.array(df["timeseries"].to_list())
     min_values = np.min(array_timeseries, axis=0)
     max_values = np.max(array_timeseries, axis=0)
     return min_values, max_values
 
 
 def calculate_period_bound_mse(
-    synthetic_timeseries: np.ndarray, real_dataframe: pd.DataFrame, columns: List[str]
+    synthetic_timeseries: np.ndarray, real_dataframe: pd.DataFrame
 ) -> Tuple[float, float]:
     mse_list = []
+    n_dimensions = synthetic_timeseries.shape[-1]
 
     for idx, row in real_dataframe.iterrows():
         month = row["month"]
         weekday = row["weekday"]
 
         mse = 0.0
-        for dim_idx, colname in enumerate(columns):
-            min_bounds, max_bounds = get_period_bounds(
-                real_dataframe, colname, month, weekday
-            )
-            timeseries = synthetic_timeseries[idx, :, dim_idx]
+        for dim_idx in range(n_dimensions):
+            min_bounds, max_bounds = get_period_bounds(real_dataframe, month, weekday)
+            syn_timeseries = synthetic_timeseries[idx, :, dim_idx]
 
-            for j in range(len(timeseries)):
-                value = timeseries[j]
-                if value < min_bounds[j]:
-                    mse += (value - min_bounds[j]) ** 2
-                elif value > max_bounds[j]:
-                    mse += (value - max_bounds[j]) ** 2
+            for j in range(len(syn_timeseries)):
+                value = syn_timeseries[j]
+                if value < min_bounds[j, dim_idx]:
+                    mse += (value - min_bounds[j, dim_idx]) ** 2
+                elif value > max_bounds[j, dim_idx]:
+                    mse += (value - max_bounds[j, dim_idx]) ** 2
 
-        mse /= len(timeseries)
+        mse /= len(syn_timeseries) * n_dimensions
         mse_list.append(mse)
 
     return np.mean(mse_list), np.std(mse_list)

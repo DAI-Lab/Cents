@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from data_utils.dataset import PecanStreetDataset, prepare_dataloader, split_dataset
 from eval.evaluator import Evaluator
@@ -7,12 +8,13 @@ from generator.acgan import ACGAN
 
 
 def main():
+
     full_dataset = PecanStreetDataset(
         normalize=True, user_id=None, include_generation=True, threshold=(-2, 2)
     )
     all_users = full_dataset.data.dataid.unique()
 
-    for user in all_users:
+    for user in tqdm(all_users):
         data = PecanStreetDataset(
             normalize=True, user_id=user, include_generation=True, threshold=(-2, 2)
         )
@@ -25,7 +27,7 @@ def main():
             learning_rate=1e-4,
             weight_path="runs/",
         )
-        model.train(train_dataset, val_dataset, batch_size=32, num_epoch=50)
+        model.train(train_dataset, val_dataset, batch_size=32, num_epoch=100)
         user_evaluator = Evaluator(data, model, 2, "runs/")
         user_evaluator.evaluate_for_user(user)
 

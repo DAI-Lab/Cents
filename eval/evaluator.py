@@ -18,9 +18,7 @@ class Evaluator:
         self.real_dataset = real_dataset
         self.real_df = real_dataset.data
         self.n_dimensions = n_dimensions
-        self.synthetic_df = self.generate_data_for_eval(
-            model, n_dimensions=n_dimensions
-        )
+        self.synthetic_df = self.generate_data_for_eval(model)
         self.writer = SummaryWriter(log_dir)
         self.metrics = {"dtw": [], "mse": [], "fid": []}
 
@@ -30,27 +28,14 @@ class Evaluator:
         syn_user_data = self.synthetic_df
         syn_user_data["dataid"] = user_id
 
-        relevant_cols = ["grid"]
-
-        if self.n_dimensions == 2:
-            relevant_cols.append("solar")
-
         # Get inverse transformed data
         real_user_data_inv = self.real_dataset.inverse_transform(real_user_data)
         syn_user_data_inv = self.real_dataset.inverse_transform(syn_user_data)
 
-        real_data_array = np.expand_dims(
-            np.array(real_user_data[relevant_cols].to_list()), axis=-1
-        )
-        syn_data_array = np.expand_dims(
-            np.array(syn_user_data[relevant_cols].to_list()), axis=-1
-        )
-        real_data_array_inv = np.expand_dims(
-            np.array(real_user_data_inv[relevant_cols].to_list()), axis=-1
-        )
-        syn_data_array_inv = np.expand_dims(
-            np.array(syn_user_data_inv[relevant_cols].to_list()), axis=-1
-        )
+        real_data_array = np.stack(real_user_data["timeseries"])
+        syn_data_array = np.stack(syn_user_data["timeseries"])
+        real_data_array_inv = np.stack(real_user_data_inv["timeseries"])
+        syn_data_array_inv = np.stack(syn_user_data_inv["timeseries"])
 
         # Compute dtw using original scale data
         dtw_mean, dtw_std = dynamic_time_warping_dist(
@@ -62,19 +47,18 @@ class Evaluator:
 
         # Compute Period Bound MSE using original scale data and dataframe
         mse_mean, mse_std = calculate_period_bound_mse(
-            syn_data_array_inv, real_user_data_inv, columns=relevant_cols
+            syn_data_array_inv, real_user_data_inv
         )
         self.writer.add_scalar(f"MSE/{user_id}/mean", mse_mean)
         self.writer.add_scalar(f"MSE/{user_id}/std", mse_std)
         self.metrics["mse"].append((user_id, mse_mean, mse_std))
 
         # Compute Context FID using normalized and scaled data
-        for _, row in syn_user_data.iterrows():
-            for col in relevant_cols:
-                gen_daily_profile = row[col]
-                fid_score = Context_FID(real_data_array, gen_daily_profile)
-                self.writer.add_scalar(f"FID/{col}/{user_id}", fid_score)
-                self.metrics["fid"].append((user_id, col, fid_score))
+        fid_score = Context_FID(real_data_array, syn_data_array)
+        self.writer.add_scalar(f"FID/{user_id}", fid_score)
+        self.metrics["fid"].append((user_id, fid_score))
+
+        a = 1
 
         # for col in relevant_cols:
         #     visualization(
@@ -91,26 +75,16 @@ class Evaluator:
             self.evaluate_user(user_id)
         self.writer.flush()
 
-    def generate_data_for_eval(self, model, n_dimensions):
+    def generate_data_for_eval(self, model):
         syn_ts = []
 
         for _, row in self.real_df.iterrows():
             month_label = torch.tensor([row["month"]]).to(device)
             day_label = torch.tensor([row["weekday"]]).to(device)
             gen_ts = model.generate([month_label, day_label]).squeeze().cpu().numpy()
+            gen_ts = gen_ts.reshape(-1, gen_ts.shape[0])
+            syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
 
-            if n_dimensions == 2:
-                gen_grid, gen_solar = gen_ts[0], gen_ts[1]
-                syn_ts.append(
-                    (row["month"], row["weekday"], row["date_day"], gen_grid, gen_solar)
-                )
-            else:
-                syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
-
-        columns = ["month", "weekday", "date_day", "grid"]
-
-        if n_dimensions == 2:
-            columns.append("solar")
-
+        columns = ["month", "weekday", "date_day", "timeseries"]
         syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
         return syn_ts_df
