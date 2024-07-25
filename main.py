@@ -15,12 +15,18 @@ def main():
     all_users = full_dataset.data.dataid.unique()
 
     for user in tqdm(all_users):
+        print(f"Training for user {user}...")
         data = PecanStreetDataset(
             normalize=True, user_id=user, include_generation=True, threshold=(-2, 2)
         )
         train_dataset, val_dataset = split_dataset(data)
+
+        input_dim = (
+            int(data.is_pv_user) + 1
+        )  # if user has available pv data, input dim is 2
+
         model = ACGAN(
-            input_dim=2,
+            input_dim=input_dim,
             noise_dim=512,
             embedding_dim=512,
             window_length=96,
@@ -29,7 +35,7 @@ def main():
         )
         model.train(train_dataset, val_dataset, batch_size=32, num_epoch=100)
         user_evaluator = Evaluator(data, model, 2, "runs/")
-        user_evaluator.evaluate_for_user(user)
+        user_evaluator.evaluate_all_users()
 
 
 if __name__ == "__main__":

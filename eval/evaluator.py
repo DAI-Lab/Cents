@@ -24,6 +24,10 @@ class Evaluator:
 
     def evaluate_for_user(self, user_id):
 
+        print("----------------------")
+        print(f"Starting evaluation for user {user_id}")
+        print("----------------------")
+
         real_user_data = self.real_df[self.real_df["dataid"] == user_id]
         syn_user_data = self.synthetic_df
         syn_user_data["dataid"] = user_id
@@ -72,7 +76,7 @@ class Evaluator:
     def evaluate_all_users(self):
         user_ids = self.real_df["dataid"].unique()
         for user_id in user_ids:
-            self.evaluate_user(user_id)
+            self.evaluate_for_user(user_id)
 
         print("Final Results: \n")
         print("--------------------")
@@ -97,7 +101,7 @@ class Evaluator:
         syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
         return syn_ts_df
 
-    def get_summary_statistics(self):
+    def get_summary_metrics(self):
         """
         Calculate the mean values for all users across all metrics.
 
@@ -108,7 +112,7 @@ class Evaluator:
 
         # Collect mean values for each metric
         for metric in metrics_summary.keys():
-            mean_values = [value[0] for value in self.metrics[metric]]
+            mean_values = [value[1] for value in self.metrics[metric]]
             metrics_summary[metric] = np.mean(mean_values)
 
         return metrics_summary["dtw"], metrics_summary["mse"], metrics_summary["fid"]

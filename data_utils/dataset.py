@@ -108,12 +108,13 @@ class PecanStreetDataset(Dataset):
             grid_data["solar"] = self.preprocess_data(data, "solar", self.threshold)[
                 "solar"
             ].copy()
+            grid_data = self.merge_columns_into_timeseries(grid_data)
         else:
             grid_data["timeseries"] = [
                 np.array(g).reshape(-1, 1) for g in grid_data["grid"]
             ]
+            grid_data.drop(columns=["grid"], inplace=True)
 
-        grid_data = self.merge_columns_into_timeseries(grid_data)
         return grid_data.sort_values(by=["dataid", "month", "weekday"])
 
     def preprocess_data(
