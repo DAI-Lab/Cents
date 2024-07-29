@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
     Context_FID,
     calculate_mmd,
@@ -72,6 +73,15 @@ class Evaluator:
         print("Done!")
         user_writer.add_scalar("FID/score", fid_score)
         self.metrics["fid"].append((user_id, fid_score))
+
+        # Compute discriminative score using original scale data
+        print(f"Computing discriminative score for user {user_id}...")
+        discr_score, _, _ = discriminative_score_metrics(
+            real_data_array_inv, syn_data_array_inv
+        )
+        print("Done!")
+        user_writer.add_scalar("Discr/score", discr_score)
+        self.metrics["discr_score"].append((user_id, discr_score))
 
         user_writer.add_figure(
             tag="TSNE",

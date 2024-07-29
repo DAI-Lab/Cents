@@ -222,7 +222,7 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
         # Do t-SNE Analysis together
         prep_data_final = np.concatenate((prep_data, prep_data_hat), axis=0)
         # TSNE anlaysis
-        tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
+        tsne = TSNE(n_components=2, verbose=1, perplexity=25, n_iter=300)
         tsne_results = tsne.fit_transform(prep_data_final)
 
         # Plotting
@@ -251,37 +251,26 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
         plt.show()
 
     elif analysis == "kernel":
-
-        # Visualization parameter
-        # colors = ["red" for i in range(anal_sample_no)] + ["blue" for i in range(anal_sample_no)]
-
         f, ax = plt.subplots(1)
-        sns.distplot(
-            prep_data,
-            hist=False,
-            kde=True,
-            kde_kws={"linewidth": 5},
-            label="Original",
-            color="red",
-        )
-        sns.distplot(
-            prep_data_hat,
-            hist=False,
-            kde=True,
-            kde_kws={"linewidth": 5, "linestyle": "--"},
-            label="Synthetic",
-            color="blue",
-        )
-        # Plot formatting
 
-        # plt.legend(prop={'size': 22})
+        # Update KDE plot for original data
+        sns.kdeplot(
+            data=prep_data.flatten(), shade=True, color="red", label="Original", ax=ax
+        )
+
+        # Update KDE plot for synthetic data
+        sns.kdeplot(
+            data=prep_data_hat.flatten(),
+            shade=True,
+            color="blue",
+            label="Synthetic",
+            ax=ax,
+            linestyle="--",
+        )
+
         plt.legend()
         plt.xlabel("Data Value")
         plt.ylabel("Data Density Estimate")
-        # plt.rcParams['pdf.fonttype'] = 42
-
-        # plt.savefig(str(args.save_dir)+"/"+args.model1+"_histo.png", dpi=100,bbox_inches='tight')
-        # plt.ylim((0, 12))
         plt.show()
         plt.close()
 
