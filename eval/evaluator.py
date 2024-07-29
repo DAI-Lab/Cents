@@ -5,6 +5,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from eval.metrics import (
     Context_FID,
+    calculate_mmd,
     calculate_period_bound_mse,
     dynamic_time_warping_dist,
     visualization,
@@ -51,6 +52,12 @@ class Evaluator:
         user_writer.add_scalar("DTW/std", dtw_std)
         self.metrics["dtw"].append((user_id, dtw_mean, dtw_std))
 
+        # Compute maximum mean discrepancy between real and synthetic data for all daily load profiles and get mean
+        mmd_mean, mmd_std = calculate_mmd(real_data_array_inv, syn_data_array_inv)
+        user_writer.add_scalar("MMD/mean", dtw_mean)
+        user_writer.add_scalar("MMD/std", dtw_std)
+        self.metrics["mmd"].append((user_id, mmd_mean, mmd_std))
+
         # Compute Period Bound MSE using original scale data and dataframe
         mse_mean, mse_std = calculate_period_bound_mse(
             syn_data_array_inv, real_user_data_inv
@@ -86,8 +93,9 @@ class Evaluator:
 
         print("Final Results: \n")
         print("--------------------")
-        dtw, mse, context_fid = self.get_summary_metrics()
+        dtw, mmd, mse, context_fid = self.get_summary_metrics()
         print(f"Mean User DTW: {dtw}")
+        print(f"Mean User MMD: {mmd}")
         print(f"Mean User Bound MSE: {mse}")
         print(f"Mean User Context-FID: {context_fid}")
         print("--------------------")
@@ -115,11 +123,16 @@ class Evaluator:
         Returns:
             A tuple containing the mean values for dtw, mse, and fid.
         """
-        metrics_summary = {"dtw": [], "mse": [], "fid": []}
+        metrics_summary = {"dtw": [], "mmd": [], "mse": [], "fid": []}
 
         # Collect mean values for each metric
         for metric in metrics_summary.keys():
             mean_values = [value[1] for value in self.metrics[metric]]
             metrics_summary[metric] = np.mean(mean_values)
 
-        return metrics_summary["dtw"], metrics_summary["mse"], metrics_summary["fid"]
+        return (
+            metrics_summary["dtw"],
+            metrics_summary["mmd"],
+            metrics_summary["mse"],
+            metrics_summary["fid"],
+        )

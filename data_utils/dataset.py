@@ -115,7 +115,7 @@ class PecanStreetDataset(Dataset):
             ]
             grid_data.drop(columns=["grid"], inplace=True)
 
-        return grid_data.sort_values(by=["dataid", "month", "weekday"])
+        return grid_data.sort_values(by=["dataid", "month", "weekday"], axis=0)
 
     def preprocess_data(
         self, data: pd.DataFrame, column: str, threshold=(-2, 2)
@@ -288,14 +288,13 @@ class PecanStreetDataset(Dataset):
                 result_data.append(transformed_row)
 
         result_df = self.merge_columns_into_timeseries(pd.DataFrame(result_data))
-        return result_df.sort_values(by=["dataid", "month", "weekday"])
+        return result_df.sort_values(by=["dataid", "month", "weekday"], axis=0)
 
     def merge_columns_into_timeseries(self, df):
         if self.include_generation and self.is_pv_user:
-            df["timeseries"] = [
-                np.vstack((g.squeeze(), s.squeeze())).T
-                for g, s in zip(df["grid"], df["solar"])
-            ]
+            df["timeseries"] = df.apply(
+                lambda row: np.column_stack((row["grid"], row["solar"])), axis=1
+            )
             df.drop(columns=["grid", "solar"], axis=1, inplace=True)
         else:
             df["timeseries"] = df["grid"]

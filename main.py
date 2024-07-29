@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from sklearn.metrics import mean_squared_error
 from tqdm import tqdm
 
 from data_utils.dataset import PecanStreetDataset, prepare_dataloader, split_dataset
@@ -13,7 +14,7 @@ def main():
         normalize=True, user_id=None, include_generation=True, threshold=(-4, 4)
     )
     all_users = full_dataset.data.dataid.unique()
-    all_users = all_users[:5]
+    all_users = all_users[8]
 
     for user in tqdm(all_users):
         print(f"Training for user {user}...")
