@@ -11,6 +11,7 @@ from eval.metrics import (
     dynamic_time_warping_dist,
     visualization,
 )
+from eval.predictive_metric import predictive_score_metrics
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -22,7 +23,14 @@ class Evaluator:
         self.n_dimensions = n_dimensions
         self.synthetic_df = self.generate_data_for_eval(model)
         self.writer = SummaryWriter(log_dir)
-        self.metrics = {"dtw": [], "mmd": [], "mse": [], "fid": []}
+        self.metrics = {
+            "dtw": [],
+            "mmd": [],
+            "mse": [],
+            "fid": [],
+            "discr": [],
+            "pred": [],
+        }
 
     def evaluate_for_user(self, user_id):
         user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
@@ -81,7 +89,14 @@ class Evaluator:
         )
         print("Done!")
         user_writer.add_scalar("Discr/score", discr_score)
-        self.metrics["discr_score"].append((user_id, discr_score))
+        self.metrics["discr"].append((user_id, discr_score))
+
+        # Compute predictive score using original scale data
+        print(f"Computing predictive score for user {user_id}...")
+        pred_score = predictive_score_metrics(real_data_array_inv, syn_data_array_inv)
+        print("Done!")
+        user_writer.add_scalar("Pred/score", pred_score)
+        self.metrics["pred"].append((user_id, pred_score))
 
         user_writer.add_figure(
             tag="TSNE",
@@ -133,7 +148,14 @@ class Evaluator:
         Returns:
             A tuple containing the mean values for dtw, mse, and fid.
         """
-        metrics_summary = {"dtw": [], "mmd": [], "mse": [], "fid": []}
+        metrics_summary = {
+            "dtw": [],
+            "mmd": [],
+            "mse": [],
+            "fid": [],
+            "discr": [],
+            "pred": [],
+        }
 
         # Collect mean values for each metric
         for metric in metrics_summary.keys():
@@ -145,4 +167,6 @@ class Evaluator:
             metrics_summary["mmd"],
             metrics_summary["mse"],
             metrics_summary["fid"],
+            metrics_summary["discr"],
+            metrics_summary["pred"],
         )

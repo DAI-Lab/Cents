@@ -35,7 +35,7 @@ def main():
             learning_rate=1e-4,
             weight_path="runs/",
         )
-        model.train(train_dataset, val_dataset, batch_size=32, num_epoch=25)
+        model.train(train_dataset, val_dataset, batch_size=32, num_epoch=200)
         user_evaluator = Evaluator(data, model, input_dim, f"runs/user_{user}")
         user_evaluator.evaluate_all_users()
 
