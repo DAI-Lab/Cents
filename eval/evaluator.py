@@ -21,7 +21,7 @@ class Evaluator:
         self.n_dimensions = n_dimensions
         self.synthetic_df = self.generate_data_for_eval(model)
         self.writer = SummaryWriter(log_dir)
-        self.metrics = {"dtw": [], "mse": [], "fid": []}
+        self.metrics = {"dtw": [], "mmd": [], "mse": [], "fid": []}
 
     def evaluate_for_user(self, user_id):
         user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
@@ -54,8 +54,8 @@ class Evaluator:
 
         # Compute maximum mean discrepancy between real and synthetic data for all daily load profiles and get mean
         mmd_mean, mmd_std = calculate_mmd(real_data_array_inv, syn_data_array_inv)
-        user_writer.add_scalar("MMD/mean", dtw_mean)
-        user_writer.add_scalar("MMD/std", dtw_std)
+        user_writer.add_scalar("MMD/mean", mmd_mean)
+        user_writer.add_scalar("MMD/std", mmd_std)
         self.metrics["mmd"].append((user_id, mmd_mean, mmd_std))
 
         # Compute Period Bound MSE using original scale data and dataframe

@@ -3,7 +3,7 @@ import pandas as pd
 from sklearn.metrics import mean_squared_error
 from tqdm import tqdm
 
-from data_utils.dataset import PecanStreetDataset, prepare_dataloader, split_dataset
+from data_utils.dataset import PecanStreetDataset, split_dataset
 from eval.evaluator import Evaluator
 from generator.acgan import ACGAN
 
@@ -14,7 +14,7 @@ def main():
         normalize=True, user_id=None, include_generation=True, threshold=(-4, 4)
     )
     all_users = full_dataset.data.dataid.unique()
-    all_users = all_users[8]
+    all_users = all_users[8:10]
 
     for user in tqdm(all_users):
         print(f"Training for user {user}...")
