@@ -118,23 +118,31 @@ class Evaluator:
 
         print("Final Results: \n")
         print("--------------------")
-        dtw, mmd, mse, context_fid = self.get_summary_metrics()
+        dtw, mmd, mse, context_fid, discr_score, pred_score = self.get_summary_metrics()
         print(f"Mean User DTW: {dtw}")
         print(f"Mean User MMD: {mmd}")
         print(f"Mean User Bound MSE: {mse}")
         print(f"Mean User Context-FID: {context_fid}")
+        print(f"Mean User Discriminative Score: {discr_score}")
+        print(f"Mean User Predictive Score: {pred_score}")
         print("--------------------")
         self.writer.flush()
         self.writer.close()
 
     def generate_data_for_eval(self, model):
-        syn_ts = []
+        month_labels = torch.tensor(self.real_df["month"].values).to(device)
+        day_labels = torch.tensor(self.real_df["weekday"].values).to(device)
 
-        for _, row in self.real_df.iterrows():
-            month_label = torch.tensor([row["month"]]).to(device)
-            day_label = torch.tensor([row["weekday"]]).to(device)
-            gen_ts = model.generate([month_label, day_label]).squeeze(0).cpu().numpy()
-            gen_ts = gen_ts.reshape(-1, gen_ts.shape[0])
+        generated_ts = model.generate([month_labels, day_labels]).cpu().numpy()
+
+        if len(generated_ts.shape) == 2:
+            generated_ts = generated_ts.reshape(
+                generated_ts.shape[0], -1, generated_ts.shape[1]
+            )
+
+        syn_ts = []
+        for idx, (_, row) in enumerate(self.real_df.iterrows()):
+            gen_ts = generated_ts[idx]
             syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
 
         columns = ["month", "weekday", "date_day", "timeseries"]
