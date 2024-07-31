@@ -160,11 +160,6 @@ class ACGAN:
             for i, (time_series_batch, month_label_batch, day_label_batch) in enumerate(
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
-                time_series_batch, month_label_batch, day_label_batch = (
-                    time_series_batch,
-                    month_label_batch,
-                    day_label_batch,
-                )
                 current_batch_size = time_series_batch.size(0)
                 noise = torch.randn((current_batch_size, self.code_size)).to(device)
                 generated_time_series = self.generator(
