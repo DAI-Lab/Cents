@@ -133,7 +133,11 @@ class Evaluator:
         month_labels = torch.tensor(self.real_df["month"].values).to(device)
         day_labels = torch.tensor(self.real_df["weekday"].values).to(device)
 
-        generated_ts = model.generate([month_labels, day_labels]).cpu().numpy()
+        generated_ts = (
+            model.generate(month_labels=month_labels, day_labels=day_labels)
+            .cpu()
+            .numpy()
+        )
 
         if len(generated_ts.shape) == 2:
             generated_ts = generated_ts.reshape(

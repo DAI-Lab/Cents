@@ -2,7 +2,9 @@ import numpy as np
 import torch
 import torch.autograd
 import torch.nn as nn
+import torch.nn.init as init
 import torch.optim as optim
+from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 from data_utils.dataset import prepare_dataloader
@@ -27,6 +29,19 @@ class RNNModule(nn.Module):
         output = self.fc(output)
         return torch.sigmoid(output)
 
+    def _weights_init(self, m):
+        if isinstance(m, nn.Linear):
+            init.xavier_uniform_(m.weight)
+            m.bias.data.fill_(0)
+        elif isinstance(m, nn.GRU):
+            for name, param in m.named_parameters():
+                if "weight_ih" in name:
+                    init.xavier_uniform_(param.data)
+                elif "weight_hh" in name:
+                    init.orthogonal_(param.data)
+                elif "bias" in name:
+                    param.data.fill_(0)
+
 
 class TimeGAN(nn.Module):
     def __init__(
@@ -35,7 +50,7 @@ class TimeGAN(nn.Module):
         hidden_size,
         num_layers,
         embedding_dim,
-        conditional_embedding_dim=16,
+        conditional_embedding_dim=32,
     ):
         super(TimeGAN, self).__init__()
         self.input_size = input_size
@@ -59,7 +74,7 @@ class TimeGAN(nn.Module):
             total_input_size, hidden_size, num_layers, embedding_dim
         ).to(device)
         self.supervisor = RNNModule(
-            embedding_dim, hidden_size, num_layers - 1, embedding_dim
+            embedding_dim, hidden_size, num_layers, embedding_dim
         ).to(device)
         self.discriminator = RNNModule(embedding_dim, hidden_size, num_layers, 1).to(
             device
@@ -74,10 +89,11 @@ class TimeGAN(nn.Module):
 
     def forward(self, X, Z, T, month, weekday):
         X_cond = self.add_conditioning(X, month, weekday)
+        Z_cond = self.add_conditioning(Z, month, weekday)
+
         H = self.embedder(X_cond, T)
         X_tilde = self.recovery(H, T)
 
-        Z_cond = self.add_conditioning(Z, month, weekday)
         E_hat = self.generator(Z_cond, T)
         H_hat = self.supervisor(E_hat, T)
         H_hat_supervise = self.supervisor(H, T)
@@ -101,6 +117,7 @@ class TimeGAN(nn.Module):
         )
 
     def train_model(self, x_train, x_val, batch_size=32, num_epoch=5):
+        summary_writer = SummaryWriter()
         optimizer_embedder = optim.Adam(
             list(self.embedder.parameters()) + list(self.recovery.parameters()), lr=1e-4
         )
@@ -118,11 +135,13 @@ class TimeGAN(nn.Module):
 
         # Phase 1: Embedding network training
         self.embedding_network_training(
-            train_loader, optimizer_embedder, mse_loss, num_epoch
+            train_loader, optimizer_embedder, mse_loss, num_epoch, summary_writer
         )
 
         # Phase 2: Training with supervised loss only
-        self.supervised_training(train_loader, optimizer_generator, mse_loss, num_epoch)
+        self.supervised_training(
+            train_loader, optimizer_generator, mse_loss, num_epoch, summary_writer
+        )
 
         # Phase 3: Joint training
         self.joint_training(
@@ -134,14 +153,17 @@ class TimeGAN(nn.Module):
             criterion,
             mse_loss,
             num_epoch,
+            summary_writer,
         )
 
         print("Training complete")
 
     def embedding_network_training(
-        self, train_loader, optimizer_embedder, mse_loss, num_epoch
+        self, train_loader, optimizer_embedder, mse_loss, num_epoch, summary_writer
     ):
         print("Start Embedding Network Training")
+
+        step = 0
 
         for epoch in range(num_epoch):
             for i, (time_series_batch, month_label_batch, day_label_batch) in enumerate(
@@ -173,17 +195,27 @@ class TimeGAN(nn.Module):
                 E_loss0.backward()
                 optimizer_embedder.step()
 
+                summary_writer.add_scalars(
+                    "data/embedding",
+                    {"emb": E_loss0.item()},
+                    global_step=step,
+                )
+
                 if i % 1000 == 0:
                     print(
                         f"Embedding Epoch [{epoch}/{num_epoch}], Step [{i}/{len(train_loader)}], E_loss: {E_loss0.item():.4f}"
                     )
 
+                step += 1
+
         print("Finish Embedding Network Training")
 
     def supervised_training(
-        self, train_loader, optimizer_generator, mse_loss, num_epoch
+        self, train_loader, optimizer_generator, mse_loss, num_epoch, summary_writer
     ):
         print("Start Training with Supervised Loss Only")
+
+        step = 0
 
         for epoch in range(num_epoch):
             for i, (time_series_batch, month_label_batch, day_label_batch) in enumerate(
@@ -214,10 +246,18 @@ class TimeGAN(nn.Module):
                 G_loss_S.backward()
                 optimizer_generator.step()
 
+                summary_writer.add_scalars(
+                    "data/supervised",
+                    {"gen": G_loss_S.item()},
+                    global_step=step,
+                )
+
                 if i % 1000 == 0:
                     print(
                         f"Supervised Epoch [{epoch}/{num_epoch}], Step [{i}/{len(train_loader)}], G_loss_S: {G_loss_S.item():.4f}"
                     )
+
+                step += 1
 
         print("Finish Training with Supervised Loss Only")
 
@@ -231,8 +271,11 @@ class TimeGAN(nn.Module):
         criterion,
         mse_loss,
         num_epoch,
+        summary_writer,
     ):
         print("Start Joint Training")
+        gamma = 1
+        step = 0
 
         for epoch in range(num_epoch):
             for i, (time_series_batch, month_label_batch, day_label_batch) in enumerate(
@@ -248,74 +291,109 @@ class TimeGAN(nn.Module):
                 month_label_batch = month_label_batch.to(device)
                 day_label_batch = day_label_batch.to(device)
 
-                # Forward pass
-                (
-                    H,
-                    X_tilde,
-                    E_hat,
-                    H_hat,
-                    H_hat_supervise,
-                    X_hat,
-                    Y_fake,
-                    Y_real,
-                    Y_fake_e,
-                ) = self.forward(X_mb, Z_mb, T_mb, month_label_batch, day_label_batch)
+                # Train Generator and Embedder (multiple steps)
+                for _ in range(2):
 
-                # Step 1: Optimize Embedder and Recovery
-                optimizer_embedder.zero_grad()
-                E_loss_T0 = mse_loss(X_mb, X_tilde)
-                E_loss0 = 10 * torch.sqrt(E_loss_T0)
-                G_loss_S_forE = mse_loss(
-                    H[:, 1:, :].detach(), H_hat_supervise[:, :-1, :].detach()
-                )
-                E_loss = E_loss0 + 0.1 * G_loss_S_forE
-                E_loss.backward(retain_graph=True)
-
-                # Step 2: Optimize Generator and Supervisor
-                optimizer_generator.zero_grad()
-                G_loss_S = mse_loss(H[:, 1:, :].detach(), H_hat_supervise[:, :-1, :])
-                G_loss_U = criterion(Y_fake, torch.ones_like(Y_fake))
-                G_loss_U_e = criterion(Y_fake_e, torch.ones_like(Y_fake_e))
-
-                G_loss_V1 = torch.mean(
-                    torch.abs(
-                        torch.sqrt(torch.var(X_hat, dim=0) + 1e-6)
-                        - torch.sqrt(torch.var(X_mb, dim=0) + 1e-6)
+                    (
+                        H,
+                        X_tilde,
+                        E_hat,
+                        H_hat,
+                        H_hat_supervise,
+                        X_hat,
+                        Y_fake,
+                        Y_real,
+                        Y_fake_e,
+                    ) = self.forward(
+                        X_mb, Z_mb, T_mb, month_label_batch, day_label_batch
                     )
-                )
-                G_loss_V2 = torch.mean(
-                    torch.abs(torch.mean(X_hat, dim=0) - torch.mean(X_mb, dim=0))
-                )
-                G_loss_V = G_loss_V1 + G_loss_V2
 
-                G_loss = (
-                    G_loss_U + G_loss_U_e + 100 * torch.sqrt(G_loss_S) + 100 * G_loss_V
-                )
-                G_loss.backward(retain_graph=True)
+                    # Generator losses
+                    G_loss_U = criterion(Y_fake, torch.ones_like(Y_fake))
+                    G_loss_U_e = criterion(Y_fake_e, torch.ones_like(Y_fake_e))
+                    G_loss_S = mse_loss(H[:, 1:, :], H_hat_supervise[:, :-1, :])
+                    G_loss_V1 = torch.mean(
+                        torch.abs(torch.std(X_hat, dim=0) - torch.std(X_mb, dim=0))
+                    )
+                    G_loss_V2 = torch.mean(
+                        torch.abs(torch.mean(X_hat, dim=0) - torch.mean(X_mb, dim=0))
+                    )
+                    G_loss_V = G_loss_V1 + G_loss_V2
 
-                # Step 3: Optimize Discriminator
+                    # G_loss = G_loss_U + G_loss_U_e + 100 * torch.sqrt(G_loss_S) + 100 * G_loss_V
+
+                    # Embedder losses
+                    E_loss_T0 = mse_loss(X_mb, X_tilde)
+                    E_loss0 = 10 * torch.sqrt(E_loss_T0)
+                    E_loss = E_loss0 + 0.1 * G_loss_S
+
+                    optimizer_generator.zero_grad()
+                    optimizer_embedder.zero_grad()
+
+                    G_loss_V.backward(retain_graph=True)
+                    G_loss_U.backward(retain_graph=True)
+                    G_loss_U_e.backward(retain_graph=True)
+                    G_loss_S.backward(retain_graph=True)
+                    E_loss.backward()
+
+                    # Gradient monitoring for generator
+                    for name, param in self.generator.named_parameters():
+                        if param.grad is not None:
+                            summary_writer.add_histogram(
+                                f"gradients/generator/{name}", param.grad, step
+                            )
+
+                    optimizer_generator.step()
+                    optimizer_embedder.step()
+
+                # Train Discriminator
                 optimizer_discriminator.zero_grad()
+
+                _, _, _, _, _, _, Y_fake, Y_real, Y_fake_e = self.forward(
+                    X_mb, Z_mb, T_mb, month_label_batch, day_label_batch
+                )
+
                 D_loss_real = criterion(Y_real, torch.ones_like(Y_real))
                 D_loss_fake = criterion(Y_fake, torch.zeros_like(Y_fake))
                 D_loss_fake_e = criterion(Y_fake_e, torch.zeros_like(Y_fake_e))
-                D_loss = D_loss_real + D_loss_fake + D_loss_fake_e
-                D_loss.backward()
 
-                # Step 4: Perform optimizer steps
-                optimizer_embedder.step()
-                optimizer_generator.step()
-                optimizer_discriminator.step()
+                D_loss = D_loss_real + D_loss_fake + gamma * D_loss_fake_e
 
-                # Validation
-                self.validate(val_loader, num_epoch)
+                # Only update discriminator if loss is above threshold
+                if D_loss.item() > 0.15:
+                    D_loss.backward()
+
+                    for name, param in self.discriminator.named_parameters():
+                        if param.grad is not None:
+                            summary_writer.add_histogram(
+                                f"gradients/discriminator/{name}", param.grad, step
+                            )
+
+                    optimizer_discriminator.step()
+
+                summary_writer.add_scalars(
+                    "data/joint",
+                    {
+                        "gen_u": G_loss_U.item(),
+                        "gen_u_e": G_loss_U_e.item(),
+                        # "gen_v": G_loss_V.item(),
+                        "discr": D_loss.item(),
+                    },
+                    global_step=step,
+                )
 
                 if i % 1000 == 0:
                     print(
-                        f"Joint Epoch [{epoch}/{num_epoch}]"
-                        f"E_loss: {E_loss.item():.4f}, G_loss: {G_loss.item():.4f}, D_loss: {D_loss.item():.4f}"
+                        f"Joint Epoch [{epoch}/{num_epoch}], "
+                        f"G_loss: {G_loss_U.item():.4f}, D_loss: {D_loss.item():.4f}, E_loss: {E_loss.item():.4f}"
                     )
 
-        print("Finish Joint Training")
+                step += 1
+
+            # Validate
+            # self.validate(val_loader, epoch)
+
+    print("Finish Joint Training")
 
     def validate(self, val_loader, num_epoch):
         self.eval()
@@ -373,8 +451,13 @@ class TimeGAN(nn.Module):
             X_hat = self.recovery(H_hat, T)
             return X_hat
 
-    def generate(self, labels):
-        num_samples = labels[0].shape[0]
-        noise = torch.randn((num_samples, 96, self.input_size)).to(device)
-        T = torch.full((num_samples,), 96, dtype=torch.int32).to(device)
-        return self._generate([noise] + [T] + [l.clone().to(device) for l in labels])
+    def generate(self, month_labels, day_labels, seq_length=96):
+        num_samples = day_labels.shape[0]
+        noise = torch.randn((num_samples, seq_length, self.input_size)).to(device)
+        T = torch.full((num_samples,), seq_length, dtype=torch.int32).to(device)
+        return self._generate(
+            [noise]
+            + [T]
+            + [month_labels.clone().to(device)]
+            + [day_labels.clone().to(device)]
+        )

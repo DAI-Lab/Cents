@@ -15,7 +15,7 @@ def evaluate_acgan():
         normalize=True, user_id=None, include_generation=True, threshold=(-6, 6)
     )
     all_users = full_dataset.data.dataid.unique()
-    # all_users = [661]
+    all_users = [661]
 
     for user in tqdm(all_users):
         print(f"Training for user {user}...")
@@ -46,7 +46,7 @@ def evaluate_diffusion_ts():
         normalize=True, user_id=None, include_generation=True, threshold=(-6, 6)
     )
     all_users = full_dataset.data.dataid.unique()
-    # all_users = [661]
+    all_users = [661]
 
     for user in tqdm(all_users):
         print(f"Training for user {user}...")
@@ -73,7 +73,8 @@ def main():
         normalize=True, user_id=None, include_generation=True, threshold=(-6, 6)
     )
     all_users = full_dataset.data.dataid.unique()
-    # all_users = [661]
+    all_users = [3687]
+    all_users = [661]
 
     for user in tqdm(all_users):
         print(f"Training for user {user}...")
@@ -87,9 +88,9 @@ def main():
         )  # if user has available pv data, input dim is 2
 
         model = TimeGAN(
-            input_size=input_dim, hidden_size=16, num_layers=4, embedding_dim=512
+            input_size=input_dim, hidden_size=48, num_layers=4, embedding_dim=32
         )
-        model.train_model(train_dataset, val_dataset, batch_size=32, num_epoch=200)
+        model.train_model(train_dataset, val_dataset, batch_size=32, num_epoch=100)
         user_evaluator = Evaluator(data, model, input_dim, f"runs/timegan/user_{user}")
         user_evaluator.evaluate_all_users()
 

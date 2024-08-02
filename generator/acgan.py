@@ -21,35 +21,42 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Generator(nn.Module):
-    def __init__(self, noise_dim, embedding_dim, final_window_length, input_dim):
+    def __init__(
+        self, noise_dim, embedding_dim, final_window_length, input_dim, base_channels=64
+    ):
         super(Generator, self).__init__()
         self.noise_dim = noise_dim
         self.embedding_dim = embedding_dim
         self.final_window_length = final_window_length // 8
         self.input_dim = input_dim
+        self.base_channels = base_channels
 
         self.month_embedding = nn.Embedding(12, embedding_dim)
         self.day_embedding = nn.Embedding(7, embedding_dim)
 
         self.fc = nn.Linear(
-            noise_dim + 2 * embedding_dim, self.final_window_length * 64
+            noise_dim + 2 * embedding_dim, self.final_window_length * base_channels
         )
 
         self.conv_transpose_layers = nn.Sequential(
-            nn.BatchNorm2d(64),
+            nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.ConvTranspose2d(
-                64, 32, kernel_size=(4, 1), stride=(2, 1), padding=(1, 0)
+            nn.ConvTranspose1d(
+                base_channels, base_channels // 2, kernel_size=4, stride=2, padding=1
             ),
-            nn.BatchNorm2d(32),
+            nn.BatchNorm1d(base_channels // 2),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.ConvTranspose2d(
-                32, 16, kernel_size=(4, 1), stride=(2, 1), padding=(1, 0)
+            nn.ConvTranspose1d(
+                base_channels // 2,
+                base_channels // 4,
+                kernel_size=4,
+                stride=2,
+                padding=1,
             ),
-            nn.BatchNorm2d(16),
+            nn.BatchNorm1d(base_channels // 4),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.ConvTranspose2d(
-                16, input_dim, kernel_size=(4, 1), stride=(2, 1), padding=(1, 0)
+            nn.ConvTranspose1d(
+                base_channels // 4, input_dim, kernel_size=4, stride=2, padding=1
             ),
             nn.Sigmoid(),
         )
@@ -64,35 +71,50 @@ class Generator(nn.Module):
 
         x = torch.cat((noise, month_embedded, day_embedded), dim=1).to(device)
         x = self.fc(x)
-        x = x.view(-1, 64, self.final_window_length, 1)
+        x = x.view(-1, self.base_channels, self.final_window_length)
         x = self.conv_transpose_layers(x)
-        x = x.squeeze(3)
+        x = x.permute(0, 2, 1)  # Permute to (batch_size, seq_length, n_dim)
 
         return x
 
 
 class Discriminator(nn.Module):
-    def __init__(self, input_length, input_dim=1):
+    def __init__(self, window_length, input_dim, base_channels=64):
         super(Discriminator, self).__init__()
         self.input_dim = input_dim
-        self.input_length = input_length
+        self.window_length = window_length
+        self.base_channels = base_channels
+
         self.conv_layers = nn.Sequential(
-            nn.Conv1d(input_dim, 16, kernel_size=4, stride=2, padding=1),
+            nn.Conv1d(
+                input_dim, base_channels // 4, kernel_size=4, stride=2, padding=1
+            ),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(16, 32, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm1d(32),
+            nn.Conv1d(
+                base_channels // 4,
+                base_channels // 2,
+                kernel_size=4,
+                stride=2,
+                padding=1,
+            ),
+            nn.BatchNorm1d(base_channels // 2),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(32, 64, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm1d(64),
+            nn.Conv1d(
+                base_channels // 2, base_channels, kernel_size=4, stride=2, padding=1
+            ),
+            nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.2, inplace=True),
         )
-        self.fc_discriminator = nn.Linear(self.input_length // 8 * 64, 1)
-        self.fc_aux_day = nn.Linear(self.input_length // 8 * 64, 7)
-        self.fc_aux_month = nn.Linear(self.input_length // 8 * 64, 12)
+
+        self.fc_discriminator = nn.Linear((window_length // 8) * base_channels, 1)
+        self.fc_aux_day = nn.Linear((window_length // 8) * base_channels, 7)
+        self.fc_aux_month = nn.Linear((window_length // 8) * base_channels, 12)
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        x = x.reshape((x.shape[0], self.input_dim, self.input_length))
+        x = x.permute(
+            0, 2, 1
+        )  # Permute to (n_samples, n_dim, seq_length) for conv layers
         x = self.conv_layers(x)
         x = x.view(x.size(0), -1)
         validity = torch.sigmoid(self.fc_discriminator(x))
@@ -141,8 +163,6 @@ class ACGAN:
             weight_decay=1e-6,
         )
 
-    import torch.nn.utils as utils
-
     def train(self, x_train, x_val, batch_size=32, num_epoch=5):
         summary_writer = SummaryWriter()
         self.gen_losses = []
@@ -171,7 +191,7 @@ class ACGAN:
                 self.optimizer_D.zero_grad()
                 real_pred, real_day, real_month = self.discriminator(time_series_batch)
                 fake_pred, fake_day, fake_month = self.discriminator(
-                    generated_time_series.detach().squeeze()
+                    generated_time_series.detach()
                 )
 
                 d_real_loss = (
@@ -209,7 +229,7 @@ class ACGAN:
                 )
 
                 validity, pred_day, pred_month = self.discriminator(
-                    generated_time_series.squeeze()
+                    generated_time_series
                 )
 
                 g_loss = (
@@ -252,21 +272,17 @@ class ACGAN:
                         month_label_batch,
                         day_label_batch,
                     )
-                    x_generated = self.generate([month_label_batch, day_label_batch])
+                    x_generated = self.generate(
+                        month_labels=month_label_batch, day_labels=day_label_batch
+                    )
                     mmd_values = np.zeros(
                         shape=(time_series_batch.shape[0], self.input_dim)
-                    )
-                    time_series_batch = time_series_batch.view(
-                        (time_series_batch.shape[0], self.input_dim, self.window_length)
-                    )
-                    x_generated = x_generated.view(
-                        (x_generated.shape[0], self.input_dim, self.window_length)
                     )
 
                     for dim in range(self.input_dim):
                         mmd_values[:, dim] = mmd_loss(
-                            time_series_batch[:, dim, :].cpu().numpy(),
-                            x_generated[:, dim, :].cpu().numpy(),
+                            time_series_batch[:, :, dim].cpu().numpy(),
+                            x_generated[:, :, dim].cpu().numpy(),
                         )
 
                     batch_mmd_loss = np.mean(mmd_values, axis=0)
@@ -295,10 +311,14 @@ class ACGAN:
         with torch.no_grad():
             return self.generator(*x)
 
-    def generate(self, labels):
-        num_samples = labels[0].shape[0]
+    def generate(self, day_labels, month_labels):
+        assert (
+            day_labels.shape == month_labels.shape
+        ), "Number of weekday and month labels must be equal!"
+
+        num_samples = day_labels.shape[0]
         noise = torch.randn((num_samples, self.code_size)).to(device)
-        return self._generate([noise] + [l.clone() for l in labels])
+        return self._generate([noise] + [month_labels.clone()] + [day_labels.clone()])
 
     def save_weight(self):
         torch.save(

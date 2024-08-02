@@ -270,7 +270,7 @@ class Diffusion_TS(nn.Module):
         return torch.cat([x, month_emb, weekday_emb], dim=-1)
 
     def model_predictions(self, x, t, labels, clip_x_start=False):
-        month_labels, weekday_labels = labels
+        weekday_labels, month_labels = labels
         conditioned_x = self.add_conditioning(x, month_labels, weekday_labels)
         maybe_clip = (
             partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
@@ -469,10 +469,10 @@ class Diffusion_TS(nn.Module):
 
         print("Training complete")
 
-    def generate(self, labels):
-        num_samples = labels[0].shape[0]
+    def generate(self, day_labels, month_labels):
+        num_samples = day_labels.shape[0]
         shape = (num_samples, self.seq_length, self.feature_size)
-        return self._generate(shape, labels)
+        return self._generate(shape, [day_labels, month_labels])
 
     def _generate(self, shape, labels):
         self.eval()
