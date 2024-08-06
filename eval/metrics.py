@@ -165,113 +165,176 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
 
     no, seq_len, dim = ori_data.shape
 
-    for i in range(anal_sample_no):
-        if i == 0:
-            prep_data = np.reshape(np.mean(ori_data[0, :, :], 1), [1, seq_len])
-            prep_data_hat = np.reshape(
-                np.mean(generated_data[0, :, :], 1), [1, seq_len]
-            )
-        else:
-            prep_data = np.concatenate(
-                (prep_data, np.reshape(np.mean(ori_data[i, :, :], 1), [1, seq_len]))
-            )
-            prep_data_hat = np.concatenate(
-                (
-                    prep_data_hat,
-                    np.reshape(np.mean(generated_data[i, :, :], 1), [1, seq_len]),
+    plots = []
+
+    for d in range(dim):
+        prep_data = []
+        prep_data_hat = []
+
+        for i in range(anal_sample_no):
+            if i == 0:
+                prep_data = np.reshape(ori_data[0, :, d], [1, seq_len])
+                prep_data_hat = np.reshape(generated_data[0, :, d], [1, seq_len])
+            else:
+                prep_data = np.concatenate(
+                    (prep_data, np.reshape(ori_data[i, :, d], [1, seq_len]))
                 )
+                prep_data_hat = np.concatenate(
+                    (prep_data_hat, np.reshape(generated_data[i, :, d], [1, seq_len]))
+                )
+
+        # Visualization parameter
+        colors = ["red" for i in range(anal_sample_no)] + [
+            "blue" for i in range(anal_sample_no)
+        ]
+
+        if analysis == "pca":
+            # PCA Analysis
+            pca = PCA(n_components=2)
+            pca.fit(prep_data)
+            pca_results = pca.transform(prep_data)
+            pca_hat_results = pca.transform(prep_data_hat)
+
+            # Plotting
+            f, ax = plt.subplots(1)
+            plt.scatter(
+                pca_results[:, 0],
+                pca_results[:, 1],
+                c=colors[:anal_sample_no],
+                alpha=0.2,
+                label="Original",
+            )
+            plt.scatter(
+                pca_hat_results[:, 0],
+                pca_hat_results[:, 1],
+                c=colors[anal_sample_no:],
+                alpha=0.2,
+                label="Synthetic",
             )
 
-    # Visualization parameter
-    colors = ["red" for i in range(anal_sample_no)] + [
-        "blue" for i in range(anal_sample_no)
+            ax.legend()
+            plt.title(f"PCA plot for Dimension {d}")
+            plt.xlabel("x-pca")
+            plt.ylabel("y_pca")
+            plt.show()
+
+            plots.append(f)
+
+        elif analysis == "tsne":
+            # Do t-SNE Analysis together
+            prep_data_final = np.concatenate((prep_data, prep_data_hat), axis=0)
+            # TSNE analysis
+            tsne = TSNE(n_components=2, verbose=1, perplexity=25, n_iter=300)
+            tsne_results = tsne.fit_transform(prep_data_final)
+
+            # Plotting
+            f, ax = plt.subplots(1)
+
+            plt.scatter(
+                tsne_results[:anal_sample_no, 0],
+                tsne_results[:anal_sample_no, 1],
+                c=colors[:anal_sample_no],
+                alpha=0.2,
+                label="Original",
+            )
+            plt.scatter(
+                tsne_results[anal_sample_no:, 0],
+                tsne_results[anal_sample_no:, 1],
+                c=colors[anal_sample_no:],
+                alpha=0.2,
+                label="Synthetic",
+            )
+
+            ax.legend()
+            plt.title(f"t-SNE plot for Dimension {d}")
+            plt.xlabel("x-tsne")
+            plt.ylabel("y_tsne")
+            plt.show()
+
+            plots.append(f)
+
+        elif analysis == "kernel":
+            f, ax = plt.subplots(1)
+
+            # Update KDE plot for original data
+            sns.kdeplot(
+                data=prep_data.flatten(),
+                fill=True,
+                color="red",
+                label="Original",
+                ax=ax,
+            )
+
+            # Update KDE plot for synthetic data
+            sns.kdeplot(
+                data=prep_data_hat.flatten(),
+                fill=True,
+                color="blue",
+                label="Synthetic",
+                ax=ax,
+                linestyle="--",
+            )
+
+            plt.legend()
+            plt.xlabel("Data Value")
+            plt.ylabel("Data Density Estimate")
+            plt.title(f"KDE plot for Dimension {d}")
+            plt.show()
+            plt.close()
+
+            plots.append(f)
+
+    return plots
+
+
+def plot_range_with_syn_values(df, syn_df, month, weekday, dimension=0):
+    filtered_df = df[(df["month"] == month) & (df["weekday"] == weekday)]
+    array_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
+
+    min_values = np.min(array_data, axis=0)
+    max_values = np.max(array_data, axis=0)
+
+    syn_filtered_df = syn_df[
+        (syn_df["month"] == month) & (syn_df["weekday"] == weekday)
     ]
 
-    if analysis == "pca":
-        # PCA Analysis
-        pca = PCA(n_components=2)
-        pca.fit(prep_data)
-        pca_results = pca.transform(prep_data)
-        pca_hat_results = pca.transform(prep_data_hat)
+    if syn_filtered_df.empty:
+        print(f"No synthetic data for month={month}, weekday={weekday}")
+        return
 
-        # Plotting
-        f, ax = plt.subplots(1)
-        plt.scatter(
-            pca_results[:, 0],
-            pca_results[:, 1],
-            c=colors[:anal_sample_no],
-            alpha=0.2,
-            label="Original",
-        )
-        plt.scatter(
-            pca_hat_results[:, 0],
-            pca_hat_results[:, 1],
-            c=colors[anal_sample_no:],
-            alpha=0.2,
-            label="Synthetic",
-        )
+    syn_values = np.array(
+        [ts[:, dimension] for ts in syn_filtered_df["timeseries"]]
+    ).squeeze()
+    timestamps = pd.date_range(start="00:00", end="23:45", freq="15T").strftime("%H:%M")
 
-        ax.legend()
-        plt.title("PCA plot")
-        plt.xlabel("x-pca")
-        plt.ylabel("y_pca")
-        plt.show()
+    f = plt.figure(figsize=(15, 7))
+    plt.fill_between(
+        timestamps,
+        min_values,
+        max_values,
+        color="gray",
+        alpha=0.5,
+        label="Range of values",
+    )
 
-    elif analysis == "tsne":
-
-        # Do t-SNE Analysis together
-        prep_data_final = np.concatenate((prep_data, prep_data_hat), axis=0)
-        # TSNE anlaysis
-        tsne = TSNE(n_components=2, verbose=1, perplexity=25, n_iter=300)
-        tsne_results = tsne.fit_transform(prep_data_final)
-
-        # Plotting
-        f, ax = plt.subplots(1)
-
-        plt.scatter(
-            tsne_results[:anal_sample_no, 0],
-            tsne_results[:anal_sample_no, 1],
-            c=colors[:anal_sample_no],
-            alpha=0.2,
-            label="Original",
-        )
-        plt.scatter(
-            tsne_results[anal_sample_no:, 0],
-            tsne_results[anal_sample_no:, 1],
-            c=colors[anal_sample_no:],
-            alpha=0.2,
-            label="Synthetic",
-        )
-
-        ax.legend()
-
-        plt.title("t-SNE plot")
-        plt.xlabel("x-tsne")
-        plt.ylabel("y_tsne")
-        plt.show()
-
-    elif analysis == "kernel":
-        f, ax = plt.subplots(1)
-
-        # Update KDE plot for original data
-        sns.kdeplot(
-            data=prep_data.flatten(), shade=True, color="red", label="Original", ax=ax
-        )
-
-        # Update KDE plot for synthetic data
-        sns.kdeplot(
-            data=prep_data_hat.flatten(),
-            shade=True,
+    for index in range(syn_values.shape[0]):
+        plt.plot(
+            timestamps,
+            syn_values[index],
             color="blue",
-            label="Synthetic",
-            ax=ax,
-            linestyle="--",
+            marker="o",
+            markersize=2,
+            linestyle="-",
+            label=f"Synthetic values {index}",
         )
 
-        plt.legend()
-        plt.xlabel("Data Value")
-        plt.ylabel("Data Density Estimate")
-        plt.show()
-        plt.close()
-
+    plt.title(
+        f"Range of Values and Synthetic Data Comparison for Month={month}, Weekday={weekday}"
+    )
+    plt.xlabel("Time of Day")
+    plt.ylabel("Values")
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
     return f

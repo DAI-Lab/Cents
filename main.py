@@ -9,10 +9,13 @@ from generator.acgan import ACGAN
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.timegan import TimeGAN
 
+# from generator.timegan_.tgan import TimeGAN
+# from generator.timegan_.options import Options
+
 
 def evaluate_acgan():
     full_dataset = PecanStreetDataset(
-        normalize=True, user_id=None, include_generation=True, threshold=(-6, 6)
+        normalize=True, user_id=None, include_generation=True, threshold=(-5, 5)
     )
     all_users = full_dataset.data.dataid.unique()
     all_users = [661]
@@ -20,7 +23,7 @@ def evaluate_acgan():
     for user in tqdm(all_users):
         print(f"Training for user {user}...")
         data = PecanStreetDataset(
-            normalize=True, user_id=user, include_generation=True, threshold=(-6, 6)
+            normalize=True, user_id=user, include_generation=True, threshold=(-5, 5)
         )
         train_dataset, val_dataset = split_dataset(data)
 
@@ -30,8 +33,8 @@ def evaluate_acgan():
 
         model = ACGAN(
             input_dim=input_dim,
-            noise_dim=512,
-            embedding_dim=512,
+            noise_dim=2,
+            embedding_dim=256,
             window_length=96,
             learning_rate=1e-4,
             weight_path="runs/",
@@ -68,31 +71,31 @@ def evaluate_diffusion_ts():
 
 def main():
     # evaluate_acgan()
-    # evaluate_diffusion_ts()
-    full_dataset = PecanStreetDataset(
-        normalize=True, user_id=None, include_generation=True, threshold=(-6, 6)
-    )
-    all_users = full_dataset.data.dataid.unique()
-    all_users = [3687]
-    all_users = [661]
+    evaluate_diffusion_ts()
+    # full_dataset = PecanStreetDataset(
+    #     normalize=True, user_id=None, include_generation=True, threshold=(-5, 5)
+    # )
+    # all_users = full_dataset.data.dataid.unique()
+    # all_users = [3687]
+    # all_users = [661]
 
-    for user in tqdm(all_users):
-        print(f"Training for user {user}...")
-        data = PecanStreetDataset(
-            normalize=True, user_id=user, include_generation=True, threshold=(-6, 6)
-        )
-        train_dataset, val_dataset = split_dataset(data)
+    # for user in tqdm(all_users):
+    #     print(f"Training for user {user}...")
+    #     data = PecanStreetDataset(
+    #         normalize=True, user_id=user, include_generation=True, threshold=(-5, 5)
+    #     )
+    #     train_dataset, val_dataset = split_dataset(data)
 
-        input_dim = (
-            int(data.is_pv_user) + 1
-        )  # if user has available pv data, input dim is 2
+    #     input_dim = (
+    #         int(data.is_pv_user) + 1
+    #     )  # if user has available pv data, input dim is 2
 
-        model = TimeGAN(
-            input_size=input_dim, hidden_size=48, num_layers=4, embedding_dim=32
-        )
-        model.train_model(train_dataset, val_dataset, batch_size=32, num_epoch=100)
-        user_evaluator = Evaluator(data, model, input_dim, f"runs/timegan/user_{user}")
-        user_evaluator.evaluate_all_users()
+    #     model = TimeGAN(
+    #         input_size=input_dim, hidden_size=256, num_layers=8, rnn_type="lstm",
+    #     )
+    #     model.train_model(train_dataset, val_dataset, batch_size=32, num_epoch=200)
+    #     user_evaluator = Evaluator(data, model, input_dim, f"runs/timegan/user_{user}")
+    #     user_evaluator.evaluate_all_users()
 
 
 if __name__ == "__main__":

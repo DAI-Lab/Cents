@@ -321,7 +321,7 @@ def prepare_dataloader(dataset, batch_size, shuffle=True):
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
-def split_dataset(dataset: Dataset, val_split: float = 0.2):
+def split_dataset(dataset: Dataset, val_split: float = 0.1):
     val_size = int(len(dataset) * val_split)
     train_size = len(dataset) - val_size
 

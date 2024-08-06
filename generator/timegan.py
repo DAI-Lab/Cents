@@ -14,9 +14,21 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class RNNModule(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size=None):
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        num_layers,
+        output_size=None,
+        rnn_type="gru",
+        apply_sigmoid=False,
+    ):
         super(RNNModule, self).__init__()
-        self.rnn = nn.GRU(input_size, hidden_size, num_layers, batch_first=True)
+        self.apply_sigmoid = apply_sigmoid
+        if rnn_type.lower() == "lstm":
+            self.rnn = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        else:
+            self.rnn = nn.GRU(input_size, hidden_size, num_layers, batch_first=True)
         self.fc = nn.Linear(hidden_size, output_size if output_size else hidden_size)
 
     def forward(self, x, lengths):
@@ -27,13 +39,15 @@ class RNNModule(nn.Module):
         packed_output, _ = self.rnn(packed_input)
         output, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
         output = self.fc(output)
-        return torch.sigmoid(output)
+        if self.apply_sigmoid:
+            return torch.sigmoid(output)
+        return output
 
     def _weights_init(self, m):
         if isinstance(m, nn.Linear):
             init.xavier_uniform_(m.weight)
             m.bias.data.fill_(0)
-        elif isinstance(m, nn.GRU):
+        elif isinstance(m, (nn.GRU, nn.LSTM)):
             for name, param in m.named_parameters():
                 if "weight_ih" in name:
                     init.xavier_uniform_(param.data)
@@ -49,14 +63,13 @@ class TimeGAN(nn.Module):
         input_size,
         hidden_size,
         num_layers,
-        embedding_dim,
+        rnn_type="gru",
         conditional_embedding_dim=32,
     ):
         super(TimeGAN, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.embedding_dim = embedding_dim
         self.conditional_embedding_dim = conditional_embedding_dim
 
         self.month_embedding = nn.Embedding(12, conditional_embedding_dim).to(device)
@@ -65,20 +78,47 @@ class TimeGAN(nn.Module):
         total_input_size = input_size + 2 * conditional_embedding_dim
 
         self.embedder = RNNModule(
-            total_input_size, hidden_size, num_layers, embedding_dim
+            total_input_size,
+            hidden_size,
+            num_layers,
+            hidden_size,
+            rnn_type,
+            apply_sigmoid=True,
         ).to(device)
         self.recovery = RNNModule(
-            embedding_dim, hidden_size, num_layers, input_size
+            hidden_size,
+            hidden_size,
+            num_layers,
+            input_size,
+            rnn_type,
+            apply_sigmoid=True,
         ).to(device)
         self.generator = RNNModule(
-            total_input_size, hidden_size, num_layers, embedding_dim
+            total_input_size,
+            hidden_size,
+            num_layers,
+            hidden_size,
+            rnn_type,
+            apply_sigmoid=True,
         ).to(device)
         self.supervisor = RNNModule(
-            embedding_dim, hidden_size, num_layers, embedding_dim
+            hidden_size,
+            hidden_size,
+            num_layers,
+            hidden_size,
+            rnn_type,
+            apply_sigmoid=True,
         ).to(device)
-        self.discriminator = RNNModule(embedding_dim, hidden_size, num_layers, 1).to(
-            device
-        )
+        self.discriminator = RNNModule(
+            hidden_size + 2 * conditional_embedding_dim,
+            hidden_size,
+            num_layers,
+            1,
+            rnn_type,
+            apply_sigmoid=True,
+        ).to(device)
+
+        self.apply(self._weights_init)
 
     def add_conditioning(self, x, month, weekday):
         month_emb = self.month_embedding(month).unsqueeze(1).expand(-1, x.size(1), -1)
@@ -100,9 +140,13 @@ class TimeGAN(nn.Module):
 
         X_hat = self.recovery(H_hat, T)
 
-        Y_fake = self.discriminator(H_hat, T)
-        Y_real = self.discriminator(H, T)
-        Y_fake_e = self.discriminator(E_hat, T)
+        D_input_real = self.add_conditioning(H, month, weekday)
+        D_input_fake = self.add_conditioning(H_hat, month, weekday)
+        D_input_fake_e = self.add_conditioning(E_hat, month, weekday)
+
+        Y_fake = self.discriminator(D_input_fake, T)
+        Y_real = self.discriminator(D_input_real, T)
+        Y_fake_e = self.discriminator(D_input_fake_e, T)
 
         return (
             H,
@@ -217,7 +261,7 @@ class TimeGAN(nn.Module):
 
         step = 0
 
-        for epoch in range(num_epoch):
+        for epoch in range(num_epoch // 2):
             for i, (time_series_batch, month_label_batch, day_label_batch) in enumerate(
                 tqdm(train_loader, desc=f"Supervised Epoch {epoch + 1}")
             ):
@@ -320,7 +364,9 @@ class TimeGAN(nn.Module):
                     )
                     G_loss_V = G_loss_V1 + G_loss_V2
 
-                    # G_loss = G_loss_U + G_loss_U_e + 100 * torch.sqrt(G_loss_S) + 100 * G_loss_V
+                    G_loss = (
+                        G_loss_U + G_loss_U_e
+                    )  # + 100 * torch.sqrt(G_loss_S) + 100 * G_loss_V
 
                     # Embedder losses
                     E_loss_T0 = mse_loss(X_mb, X_tilde)
@@ -330,10 +376,7 @@ class TimeGAN(nn.Module):
                     optimizer_generator.zero_grad()
                     optimizer_embedder.zero_grad()
 
-                    G_loss_V.backward(retain_graph=True)
-                    G_loss_U.backward(retain_graph=True)
-                    G_loss_U_e.backward(retain_graph=True)
-                    G_loss_S.backward(retain_graph=True)
+                    G_loss.backward(retain_graph=True)
                     E_loss.backward()
 
                     # Gradient monitoring for generator
@@ -344,7 +387,7 @@ class TimeGAN(nn.Module):
                             )
 
                     optimizer_generator.step()
-                    optimizer_embedder.step()
+                    # optimizer_embedder.step()
 
                 # Train Discriminator
                 optimizer_discriminator.zero_grad()
@@ -372,12 +415,21 @@ class TimeGAN(nn.Module):
                     optimizer_discriminator.step()
 
                 summary_writer.add_scalars(
-                    "data/joint",
+                    "data/adversarial",
+                    {
+                        "gen": G_loss.item(),
+                        "discr": D_loss.item(),
+                    },
+                    global_step=step,
+                )
+
+                summary_writer.add_scalars(
+                    "data/generator",
                     {
                         "gen_u": G_loss_U.item(),
                         "gen_u_e": G_loss_U_e.item(),
-                        # "gen_v": G_loss_V.item(),
-                        "discr": D_loss.item(),
+                        "gen_v": G_loss_V.item(),
+                        "gen_s": G_loss_S.item(),
                     },
                     global_step=step,
                 )
@@ -385,15 +437,13 @@ class TimeGAN(nn.Module):
                 if i % 1000 == 0:
                     print(
                         f"Joint Epoch [{epoch}/{num_epoch}], "
-                        f"G_loss: {G_loss_U.item():.4f}, D_loss: {D_loss.item():.4f}, E_loss: {E_loss.item():.4f}"
+                        f"G_loss: {G_loss.item():.4f}, D_loss: {D_loss.item():.4f}, E_loss: {E_loss.item():.4f}"
                     )
 
                 step += 1
 
             # Validate
-            # self.validate(val_loader, epoch)
-
-    print("Finish Joint Training")
+            self.validate(val_loader, epoch)
 
     def validate(self, val_loader, num_epoch):
         self.eval()
@@ -461,3 +511,16 @@ class TimeGAN(nn.Module):
             + [month_labels.clone().to(device)]
             + [day_labels.clone().to(device)]
         )
+
+    def _weights_init(self, m):
+        if isinstance(m, nn.Linear):
+            init.xavier_uniform_(m.weight)
+            m.bias.data.fill_(0)
+        elif isinstance(m, (nn.GRU, nn.LSTM)):
+            for name, param in m.named_parameters():
+                if "weight_ih" in name:
+                    init.xavier_uniform_(param.data)
+                elif "weight_hh" in name:
+                    init.orthogonal_(param.data)
+                elif "bias" in name:
+                    param.data.fill_(0)

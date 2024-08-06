@@ -1,3 +1,6 @@
+import random
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -9,6 +12,7 @@ from eval.metrics import (
     calculate_mmd,
     calculate_period_bound_mse,
     dynamic_time_warping_dist,
+    plot_range_with_syn_values,
     visualization,
 )
 from eval.predictive_metric import predictive_score_metrics
@@ -98,15 +102,27 @@ class Evaluator:
         user_writer.add_scalar("Pred/score", pred_score)
         self.metrics["pred"].append((user_id, pred_score))
 
-        user_writer.add_figure(
-            tag="TSNE",
-            figure=visualization(real_data_array_inv, syn_data_array_inv, "tsne"),
-        )
+        # Randomly select three months and three weekdays
+        unique_months = self.real_df["month"].unique()
+        unique_weekdays = self.real_df["weekday"].unique()
+        selected_months = random.sample(list(unique_months), 3)
+        selected_weekdays = random.sample(list(unique_weekdays), 3)
 
-        user_writer.add_figure(
-            tag="KDE",
-            figure=visualization(real_data_array_inv, syn_data_array_inv, "kernel"),
-        )
+        # Add KDE plot
+        plots = visualization(real_data_array_inv, syn_data_array_inv, "kernel")
+        for i, plot in enumerate(plots):
+            user_writer.add_figure(tag=f"KDE Dimension {i}", figure=plot)
+
+        # Plot the range and synthetic values for each combination
+        for month in selected_months:
+            for weekday in selected_weekdays:
+                fig = plot_range_with_syn_values(
+                    self.real_df, self.synthetic_df, month, weekday
+                )
+                user_writer.add_figure(
+                    tag=f"Range_Plot_Month_{month}_Weekday_{weekday}",
+                    figure=fig,
+                )
 
         user_writer.flush()
         user_writer.close()
