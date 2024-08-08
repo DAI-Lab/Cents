@@ -71,31 +71,31 @@ def evaluate_diffusion_ts():
 
 def main():
     # evaluate_acgan()
-    evaluate_diffusion_ts()
-    # full_dataset = PecanStreetDataset(
-    #     normalize=True, user_id=None, include_generation=True, threshold=(-5, 5)
-    # )
-    # all_users = full_dataset.data.dataid.unique()
-    # all_users = [3687]
-    # all_users = [661]
+    # evaluate_diffusion_ts()
+    full_dataset = PecanStreetDataset(
+        normalize=True, user_id=None, include_generation=True, threshold=(-4, 4)
+    )
+    all_users = full_dataset.data.dataid.unique()
+    all_users = [3687]
+    all_users = [661]
 
-    # for user in tqdm(all_users):
-    #     print(f"Training for user {user}...")
-    #     data = PecanStreetDataset(
-    #         normalize=True, user_id=user, include_generation=True, threshold=(-5, 5)
-    #     )
-    #     train_dataset, val_dataset = split_dataset(data)
+    for user in tqdm(all_users):
+        print(f"Training for user {user}...")
+        data = PecanStreetDataset(
+            normalize=True, user_id=user, include_generation=True, threshold=(-4, 4)
+        )
+        train_dataset, val_dataset = split_dataset(data)
 
-    #     input_dim = (
-    #         int(data.is_pv_user) + 1
-    #     )  # if user has available pv data, input dim is 2
+        input_dim = (
+            int(data.is_pv_user) + 1
+        )  # if user has available pv data, input dim is 2
 
-    #     model = TimeGAN(
-    #         input_size=input_dim, hidden_size=256, num_layers=8, rnn_type="lstm",
-    #     )
-    #     model.train_model(train_dataset, val_dataset, batch_size=32, num_epoch=200)
-    #     user_evaluator = Evaluator(data, model, input_dim, f"runs/timegan/user_{user}")
-    #     user_evaluator.evaluate_all_users()
+        model = TimeGAN(
+            input_size=input_dim, hidden_size=24, num_layers=6, rnn_type="gru"
+        )
+        model.train_model(train_dataset, val_dataset, num_epoch=400)
+        user_evaluator = Evaluator(data, model, input_dim, f"runs/timegan/user_{user}")
+        user_evaluator.evaluate_all_users()
 
 
 if __name__ == "__main__":
