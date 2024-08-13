@@ -94,7 +94,9 @@ def main():
 
         model = DDPM(Options(model_name="diffusion", isTrain=True))
         model.train(train_dataset, val_dataset)
-        user_evaluator = Evaluator(data, model, input_dim, f"runs/timegan/user_{user}")
+        user_evaluator = Evaluator(
+            data, model, input_dim, f"runs/diffcharge/user_{user}"
+        )
         user_evaluator.evaluate_all_users()
 
 

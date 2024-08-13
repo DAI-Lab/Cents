@@ -5,7 +5,6 @@ from torch import nn
 from tqdm import tqdm
 
 from data_utils.dataset import prepare_dataloader
-from generator.diffcharge.maxsam import *
 from generator.diffcharge.network import *
 
 
@@ -85,7 +84,7 @@ class DDPM:
         return self.loss_func(noise, eps_theta)
 
     def sample(self, weight_path, n_samples, condition, smooth=True):
-        c = condition.float().to(self.opt.device)
+        c = condition.to(self.opt.device)
 
         with torch.no_grad():
             self.eps_model.eval()
@@ -102,7 +101,10 @@ class DDPM:
 
             if smooth:
                 for i in range(n_samples):
-                    x[i] = sig.medfilt(x[i], 5)
+                    filtered_x = sig.medfilt(x[i].cpu().numpy(), kernel_size=(5, 1))
+                    x[i] = torch.tensor(filtered_x, dtype=torch.float32).to(
+                        self.opt.device
+                    )
 
             return x
 
