@@ -84,23 +84,30 @@ class DDPM:
         eps_theta = self.eps_model(xt, c, t)
         return self.loss_func(noise, eps_theta)
 
-    def sample(self, weight_path, n_samples, condition):
-        c = torch.from_numpy(condition).type(torch.float32)
-        c = c.view(1, -1).to(self.opt.device)
+    def sample(self, weight_path, n_samples, condition, smooth=True):
+        c = condition.float().to(self.opt.device)
+
         with torch.no_grad():
-            weight = torch.load(weight_path, map_location=self.opt.device)
-            self.eps_model.load_state_dict(weight)
             self.eps_model.eval()
-            for i in range(n_samples):
-                x = torch.randn([1, self.opt.seq_len, self.opt.input_dim])
-                for j in range(0, self.n_steps, 1):
-                    t = torch.ones(1, dtype=torch.long) * (self.n_steps - j - 1)
-                    x = self.p_sample(x, c, t)
-                x = x.squeeze().detach().numpy()
-                x = sig.medfilt(x, 5)
-                path = f"generation/{self.opt.model_name}/{self.opt.network}/{self.opt.level}/{self.opt.cond_flag}/{i}"
+            x = torch.randn([n_samples, self.opt.seq_len, self.opt.input_dim]).to(
+                self.opt.device
+            )
+            for j in tqdm(
+                range(0, self.n_steps, 1), desc=f"Sampling steps of {self.n_steps}"
+            ):
+                t = torch.ones(n_samples, dtype=torch.long).to(self.opt.device) * (
+                    self.n_steps - j - 1
+                )
+                x = self.p_sample(x, c, t)
+
+            if smooth:
+                for i in range(n_samples):
+                    x[i] = sig.medfilt(x[i], 5)
+
+            return x
 
     def train(self, x_train, x_val, batch_size=32):
+        # self.train()
         epoch_loss = []
         train_loader = prepare_dataloader(x_train, batch_size)
         val_loader = prepare_dataloader(x_val, batch_size)
@@ -112,7 +119,7 @@ class DDPM:
             ):
                 x0 = time_series_batch
                 c = torch.cat(
-                    [month_label_batch.unsqueeze(1), day_label_batch.unsqueeze(1)],
+                    [day_label_batch.unsqueeze(1), month_label_batch.unsqueeze(1)],
                     dim=1,
                 ).to(self.opt.device)
                 self.optimizer.zero_grad()
@@ -128,13 +135,12 @@ class DDPM:
 
     def generate(self, day_labels, month_labels):
         num_samples = day_labels.shape[0]
-        shape = (num_samples, self.seq_length, self.feature_size)
+        shape = (num_samples, self.opt.seq_len, self.opt.input_dim)
         return self._generate(shape, [day_labels, month_labels])
 
     def _generate(self, shape, labels):
-        self.eval()
         with torch.no_grad():
-            c = torch.cat([labels[0].unsqueeze(1), labels[1].unsqueeze(1)], dim=1).to(
+            c = torch.cat([label.unsqueeze(1) for label in labels], dim=1).to(
                 self.opt.device
             )
             samples = self.sample(None, n_samples=shape[0], condition=c)
