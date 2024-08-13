@@ -2,13 +2,15 @@ import numpy as np
 import scipy.signal as sig
 import torch.utils.data
 from torch import nn
+from tqdm import tqdm
 
+from data_utils.dataset import prepare_dataloader
 from generator.diffcharge.maxsam import *
 from generator.diffcharge.network import *
 
 
 class DDPM:
-    def __init__(self, opt, data_loader):
+    def __init__(self, opt):
         super().__init__()
         if opt.network == "attention":
             self.eps_model = Attention(opt).to(opt.device)
@@ -40,7 +42,6 @@ class DDPM:
             )
         )
         self.optimizer = torch.optim.Adam(self.eps_model.parameters(), lr=opt.init_lr)
-        self.data_loader = data_loader
         self.loss_func = nn.MSELoss()
         p1, p2 = int(0.75 * opt.n_epochs), int(0.9 * opt.n_epochs)
         self.lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
@@ -90,15 +91,6 @@ class DDPM:
             weight = torch.load(weight_path, map_location=self.opt.device)
             self.eps_model.load_state_dict(weight)
             self.eps_model.eval()
-            if self.opt.level == "station":
-                if condition[0] == 1:
-                    max_sampler = pmax_sample(
-                        "ACN-data/caltech/station/2019", n_samples
-                    )
-                else:
-                    max_sampler = pmax_sample("ACN-data/jpl/station/2019", n_samples)
-            else:
-                max_sampler = cmax_sample("ACN-data/jpl/driver", n_samples)
             for i in range(n_samples):
                 x = torch.randn([1, self.opt.seq_len, self.opt.input_dim])
                 for j in range(0, self.n_steps, 1):
@@ -106,45 +98,23 @@ class DDPM:
                     x = self.p_sample(x, c, t)
                 x = x.squeeze().detach().numpy()
                 x = sig.medfilt(x, 5)
-                gen = x * max_sampler[i] / np.max(x)  # scale to 1.0
                 path = f"generation/{self.opt.model_name}/{self.opt.network}/{self.opt.level}/{self.opt.cond_flag}/{i}"
 
-    def driver_postprocess(self, x):
-        x = sig.medfilt(x, kernel_size=5)
-        low_index = np.where(x < 0)[0]
-        high_index = np.where(x > 32)[0]
-        x[low_index], x[high_index] = 0.0, 32
-        x_filt1 = x
-        # identify zero padding
-        try:
-            zero_index = np.where(x < 0.5)[0]
-            invalid_index = zero_index[np.where(zero_index > 50)[0][0]]
-            x_filt2 = x[0 : invalid_index + 1]
-        except:
-            x_filt2 = x_filt1
-        return x_filt1, x_filt2
-
-    def station_postprocess(self, x):
-        # x[np.where(x < 0)[0]] = 0.0
-        # x = sig.medfilt(x, kernel_size=5)
-        # try:
-        #     low_index = np.where(x < 10)[0][-1]
-        #     if low_index > 200:
-        #         x[low_index:] = 0
-        # except:
-        #     pass
-        return x
-
-    def train(self):
+    def train(self, x_train, x_val, batch_size=32):
         epoch_loss = []
+        train_loader = prepare_dataloader(x_train, batch_size)
+        val_loader = prepare_dataloader(x_val, batch_size)
+
         for epoch in range(self.opt.n_epochs):
             batch_loss = []
-            for i, data in enumerate(self.data_loader):
-                if self.opt.level == "station":
-                    x0 = data["power"].to(self.opt.device)
-                else:
-                    x0 = data["current"].to(self.opt.device)
-                c = data["condition"].to(self.opt.device)
+            for i, (time_series_batch, month_label_batch, day_label_batch) in enumerate(
+                tqdm(train_loader, desc=f"Epoch {epoch + 1}")
+            ):
+                x0 = time_series_batch
+                c = torch.cat(
+                    [month_label_batch.unsqueeze(1), day_label_batch.unsqueeze(1)],
+                    dim=1,
+                ).to(self.opt.device)
                 self.optimizer.zero_grad()
                 loss = self.cal_loss(x0, c)
                 loss.backward()
@@ -153,5 +123,19 @@ class DDPM:
             epoch_loss.append(np.mean(batch_loss))
             print(f"epoch={epoch}/{self.opt.n_epochs}, loss={epoch_loss[-1]}")
             self.lr_scheduler.step()
-            save_path = f"weights/{self.opt.model_name}/{self.opt.network}/{self.opt.level}/{self.opt.cond_flag}/epoch{epoch}.pt"
-            torch.save(self.eps_model.state_dict(), save_path)
+            # save_path = f"weights/{self.opt.model_name}/{self.opt.network}/{self.opt.level}/{self.opt.cond_flag}/epoch{epoch}.pt"
+            # torch.save(self.eps_model.state_dict(), save_path)
+
+    def generate(self, day_labels, month_labels):
+        num_samples = day_labels.shape[0]
+        shape = (num_samples, self.seq_length, self.feature_size)
+        return self._generate(shape, [day_labels, month_labels])
+
+    def _generate(self, shape, labels):
+        self.eval()
+        with torch.no_grad():
+            c = torch.cat([labels[0].unsqueeze(1), labels[1].unsqueeze(1)], dim=1).to(
+                self.opt.device
+            )
+            samples = self.sample(None, n_samples=shape[0], condition=c)
+            return samples

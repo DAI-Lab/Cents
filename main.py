@@ -6,6 +6,8 @@ from tqdm import tqdm
 from data_utils.dataset import PecanStreetDataset, split_dataset
 from eval.evaluator import Evaluator
 from generator.acgan import ACGAN
+from generator.diffcharge.diffusion import DDPM
+from generator.diffcharge.options import Options
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.timegan import TimeGAN
 
@@ -90,10 +92,8 @@ def main():
             int(data.is_pv_user) + 1
         )  # if user has available pv data, input dim is 2
 
-        model = TimeGAN(
-            input_size=input_dim, hidden_size=24, num_layers=6, rnn_type="gru"
-        )
-        model.train_model(train_dataset, val_dataset, num_epoch=400)
+        model = DDPM(Options(model_name="diffusion", isTrain=True))
+        model.train(train_dataset, val_dataset)
         user_evaluator = Evaluator(data, model, input_dim, f"runs/timegan/user_{user}")
         user_evaluator.evaluate_all_users()
 

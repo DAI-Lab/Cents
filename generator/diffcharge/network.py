@@ -42,7 +42,7 @@ class Attention(nn.Module):
             t, self.opt.hidden_dim, self.opt.seq_len, self.opt.device
         )
         if self.opt.cond_flag == "conditional":
-            cond_emb = self.cond_embedder(c)  # (B, hidden_dim)
+            cond_emb = self.cond_embedder(c.float())  # (B, hidden_dim)
             cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
                 1, self.opt.seq_len, 1
             )
