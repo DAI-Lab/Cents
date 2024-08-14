@@ -6,6 +6,7 @@ from tqdm import tqdm
 
 from data_utils.dataset import prepare_dataloader
 from generator.diffcharge.network import *
+from generator.diffusion_ts.gaussian_diffusion import cosine_beta_schedule
 
 
 class DDPM:
@@ -21,6 +22,8 @@ class DDPM:
             self.beta = torch.linspace(
                 opt.beta_start, opt.beta_end, opt.n_steps, device=opt.device
             )
+        elif opt.schedule == "cosine":
+            self.beta = cosine_beta_schedule(opt.n_steps)
         else:
             self.beta = (
                 torch.linspace(
@@ -145,5 +148,5 @@ class DDPM:
             c = torch.cat([label.unsqueeze(1) for label in labels], dim=1).to(
                 self.opt.device
             )
-            samples = self.sample(None, n_samples=shape[0], condition=c)
+            samples = self.sample(None, n_samples=shape[0], condition=c, smooth=True)
             return samples

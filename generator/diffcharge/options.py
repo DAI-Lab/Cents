@@ -17,7 +17,7 @@ class Options:
             self.shuffle = False
         if model_name == "diffusion":
             self.init_lr = 5e-5
-            self.network = "attention"  # "attention" or "cnn"
+            self.network = "cnn"  # "attention" or "cnn"
             self.input_dim = 2
             self.hidden_dim = 256
             self.cond_dim = 256
@@ -25,4 +25,4 @@ class Options:
             self.beta_start = 1e-4
             self.beta_end = 0.02
             self.n_steps = 1000
-            self.schedule = "linear"  # "quadratic"
+            self.schedule = "linear"  # "cosine" # "linear"  # "quadratic"

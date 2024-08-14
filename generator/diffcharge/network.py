@@ -68,16 +68,40 @@ class CNN(nn.Module):
     def __init__(self, opt):
         super(CNN, self).__init__()
         self.opt = opt
+
+        self.cond_embedder = nn.Sequential(
+            nn.Linear(opt.cond_dim * 2, opt.hidden_dim), nn.Tanh()
+        )
+
         self.input_projector = nn.LSTM(
-            opt.input_dim, opt.hidden_dim, num_layers=1, batch_first=True
+            opt.input_dim + opt.hidden_dim,
+            opt.hidden_dim,
+            num_layers=4,
+            batch_first=True,
         )
         self.output_projector = nn.Sequential(
+            nn.Conv1d(opt.hidden_dim, opt.hidden_dim, kernel_size=1),
+            nn.BatchNorm1d(opt.hidden_dim),
             nn.Conv1d(opt.hidden_dim, opt.hidden_dim, kernel_size=1),
             nn.BatchNorm1d(opt.hidden_dim),
             nn.Conv1d(opt.hidden_dim, opt.input_dim, kernel_size=1),
         )
 
+        self.month_embed = nn.Embedding(12, opt.hidden_dim)
+        self.weekday_embed = nn.Embedding(7, opt.hidden_dim)
+
     def forward(self, x, c, t):
+
+        if self.opt.cond_flag == "conditional":
+            weekday_emb = self.weekday_embed(c[:, 0])
+            month_emb = self.month_embed(c[:, 1])
+            cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
+            cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
+            cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
+                1, self.opt.seq_len, 1
+            )
+            x = torch.cat([x, cond_emb], dim=2)
+
         hid_enc, (_, _) = self.input_projector(x)  # (B, L, hidden_dim)
         time_emb = time_embedding(
             t, self.opt.hidden_dim, self.opt.seq_len, self.opt.device
