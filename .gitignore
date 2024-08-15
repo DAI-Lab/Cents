@@ -167,3 +167,4 @@ data/*
 .ipynb_checkpoints
 runs/*
 Checkpoints_syn
+logs/*

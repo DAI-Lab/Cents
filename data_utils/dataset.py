@@ -1,12 +1,12 @@
 import os
 import warnings
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,38 +21,17 @@ class PecanStreetDataset(Dataset):
         normalize=False,
         threshold=None,
         include_generation=False,
-        user_id=None,
     ):
-        """
-        Initialize the PecanStreetDataset with a specific geography, configuration path and user.
-
-        Args:
-            geography: Geography of the dataset (e.g., 'newyork').
-            config_path: Path to the configuration file.
-            normalize: Flag indicating whether data is normalized.
-            threshold: Thresholds at which to clip the data.
-            include_generation: Flag indicating whether to include solar data if available.
-            user_id: ID of the desired user. If None, all user data is loaded.
-        """
         self.geography = geography
         self.config_path = os.path.join(ROOT_DIR, config_path)
         self.normalize = normalize
         self.threshold = threshold
         self.include_generation = include_generation
-        self.user_id = user_id
-        self.is_pv_user = None
         self.name = "pecanstreet"
         self.stats = {}
-        self.path, self.columns = self._get_dataset_info()
-        self.data = self.load_data()
+        self.data, self.metadata, self.user_flags = self.load_and_preprocess_data()
 
     def _get_dataset_info(self) -> Tuple[str, List[str]]:
-        """
-        Retrieve dataset information from the configuration file.
-
-        Returns:
-            A tuple containing the path and columns of the dataset.
-        """
         with open(self.config_path, "r") as file:
             config = yaml.safe_load(file)
         dataset_info = config["datasets"].get(self.name)
@@ -60,245 +39,247 @@ class PecanStreetDataset(Dataset):
             raise ValueError(f"No dataset configuration found for {self.name}")
         return dataset_info["path"], dataset_info["columns"]
 
-    def load_data(self) -> pd.DataFrame:
-        """
-        Load the Pecan Street dataset.
+    def load_and_preprocess_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, dict]:
+        path, columns = self._get_dataset_info()
+        metadata = pd.read_csv(f"/{path}metadata.csv")
+        data = self._load_full_data(path, columns)
+        data = self._preprocess_data(data)
+        user_flags = self._set_user_flags(metadata, data)
+        return data, metadata, user_flags
 
-        Returns:
-            A pandas DataFrame containing the dataset.
-        """
-        self.metadata = pd.read_csv(f"/{self.path}metadata.csv")
+    def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
         if self.geography:
-            data_file_path = f"/{self.path}15minute_data_{self.geography}.csv"
-            try:
-                data = pd.read_csv(data_file_path)
-                data = data[self.columns]
-            except Exception as e:
-                print(f"Failed to load data from {data_file_path}: {e}")
-                return pd.DataFrame()
+            data_file_path = f"/{path}15minute_data_{self.geography}.csv"
+            return pd.read_csv(data_file_path)[columns]
         else:
-            ny_file_path = f"/{self.path}15minute_data_newyork.csv"
-            cali_file_path = f"/{self.path}15minute_data_california.csv"
-            austin_file_path = f"/{self.path}15minute_data_austin.csv"
+            return pd.concat(
+                [
+                    pd.read_csv(f"/{path}15minute_data_newyork.csv"),
+                    pd.read_csv(f"/{path}15minute_data_california.csv"),
+                    pd.read_csv(f"/{path}15minute_data_austin.csv"),
+                ],
+                axis=0,
+            )[columns]
 
-            try:
-                ny_data = pd.read_csv(ny_file_path)
-                cali_data = pd.read_csv(cali_file_path)
-                austin_data = pd.read_csv(austin_file_path)
-                data = pd.concat([ny_data, cali_data, austin_data], axis=0)
-                data = data[self.columns]
-            except Exception as e:
-                print(f"Failed to load full dataset!")
-                return pd.DataFrame()
-
-        if self.user_id:
-            data = data[data["dataid"] == self.user_id].copy()
-
-            if not len(data):
-                raise ValueError(f"No data found for user {self.user_id}!")
-
-            self.user_metadata = self.metadata.loc[
-                self.metadata["dataid"] == self.user_id
-            ].copy()
-            self.is_pv_user = self.user_metadata["pv"].notna().any()
-
-        grid_data = self.preprocess_data(data, "grid", self.threshold)
-
-        if self.include_generation and self.is_pv_user:
-            grid_data["solar"] = self.preprocess_data(data, "solar", self.threshold)[
-                "solar"
-            ].copy()
-            grid_data = self.merge_columns_into_timeseries(grid_data)
-        else:
-            grid_data["timeseries"] = [
-                np.array(g).reshape(-1, 1) for g in grid_data["grid"]
-            ]
-            grid_data.drop(columns=["grid"], inplace=True)
-
-        return grid_data.sort_values(by=["dataid", "month", "weekday"], axis=0)
-
-    def preprocess_data(
-        self, data: pd.DataFrame, column: str, threshold=(-2, 2)
-    ) -> pd.DataFrame:
-        """
-        Normalize the specified column in the data based on groupings of 'dataid', 'month', and 'weekday'.
-
-        Args:
-            data (pd.DataFrame): The input data.
-            column (str): The column to preprocess.
-            threshold (tuple): The normalization threshold.
-
-        Returns:
-            pd.DataFrame: The normalized data.
-        """
+    def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         data["local_15min"] = pd.to_datetime(data["local_15min"], utc=True)
         data["month"] = data["local_15min"].dt.month - 1
         data["weekday"] = data["local_15min"].dt.weekday
         data["date_day"] = data["local_15min"].dt.day
-        data = data.sort_values(by=["local_15min"], axis=0)
+        data = data.sort_values(by=["local_15min"]).copy()
+        data = data[~data["grid"].isna()]
 
-        data = data[~data[column].isna()].copy()
+        grouped_data = (
+            data.groupby(["dataid", "month", "date_day", "weekday"])["grid"]
+            .apply(list)
+            .reset_index()
+        )
+        filtered_data = grouped_data[grouped_data["grid"].apply(len) == 96].reset_index(
+            drop=True
+        )
 
-        if not all(
-            col in data.columns for col in ["dataid", "month", "weekday", column]
-        ):
-            raise ValueError(
-                f"Input data must contain at least 'dataid', 'month', 'weekday', and '{column}' columns"
-            )
-
-        grouped_data = data.groupby(["dataid", "month", "date_day", "weekday"])
-        grouped_data = grouped_data[column].apply(list).reset_index()
-        filtered_data = grouped_data[grouped_data[column].apply(len) == 96]
+        if self.threshold:
+            data["grid"] = np.clip(data["grid"], *self.threshold)
+            if self.include_generation and "solar" in data.columns:
+                data["solar"] = np.clip(data["solar"], *self.threshold)
 
         if self.normalize:
-
-            def calculate_stats(group):
-                all_values = np.concatenate(group[column].values)
-                return pd.Series(
-                    {
-                        "mean": np.mean(all_values),
-                        "std": np.std(all_values),
-                        "min": np.min(all_values),
-                        "max": np.max(all_values),
-                    }
-                )
-
-            grouped_stats = (
-                filtered_data.groupby(["dataid", "month", "weekday"])
-                .apply(calculate_stats)
-                .reset_index()
+            self.stats["grid"] = self._calculate_and_store_statistics(
+                filtered_data, "grid"
             )
-            filtered_data = filtered_data.merge(
-                grouped_stats, on=["dataid", "month", "weekday"]
+            filtered_data = self._apply_normalization(filtered_data, "grid")
+
+        if self.include_generation:
+            solar_data = self._preprocess_solar(data)
+            filtered_data = pd.merge(
+                filtered_data,
+                solar_data,
+                how="left",
+                on=["dataid", "month", "weekday", "date_day"],
             )
 
-            def normalize_and_scale(values, mean, std, min_val, max_val):
-                normalized = np.array([(val - mean) / std for val in values])
+        return self._merge_columns_into_timeseries(filtered_data).sort_values(
+            by=["dataid", "month", "weekday"]
+        )
 
-                if self.threshold:
-                    thresholded = np.clip(normalized, threshold[0], threshold[1])
-                    return np.array(
-                        [
-                            (val - threshold[0]) / (threshold[1] - threshold[0])
-                            for val in thresholded
-                        ]
-                    )
-                else:
-                    return np.array(
-                        [(val - min_val) / (max_val - min_val) for val in normalized]
-                    )
+    def _calculate_and_store_statistics(
+        self, data: pd.DataFrame, column: str
+    ) -> pd.DataFrame:
+        def calculate_stats(group):
+            all_values = np.concatenate(group[column].values)
+            return pd.Series(
+                {
+                    "mean": np.mean(all_values),
+                    "std": np.std(all_values),
+                    "min": np.min(all_values),
+                    "max": np.max(all_values),
+                }
+            )
 
-            filtered_data[column] = filtered_data.apply(
-                lambda row: normalize_and_scale(
-                    row[column], row["mean"], row["std"], row["min"], row["max"]
+        grouped_stats = (
+            data.groupby(["dataid", "month", "weekday"])
+            .apply(calculate_stats)
+            .reset_index()
+        )
+        return grouped_stats.set_index(["dataid", "month", "weekday"]).to_dict("index")
+
+    def _apply_normalization(self, data: pd.DataFrame, column: str) -> pd.DataFrame:
+        stats = self.stats[column]
+        stats_df = pd.DataFrame(
+            [(*key, *value.values()) for key, value in stats.items()],
+            columns=["dataid", "month", "weekday", "mean", "std", "min", "max"],
+        )
+
+        data = data.merge(stats_df, on=["dataid", "month", "weekday"])
+        data[column], data[f"{column}_norm_min"], data[f"{column}_norm_max"] = zip(
+            *data.apply(
+                lambda row: self._normalize_and_scale(
+                    row[column], row["mean"], row["std"]
                 ),
                 axis=1,
             )
+        )
 
-            # Store statistics for inverse transformation
-            if column not in self.stats:
-                self.stats[column] = {}
+        return data.drop(columns=["mean", "std", "min", "max"])
 
-            self.stats[column] = grouped_stats.set_index(
-                ["dataid", "month", "weekday"]
-            ).to_dict("index")
+    @staticmethod
+    def _normalize_and_scale(values, mean, std):
+        normalized = (np.array(values) - mean) / (std + 1e-8)
+        norm_min_val, norm_max_val = normalized.min(), normalized.max()
+        scaled = (normalized - norm_min_val) / ((norm_max_val - norm_min_val) + 1e-8)
+        return scaled, norm_min_val, norm_max_val
 
-            filtered_data = filtered_data.drop(columns=["mean", "std", "min", "max"])
+    def _preprocess_solar(self, data: pd.DataFrame) -> pd.DataFrame:
+        solar_data = (
+            data[~data["solar"].isna()]
+            .groupby(["dataid", "month", "date_day", "weekday"])["solar"]
+            .apply(list)
+            .reset_index()
+        )
+        solar_data = solar_data[solar_data["solar"].apply(len) == 96]
 
-        return filtered_data
+        if self.normalize:
+            valid_stats = self._calculate_and_store_statistics(solar_data, "solar")
+            self.stats["solar"] = valid_stats
+            solar_data = self._apply_normalization(solar_data, "solar")
 
-    def inverse_transform(
-        self,
-        preprocessed_data: pd.DataFrame,
-    ) -> pd.DataFrame:
-        """
-        Convert a preprocessed time series back to its original scale.
+        return solar_data
 
-        Args:
-            preprocessed_data (pd.DataFrame): The preprocessed data.
-
-        Returns:
-            pd.DataFrame: A DataFrame containing the time series in its original scale along with month and weekday.
-        """
-
-        def split_timeseries(row):
-            grid = row[:, 0].reshape(-1, 1)
-            solar = row[:, 1].reshape(-1, 1)
-            return pd.Series({"grid": grid, "solar": solar})
-
-        if not self.normalize:
-            return preprocessed_data.copy()
-
-        if self.include_generation and self.is_pv_user:
-            preprocessed_data[["grid", "solar"]] = preprocessed_data[
-                "timeseries"
-            ].apply(split_timeseries)
-        else:
-            preprocessed_data["grid"] = preprocessed_data["timeseries"]
-
-        preprocessed_data = preprocessed_data.drop(columns=["timeseries"])
-
-        def inverse_transform_column(row, colname, stats):
-            month = row["month"]
-            weekday = row["weekday"]
-            dataid = row["dataid"]
-
-            col_stats = stats.get((dataid, month, weekday))
-
-            if col_stats is None:
-                raise ValueError(
-                    f"No statistics found for dataid={dataid}, month={month}, weekday={weekday} for {colname}"
-                )
-
-            mean, std, min_val, max_val = (
-                col_stats["mean"],
-                col_stats["std"],
-                col_stats["min"],
-                col_stats["max"],
-            )
-
-            if self.threshold:
-                low, high = self.threshold
-            else:
-                low, high = (min_val, max_val)
-
-            unscaled = np.array([value * (high - low) + low for value in row[colname]])
-            unnormalized = np.array([value * std + mean for value in unscaled])
-
-            return unnormalized
-
-        result_data = []
-
-        for dataid in preprocessed_data["dataid"].unique():
-            dataid_df = preprocessed_data[preprocessed_data["dataid"] == dataid]
-
-            for _, row in dataid_df.iterrows():
-                transformed_row = {
-                    "dataid": dataid,
-                    "month": row["month"],
-                    "weekday": row["weekday"],
-                    "grid": inverse_transform_column(row, "grid", self.stats["grid"]),
-                }
-
-                if "solar" in preprocessed_data.columns:
-                    transformed_row["solar"] = inverse_transform_column(
-                        row, "solar", self.stats["solar"]
-                    )
-
-                result_data.append(transformed_row)
-
-        result_df = self.merge_columns_into_timeseries(pd.DataFrame(result_data))
-        return result_df.sort_values(by=["dataid", "month", "weekday"], axis=0)
-
-    def merge_columns_into_timeseries(self, df):
-        if self.include_generation and self.is_pv_user:
+    @staticmethod
+    def _merge_columns_into_timeseries(df: pd.DataFrame) -> pd.DataFrame:
+        if "solar" in df.columns:
             df["timeseries"] = df.apply(
-                lambda row: np.column_stack((row["grid"], row["solar"])), axis=1
+                lambda row: (
+                    row["grid"]
+                    if not isinstance(row["solar"], (np.ndarray, list))
+                    else np.column_stack((row["grid"], row["solar"]))
+                ),
+                axis=1,
             )
-            df.drop(columns=["grid", "solar"], axis=1, inplace=True)
+            df.drop(columns=["grid", "solar"], inplace=True)
         else:
             df["timeseries"] = df["grid"]
-            df.drop(columns=["grid"], axis=1, inplace=True)
+            df.drop(columns=["grid"], inplace=True)
+        return df
+
+    @staticmethod
+    def _set_user_flags(metadata: pd.DataFrame, data: pd.DataFrame) -> dict:
+        return {
+            user_id: metadata.loc[metadata["dataid"] == user_id]["pv"].notna().any()
+            for user_id in data["dataid"].unique()
+        }
+
+    def create_user_dataset(self, user_id: int):
+        if user_id not in self.user_flags:
+            raise ValueError(f"User ID {user_id} not found in the dataset.")
+        user_data = self.data[self.data["dataid"] == user_id].copy()
+        return PecanStreetUserDataset(
+            user_data, self.stats, self.user_flags[user_id], self.include_generation
+        )
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = self.data.iloc[idx]
+        time_series = sample["timeseries"]
+        month = sample["month"]
+        day = sample["weekday"]
+        return (
+            torch.tensor(time_series, dtype=torch.float32).to(device),
+            torch.tensor(month, dtype=torch.long).to(device),
+            torch.tensor(day, dtype=torch.long).to(device),
+        )
+
+
+class PecanStreetUserDataset(Dataset):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        stats: dict,
+        is_pv_user: bool,
+        include_generation: bool,
+    ):
+        self.data = data
+        self.stats = stats
+        self.is_pv_user = is_pv_user
+        self.include_generation = include_generation
+
+    def inverse_transform_column(self, row, colname):
+        stats = self.stats[colname].get((row["dataid"], row["month"], row["weekday"]))
+        if not stats:
+            raise ValueError(
+                f"No stats found for {colname} with dataid={row['dataid']}, month={row['month']}, weekday={row['weekday']}"
+            )
+
+        norm_min_val = row[f"{colname}_norm_min"]
+        norm_max_val = row[f"{colname}_norm_max"]
+
+        mean, std = stats["mean"], stats["std"]
+        unscaled = row[colname] * (norm_max_val - norm_min_val + 1e-8) + norm_min_val
+        return unscaled * (std + 1e-8) + mean
+
+    def inverse_transform(self, df):
+        def split_timeseries(row):
+            grid = row[:, 0].reshape(-1, 1)
+            solar = row[:, 1].reshape(-1, 1) if row.shape[1] > 1 else None
+            return pd.Series({"grid": grid, "solar": solar})
+
+        if self.include_generation and self.is_pv_user:
+            df[["grid", "solar"]] = df["timeseries"].apply(split_timeseries)
+        else:
+            df["grid"] = df["timeseries"]
+
+        df.drop(columns=["timeseries"], inplace=True)
+
+        for idx, row in self.data.iterrows():
+            df.at[idx, "grid"] = self.inverse_transform_column(row, "grid")
+            if (
+                self.include_generation
+                and "solar" in df.columns
+                and row["solar"] is not None
+            ):
+                df.at[idx, "solar"] = self.inverse_transform_column(row, "solar")
+
+        df = self._merge_columns_into_timeseries(df)
+        df.sort_values(by=["dataid", "month", "weekday"], inplace=True)
+        return df
+
+    @staticmethod
+    def _merge_columns_into_timeseries(df: pd.DataFrame) -> pd.DataFrame:
+        if "solar" in df.columns:
+            df["timeseries"] = df.apply(
+                lambda row: (
+                    row["grid"]
+                    if not isinstance(row["solar"], (np.ndarray, list))
+                    else np.column_stack((row["grid"], row["solar"]))
+                ),
+                axis=1,
+            )
+            df.drop(columns=["grid", "solar"], inplace=True)
+        else:
+            df["timeseries"] = df["grid"]
+            df.drop(columns=["grid"], inplace=True)
         return df
 
     def __len__(self):
@@ -307,7 +288,6 @@ class PecanStreetDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.data.iloc[idx]
         time_series = sample["timeseries"]
-
         month = sample["month"]
         day = sample["weekday"]
         return (

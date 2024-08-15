@@ -6,6 +6,8 @@ import pandas as pd
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from data_utils.dataset import PecanStreetDataset, split_dataset
+from data_utils.utils import check_inverse_transform
 from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
     Context_FID,
@@ -16,6 +18,11 @@ from eval.metrics import (
     visualization,
 )
 from eval.predictive_metric import predictive_score_metrics
+from generator.acgan import ACGAN
+from generator.diffcharge.diffusion import DDPM
+from generator.diffcharge.options import Options
+from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
+from generator.timegan import TimeGAN
 
 USER_IDS = [
     3687,
@@ -97,11 +104,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Evaluator:
-    def __init__(self, real_dataset, model, n_dimensions, log_dir="logs"):
+    def __init__(self, real_dataset, model_name, log_dir="logs"):
         self.real_dataset = real_dataset
-        self.real_df = real_dataset.data
-        self.n_dimensions = n_dimensions
-        self.synthetic_df = self.generate_data_for_eval(model)
+        self.real_dataset = real_dataset
+        self.model_name = model_name
         self.writer = SummaryWriter(log_dir)
         self.metrics = {
             "dtw": [],
@@ -113,6 +119,10 @@ class Evaluator:
         }
 
     def evaluate_for_user(self, user_id):
+
+        user_dataset = self.real_dataset.create_user_dataset(user_id)
+        model = self.get_trained_model_for_user(self.model_name, user_dataset)
+
         user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
         user_writer = SummaryWriter(user_log_dir)
 
@@ -120,13 +130,15 @@ class Evaluator:
         print(f"Starting evaluation for user {user_id}")
         print("----------------------")
 
-        real_user_data = self.real_df[self.real_df["dataid"] == user_id]
-        syn_user_data = self.synthetic_df
+        real_user_data = user_dataset.data
+        syn_user_data = self.generate_data_for_eval(model)
         syn_user_data["dataid"] = user_id
 
         # Get inverse transformed data
-        real_user_data_inv = self.real_dataset.inverse_transform(real_user_data)
-        syn_user_data_inv = self.real_dataset.inverse_transform(syn_user_data)
+        real_user_data_inv = self.user_dataset.inverse_transform(real_user_data)
+        syn_user_data_inv = self.user_dataset.inverse_transform(syn_user_data)
+
+        # TODO add assertion of inverste transformation success
 
         real_data_array = np.stack(real_user_data["timeseries"])
         syn_data_array = np.stack(syn_user_data["timeseries"])
@@ -181,8 +193,8 @@ class Evaluator:
         # Randomly select three months and three weekdays
         unique_months = self.real_df["month"].unique()
         unique_weekdays = self.real_df["weekday"].unique()
-        selected_months = random.sample(list(unique_months), 3)
-        selected_weekdays = random.sample(list(unique_weekdays), 3)
+        selected_months = random.sample(list(unique_months), 1)
+        selected_weekdays = random.sample(list(unique_weekdays), 1)
 
         # Add KDE plot
         plots = visualization(real_data_array_inv, syn_data_array_inv, "kernel")
@@ -204,7 +216,7 @@ class Evaluator:
         user_writer.close()
 
     def evaluate_all_users(self):
-        user_ids = self.real_df["dataid"].unique()
+        user_ids = self.real_dataset.data["dataid"].unique()
         for user_id in user_ids:
             self.evaluate_for_user(user_id)
 
@@ -274,3 +286,35 @@ class Evaluator:
             metrics_summary["discr"],
             metrics_summary["pred"],
         )
+
+    def get_trained_model_for_user(self, model_name, user_dataset):
+
+        input_dim = (
+            int(user_dataset.is_pv_user) + 1
+        )  # if user has available pv data, input dim is 2
+
+        if model_name == "acgan":
+            train_dataset, val_dataset = split_dataset(user_dataset)
+
+            model = ACGAN(
+                input_dim=input_dim,
+                noise_dim=2,
+                embedding_dim=256,
+                window_length=96,
+                learning_rate=1e-4,
+                weight_path="runs/",
+            )
+            model.train(train_dataset, val_dataset, batch_size=32, num_epoch=200)
+
+        elif model_name == "diffcharge":
+            train_dataset, val_dataset = split_dataset(user_dataset)
+            opt = Options("diffusion", isTrain=True)
+            model = DDPM(opt=opt)
+            model.train(train_dataset, val_dataset, batch_size=32, num_epoch=200)
+
+        elif model_name == "diffusion_ts":
+            model = Diffusion_TS(seq_length=96, feature_size=input_dim, d_model=96)
+            model.train_model(user_dataset, batch_size=32)
+
+        else:
+            raise ValueError("Model name not recognized!")
