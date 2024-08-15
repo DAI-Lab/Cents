@@ -24,82 +24,6 @@ from generator.diffcharge.options import Options
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.timegan import TimeGAN
 
-USER_IDS = [
-    3687,
-    6377,
-    7062,
-    8574,
-    9213,
-    203,
-    1450,
-    1524,
-    2606,
-    3864,
-    7114,
-    1731,
-    4495,
-    8342,
-    3938,
-    5938,
-    8061,
-    9775,
-    4934,
-    8733,
-    9612,
-    9836,
-    6547,
-    661,
-    1642,
-    2335,
-    2361,
-    2818,
-    3039,
-    3456,
-    3538,
-    4031,
-    4373,
-    4767,
-    5746,
-    6139,
-    7536,
-    7719,
-    7800,
-    7901,
-    7951,
-    8156,
-    8386,
-    8565,
-    9019,
-    9160,
-    9922,
-    9278,
-    4550,
-    558,
-    2358,
-    3700,
-    1417,
-    5679,
-    5058,
-    2318,
-    5997,
-    950,
-    5982,
-    5587,
-    1222,
-    387,
-    3000,
-    4283,
-    3488,
-    3517,
-    9053,
-    3996,
-    27,
-    142,
-    914,
-    2096,
-    1240,
-]
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -131,12 +55,12 @@ class Evaluator:
         print("----------------------")
 
         real_user_data = user_dataset.data
-        syn_user_data = self.generate_data_for_eval(model)
+        syn_user_data = self.generate_data_for_eval(model, user_dataset.data)
         syn_user_data["dataid"] = user_id
 
         # Get inverse transformed data
-        real_user_data_inv = self.user_dataset.inverse_transform(real_user_data)
-        syn_user_data_inv = self.user_dataset.inverse_transform(syn_user_data)
+        real_user_data_inv = user_dataset.inverse_transform(real_user_data)
+        syn_user_data_inv = user_dataset.inverse_transform(syn_user_data)
 
         # TODO add assertion of inverste transformation success
 
@@ -191,8 +115,8 @@ class Evaluator:
         self.metrics["pred"].append((user_id, pred_score))
 
         # Randomly select three months and three weekdays
-        unique_months = self.real_df["month"].unique()
-        unique_weekdays = self.real_df["weekday"].unique()
+        unique_months = real_user_data["month"].unique()
+        unique_weekdays = real_user_data["weekday"].unique()
         selected_months = random.sample(list(unique_months), 1)
         selected_weekdays = random.sample(list(unique_weekdays), 1)
 
@@ -205,7 +129,7 @@ class Evaluator:
         for month in selected_months:
             for weekday in selected_weekdays:
                 fig = plot_range_with_syn_values(
-                    self.real_df, self.synthetic_df, month, weekday
+                    real_user_data_inv, syn_user_data_inv, month, weekday
                 )
                 user_writer.add_figure(
                     tag=f"Range_Plot_Month_{month}_Weekday_{weekday}",
@@ -233,9 +157,9 @@ class Evaluator:
         self.writer.flush()
         self.writer.close()
 
-    def generate_data_for_eval(self, model):
-        month_labels = torch.tensor(self.real_df["month"].values).to(device)
-        day_labels = torch.tensor(self.real_df["weekday"].values).to(device)
+    def generate_data_for_eval(self, model, real_user_df):
+        month_labels = torch.tensor(real_user_df["month"].values).to(device)
+        day_labels = torch.tensor(real_user_df["weekday"].values).to(device)
 
         generated_ts = (
             model.generate(month_labels=month_labels, day_labels=day_labels)
@@ -249,7 +173,7 @@ class Evaluator:
             )
 
         syn_ts = []
-        for idx, (_, row) in enumerate(self.real_df.iterrows()):
+        for idx, (_, row) in enumerate(real_user_df.iterrows()):
             gen_ts = generated_ts[idx]
             syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
 
@@ -318,3 +242,5 @@ class Evaluator:
 
         else:
             raise ValueError("Model name not recognized!")
+
+        return model

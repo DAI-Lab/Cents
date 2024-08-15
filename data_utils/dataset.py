@@ -71,7 +71,7 @@ class PecanStreetDataset(Dataset):
 
         grouped_data = (
             data.groupby(["dataid", "month", "date_day", "weekday"])["grid"]
-            .apply(list)
+            .apply(np.array)
             .reset_index()
         )
         filtered_data = grouped_data[grouped_data["grid"].apply(len) == 96].reset_index(
@@ -102,45 +102,36 @@ class PecanStreetDataset(Dataset):
             by=["dataid", "month", "weekday"]
         )
 
-    def _calculate_and_store_statistics(
-        self, data: pd.DataFrame, column: str
-    ) -> pd.DataFrame:
+    def _calculate_and_store_statistics(self, data: pd.DataFrame, column: str) -> Dict:
         def calculate_stats(group):
             all_values = np.concatenate(group[column].values)
+            mean = np.mean(all_values)
+            std = np.std(all_values)
+            normalized = (all_values - mean) / (std + 1e-8)
+            norm_min = normalized.min()
+            norm_max = normalized.max()
             return pd.Series(
-                {
-                    "mean": np.mean(all_values),
-                    "std": np.std(all_values),
-                    "min": np.min(all_values),
-                    "max": np.max(all_values),
-                }
+                {"mean": mean, "std": std, "norm_min": norm_min, "norm_max": norm_max}
             )
 
-        grouped_stats = (
-            data.groupby(["dataid", "month", "weekday"])
-            .apply(calculate_stats)
-            .reset_index()
+        grouped_stats = data.groupby(["dataid", "month", "weekday"]).apply(
+            calculate_stats
         )
-        return grouped_stats.set_index(["dataid", "month", "weekday"]).to_dict("index")
+        return grouped_stats.to_dict(orient="index")
 
     def _apply_normalization(self, data: pd.DataFrame, column: str) -> pd.DataFrame:
-        stats = self.stats[column]
-        stats_df = pd.DataFrame(
-            [(*key, *value.values()) for key, value in stats.items()],
-            columns=["dataid", "month", "weekday", "mean", "std", "min", "max"],
-        )
+        def normalize_and_scale(row):
+            stats = self.stats[column][(row["dataid"], row["month"], row["weekday"])]
+            mean, std = stats["mean"], stats["std"]
+            norm_min, norm_max = stats["norm_min"], stats["norm_max"]
 
-        data = data.merge(stats_df, on=["dataid", "month", "weekday"])
-        data[column], data[f"{column}_norm_min"], data[f"{column}_norm_max"] = zip(
-            *data.apply(
-                lambda row: self._normalize_and_scale(
-                    row[column], row["mean"], row["std"]
-                ),
-                axis=1,
-            )
-        )
+            values = np.array(row[column])
+            normalized = (values - mean) / (std + 1e-8)
+            scaled = (normalized - norm_min) / ((norm_max - norm_min) + 1e-8)
+            return scaled
 
-        return data.drop(columns=["mean", "std", "min", "max"])
+        data[column] = data.apply(normalize_and_scale, axis=1)
+        return data
 
     @staticmethod
     def _normalize_and_scale(values, mean, std):
@@ -153,7 +144,7 @@ class PecanStreetDataset(Dataset):
         solar_data = (
             data[~data["solar"].isna()]
             .groupby(["dataid", "month", "date_day", "weekday"])["solar"]
-            .apply(list)
+            .apply(np.array)
             .reset_index()
         )
         solar_data = solar_data[solar_data["solar"].apply(len) == 96]
@@ -232,11 +223,13 @@ class PecanStreetUserDataset(Dataset):
                 f"No stats found for {colname} with dataid={row['dataid']}, month={row['month']}, weekday={row['weekday']}"
             )
 
-        norm_min_val = row[f"{colname}_norm_min"]
-        norm_max_val = row[f"{colname}_norm_max"]
+        norm_min = stats["norm_min"]
+        norm_max = stats["norm_max"]
+        mean = stats["mean"]
+        std = stats["std"]
 
-        mean, std = stats["mean"], stats["std"]
-        unscaled = row[colname] * (norm_max_val - norm_min_val + 1e-8) + norm_min_val
+        scaled = row[colname]
+        unscaled = scaled * (norm_max - norm_min + 1e-8) + norm_min
         return unscaled * (std + 1e-8) + mean
 
     def inverse_transform(self, df):
@@ -252,7 +245,7 @@ class PecanStreetUserDataset(Dataset):
 
         df.drop(columns=["timeseries"], inplace=True)
 
-        for idx, row in self.data.iterrows():
+        for idx, row in df.iterrows():
             df.at[idx, "grid"] = self.inverse_transform_column(row, "grid")
             if (
                 self.include_generation
@@ -301,7 +294,7 @@ def prepare_dataloader(dataset, batch_size, shuffle=True):
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
-def split_dataset(dataset: Dataset, val_split: float = 0.1):
+def split_dataset(dataset: Dataset, val_split: float = 0.2):
     val_size = int(len(dataset) * val_split)
     train_size = len(dataset) - val_size
 

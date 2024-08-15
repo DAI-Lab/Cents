@@ -2,10 +2,9 @@ import numpy as np
 from sklearn.metrics import mean_squared_error
 
 
-@staticmethod
 def check_inverse_transform(normalized_dataset, unnormalized_dataset):
     unnormalized_df = unnormalized_dataset.data
-    transformed = normalized_dataset.inverse_transform()
+    transformed = normalized_dataset.inverse_transform(normalized_dataset.data)
 
     mse_list = []
 
