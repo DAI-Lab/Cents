@@ -43,8 +43,8 @@ class PecanStreetDataset(Dataset):
         path, columns = self._get_dataset_info()
         metadata = pd.read_csv(f"/{path}metadata.csv")
         data = self._load_full_data(path, columns)
-        data = self._preprocess_data(data)
         user_flags = self._set_user_flags(metadata, data)
+        data = self._preprocess_data(data)
         return data, metadata, user_flags
 
     def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
@@ -221,10 +221,27 @@ class PecanStreetUserDataset(Dataset):
         is_pv_user: bool,
         include_generation: bool,
     ):
-        self.data = data
+        self.data = self.validate_data(data)
         self.stats = stats
         self.is_pv_user = is_pv_user
         self.include_generation = include_generation
+
+    def validate_data(self, data):
+        shapes = data["timeseries"].apply(
+            lambda x: x.shape if isinstance(x, np.ndarray) else None
+        )
+        if len(shapes.unique()) > 1:
+            print("Warning: Inconsistent shapes found in timeseries")
+            data["timeseries"] = data["timeseries"].apply(
+                lambda x: (
+                    np.expand_dims(x[:, 0], axis=-1)
+                    if isinstance(x, np.ndarray) and x.ndim > 1
+                    else x
+                )
+            )
+        self.is_pv_user = False
+
+        return data
 
     def inverse_transform_column(self, row, colname):
         stats = self.stats[colname].get((row["dataid"], row["month"], row["weekday"]))

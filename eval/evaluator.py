@@ -29,7 +29,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class Evaluator:
     def __init__(self, real_dataset, model_name, log_dir="runs"):
         self.real_dataset = real_dataset
-        self.real_dataset = real_dataset
         self.model_name = model_name
         self.writer = SummaryWriter(log_dir)
         self.metrics = {
@@ -142,8 +141,8 @@ class Evaluator:
     def evaluate_all_users(self):
         user_ids = self.real_dataset.data["dataid"].unique()
         for user_id in user_ids:
-            if user_id == 1731:
-                self.evaluate_for_user(user_id)
+            # if user_id == 1731:
+            self.evaluate_for_user(user_id)
 
         print("Final Results: \n")
         print("--------------------")
