@@ -111,8 +111,9 @@ class DDPM:
 
             return x
 
-    def train(self, x_train, x_val, batch_size=32):
+    def train(self, x_train, x_val):
         # self.train()
+        batch_size = self.opt.batch_size
         epoch_loss = []
         train_loader = prepare_dataloader(x_train, batch_size)
         val_loader = prepare_dataloader(x_val, batch_size)

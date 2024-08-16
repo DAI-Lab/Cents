@@ -234,7 +234,7 @@ class Evaluator:
             train_dataset, val_dataset = split_dataset(user_dataset)
             opt = Options("diffusion", isTrain=True)
             model = DDPM(opt=opt)
-            model.train(train_dataset, val_dataset, batch_size=32, num_epoch=200)
+            model.train(train_dataset, val_dataset)
 
         elif model_name == "diffusion_ts":
             model = Diffusion_TS(seq_length=96, feature_size=input_dim, d_model=96)
