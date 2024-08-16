@@ -65,7 +65,7 @@ def calculate_period_bound_mse(
     mse_list = []
     n_dimensions = synthetic_timeseries.shape[-1]
 
-    for idx, row in real_dataframe.iterrows():
+    for idx, (_, row) in enumerate(real_dataframe.iterrows()):
         month = row["month"]
         weekday = row["weekday"]
 

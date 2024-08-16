@@ -13,8 +13,8 @@ def batch_generator(data, time, batch_size):
     idx = np.random.permutation(no)
     train_idx = idx[:batch_size]
 
-    X_mb = [data[i] for i in train_idx]
-    T_mb = [time[i] for i in train_idx]
+    X_mb = np.array([data[i] for i in train_idx])
+    T_mb = np.array([time[i] for i in train_idx])
 
     return X_mb, T_mb
 
@@ -40,7 +40,7 @@ def discriminative_score_metrics(ori_data, generated_data):
     max_seq_len = max(ori_max_seq_len, generated_max_seq_len)
 
     # Network parameters
-    hidden_dim = int(dim / 2)
+    hidden_dim = int(dim * 2)
     iterations = 2000
     batch_size = 128
 

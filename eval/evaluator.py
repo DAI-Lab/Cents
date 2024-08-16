@@ -22,13 +22,12 @@ from generator.acgan import ACGAN
 from generator.diffcharge.diffusion import DDPM
 from generator.diffcharge.options import Options
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
-from generator.timegan import TimeGAN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Evaluator:
-    def __init__(self, real_dataset, model_name, log_dir="logs"):
+    def __init__(self, real_dataset, model_name, log_dir="runs"):
         self.real_dataset = real_dataset
         self.real_dataset = real_dataset
         self.model_name = model_name
@@ -55,6 +54,7 @@ class Evaluator:
         print("----------------------")
 
         real_user_data = user_dataset.data
+
         syn_user_data = self.generate_data_for_eval(model, user_dataset.data)
         syn_user_data["dataid"] = user_id
 
@@ -142,7 +142,8 @@ class Evaluator:
     def evaluate_all_users(self):
         user_ids = self.real_dataset.data["dataid"].unique()
         for user_id in user_ids:
-            self.evaluate_for_user(user_id)
+            if user_id == 1731:
+                self.evaluate_for_user(user_id)
 
         print("Final Results: \n")
         print("--------------------")
@@ -222,7 +223,7 @@ class Evaluator:
 
             model = ACGAN(
                 input_dim=input_dim,
-                noise_dim=2,
+                noise_dim=256,
                 embedding_dim=256,
                 window_length=96,
                 learning_rate=1e-4,

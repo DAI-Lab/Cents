@@ -191,7 +191,7 @@ class ACGAN:
                 self.optimizer_D.zero_grad()
                 real_pred, real_day, real_month = self.discriminator(time_series_batch)
                 fake_pred, fake_day, fake_month = self.discriminator(
-                    generated_time_series.detach()
+                    generated_time_series
                 )
 
                 d_real_loss = (

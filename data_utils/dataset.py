@@ -158,18 +158,28 @@ class PecanStreetDataset(Dataset):
 
     @staticmethod
     def _merge_columns_into_timeseries(df: pd.DataFrame) -> pd.DataFrame:
+        def ensure_two_dimensional(arr):
+            if arr.ndim == 1:
+                return np.expand_dims(arr, axis=-1)
+            return arr
+
         if "solar" in df.columns:
             df["timeseries"] = df.apply(
                 lambda row: (
-                    row["grid"]
+                    ensure_two_dimensional(row["grid"])
                     if not isinstance(row["solar"], (np.ndarray, list))
-                    else np.column_stack((row["grid"], row["solar"]))
+                    else np.column_stack(
+                        (
+                            ensure_two_dimensional(row["grid"]),
+                            ensure_two_dimensional(row["solar"]),
+                        )
+                    )
                 ),
                 axis=1,
             )
             df.drop(columns=["grid", "solar"], inplace=True)
         else:
-            df["timeseries"] = df["grid"]
+            df["timeseries"] = df["grid"].apply(ensure_two_dimensional)
             df.drop(columns=["grid"], inplace=True)
         return df
 
@@ -283,6 +293,7 @@ class PecanStreetUserDataset(Dataset):
         time_series = sample["timeseries"]
         month = sample["month"]
         day = sample["weekday"]
+
         return (
             torch.tensor(time_series, dtype=torch.float32).to(device),
             torch.tensor(month, dtype=torch.long).to(device),
