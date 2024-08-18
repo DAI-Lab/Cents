@@ -141,8 +141,8 @@ class Evaluator:
     def evaluate_all_users(self):
         user_ids = self.real_dataset.data["dataid"].unique()
         for user_id in user_ids:
-            # if user_id == 1731:
-            self.evaluate_for_user(user_id)
+            if user_id == 203:
+                self.evaluate_for_user(user_id)
 
         print("Final Results: \n")
         print("--------------------")
@@ -233,6 +233,7 @@ class Evaluator:
         elif model_name == "diffcharge":
             train_dataset, val_dataset = split_dataset(user_dataset)
             opt = Options("diffusion", isTrain=True)
+            opt.input_dim = input_dim
             model = DDPM(opt=opt)
             model.train(train_dataset, val_dataset)
 
