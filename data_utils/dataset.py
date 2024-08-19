@@ -186,7 +186,7 @@ class PecanStreetDataset(Dataset):
     @staticmethod
     def _set_user_flags(metadata: pd.DataFrame, data: pd.DataFrame) -> dict:
         return {
-            user_id: metadata.loc[metadata["dataid"] == user_id]["pv"].notna().any()
+            user_id: metadata.loc[metadata["dataid"] == user_id]["solar"].notna().any()
             for user_id in data["dataid"].unique()
         }
 
