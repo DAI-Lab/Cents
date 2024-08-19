@@ -44,15 +44,14 @@ class Attention(nn.Module):
 
     def forward(self, x, c, t):
 
-        if self.opt.cond_flag == "conditional":
-            weekday_emb = self.weekday_embed(c[:, 0])
-            month_emb = self.month_embed(c[:, 1])
-            cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
-            cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
-            cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
-                1, self.opt.seq_len, 1
-            )
-            x = torch.cat([x, cond_emb], dim=2)
+        weekday_emb = self.weekday_embed(c[:, 0])
+        month_emb = self.month_embed(c[:, 1])
+        cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
+        cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
+        cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
+            1, self.opt.seq_len, 1
+        )
+        x = torch.cat([x, cond_emb], dim=2)
 
         hid_enc, (_, _) = self.input_projector(x)  # (B, L, hidden_dim)
         time_emb = time_embedding(
@@ -92,15 +91,14 @@ class CNN(nn.Module):
 
     def forward(self, x, c, t):
 
-        if self.opt.cond_flag == "conditional":
-            weekday_emb = self.weekday_embed(c[:, 0])
-            month_emb = self.month_embed(c[:, 1])
-            cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
-            cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
-            cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
-                1, self.opt.seq_len, 1
-            )
-            x = torch.cat([x, cond_emb], dim=2)
+        weekday_emb = self.weekday_embed(c[:, 0])
+        month_emb = self.month_embed(c[:, 1])
+        cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
+        cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
+        cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
+            1, self.opt.seq_len, 1
+        )
+        x = torch.cat([x, cond_emb], dim=2)
 
         hid_enc, (_, _) = self.input_projector(x)  # (B, L, hidden_dim)
         time_emb = time_embedding(

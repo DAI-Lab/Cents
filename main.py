@@ -1,5 +1,4 @@
 from data_utils.dataset import PecanStreetDataset
-from data_utils.utils import check_inverse_transform
 from eval.evaluator import Evaluator
 
 
@@ -12,7 +11,7 @@ def evaluate_model(model_name, normalize=True, include_generation=True, threshol
 
 
 def main():
-    evaluate_model("diffcharge")
+    evaluate_model("diffusion_ts")
 
 
 if __name__ == "__main__":

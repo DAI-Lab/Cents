@@ -3,6 +3,7 @@ import torch
 
 class Options:
     def __init__(self, model_name):
+        self.seed = 42
         self.model_name = model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.batch_size = 8  #
@@ -23,22 +24,26 @@ class Options:
             self.n_steps = 1000
             self.schedule = "linear"  # "cosine" # "linear"  # "quadratic"
         elif model_name == "diffusion_ts":
+            self.batch_size = 32
             self.n_epochs = 1000
-            self.n_layer_enc = (3,)
-            self.n_layer_dec = (6,)
-            self.d_model = (None,)
-            self.sampling_timesteps = (None,)
-            self.loss_type = ("l1",)
-            self.beta_schedule = ("cosine",)
-            self.n_heads = (4,)
-            self.mlp_hidden_times = (4,)
-            self.eta = (0.0,)
-            self.attn_pd = (0.0,)
-            self.resid_pd = (0.0,)
-            self.kernel_size = (None,)
-            self.padding_size = (None,)
-            self.use_ff = (True,)
-            self.reg_weight = (None,)
+            self.n_steps = 1000
+            self.base_lr = 1e-4
+            self.n_layer_enc = 3
+            self.n_layer_dec = 4
+            self.d_model = 128
+            self.cond_emb_dim = self.d_model
+            self.sampling_timesteps = None
+            self.loss_type = "l2"
+            self.beta_schedule = "cosine"
+            self.n_heads = 4
+            self.mlp_hidden_times = 4
+            self.eta = 0.0
+            self.attn_pd = 0.0
+            self.resid_pd = 0.0
+            self.kernel_size = None
+            self.padding_size = None
+            self.use_ff = True
+            self.reg_weight = None
             self.results_folder = "./Checkpoints_syn"
             self.gradient_accumulate_every = 2
             self.save_cycle = 1000

@@ -47,7 +47,7 @@ class Diffusion_TS(nn.Module):
         self.eta, self.use_ff = opt.eta, opt.use_ff
         self.seq_len = opt.seq_len
         self.input_dim = opt.input_dim
-        self.ff_weight = default(opt.reg_weight, math.sqrt(self.seq_length) / 5)
+        self.ff_weight = default(opt.reg_weight, math.sqrt(opt.seq_len) / 5)
 
         # Embedding layers for month and weekday
         self.month_embed = nn.Embedding(12, opt.cond_emb_dim)
@@ -70,9 +70,9 @@ class Diffusion_TS(nn.Module):
         )
 
         if opt.beta_schedule == "linear":
-            betas = linear_beta_schedule(timesteps)
+            betas = linear_beta_schedule(opt.n_steps)
         elif opt.beta_schedule == "cosine":
-            betas = cosine_beta_schedule(timesteps)
+            betas = cosine_beta_schedule(opt.n_steps)
         else:
             raise ValueError(f"unknown beta schedule {opt.beta_schedule}")
 
@@ -174,13 +174,13 @@ class Diffusion_TS(nn.Module):
             month_emb = (
                 self.month_embed(month)
                 .unsqueeze(1)
-                .repeat(1, self.seq_length, 1)
+                .repeat(1, self.seq_len, 1)
                 .to(device)
             )
             weekday_emb = (
                 self.weekday_embed(weekday)
                 .unsqueeze(1)
-                .repeat(1, self.seq_length, 1)
+                .repeat(1, self.seq_len, 1)
                 .to(device)
             )
             x = torch.cat([x, month_emb, weekday_emb], dim=-1)
@@ -241,9 +241,9 @@ class Diffusion_TS(nn.Module):
         return img
 
     def add_conditioning(self, x, month, weekday):
-        month_emb = self.month_embed(month).unsqueeze(1).repeat(1, self.seq_length, 1)
+        month_emb = self.month_embed(month).unsqueeze(1).repeat(1, self.seq_len, 1)
         weekday_emb = (
-            self.weekday_embed(weekday).unsqueeze(1).repeat(1, self.seq_length, 1)
+            self.weekday_embed(weekday).unsqueeze(1).repeat(1, self.seq_len, 1)
         )
         return torch.cat([x, month_emb, weekday_emb], dim=-1)
 
@@ -277,9 +277,9 @@ class Diffusion_TS(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     def generate_mts(self, batch_size=16):
-        input_dim, seq_length = self.self.input_dim, self.seq_length
+        input_dim, seq_len = self.self.input_dim, self.seq_len
         sample_fn = self.fast_sample if self.fast_sampling else self.sample
-        return sample_fn((batch_size, seq_length, input_dim))
+        return sample_fn((batch_size, seq_len, input_dim))
 
     @property
     def loss_fn(self):
@@ -378,7 +378,7 @@ class Diffusion_TS(nn.Module):
         os.makedirs(self.opt.results_folder, exist_ok=True)
 
         # Optimizer and EMA setup
-        self.opt = Adam(
+        self.optimizer = Adam(
             filter(lambda p: p.requires_grad, self.parameters()),
             lr=self.opt.base_lr,
             betas=[0.9, 0.96],
@@ -386,7 +386,9 @@ class Diffusion_TS(nn.Module):
         self.ema = EMA(
             self, beta=self.opt.ema_decay, update_every=self.opt.ema_update_interval
         ).to(device)
-        self.scheduler = ReduceLROnPlateau(self.opt, **self.opt.lr_scheduler_params)
+        self.scheduler = ReduceLROnPlateau(
+            self.optimizer, **self.opt.lr_scheduler_params
+        )
 
         # Training loop
         for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
@@ -408,8 +410,8 @@ class Diffusion_TS(nn.Module):
 
                 if (i + 1) % self.opt.gradient_accumulate_every == 0:
                     torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-                    self.opt.step()
-                    self.opt.zero_grad()
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
                     self.ema.update()
 
             self.scheduler.step(total_loss)
@@ -423,7 +425,7 @@ class Diffusion_TS(nn.Module):
                     {
                         "epoch": epoch + 1,
                         "model_state_dict": self.state_dict(),
-                        "optimizer_state_dict": self.opt.state_dict(),
+                        "optimizer_state_dict": self.optimizer.state_dict(),
                         "ema_state_dict": self.ema.state_dict(),
                     },
                     checkpoint_path,
@@ -434,7 +436,7 @@ class Diffusion_TS(nn.Module):
 
     def generate(self, day_labels, month_labels):
         num_samples = day_labels.shape[0]
-        shape = (num_samples, self.seq_length, self.input_dim)
+        shape = (num_samples, self.seq_len, self.input_dim)
         return self._generate(shape, [day_labels, month_labels])
 
     def _generate(self, shape, labels):

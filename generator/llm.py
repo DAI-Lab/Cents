@@ -25,15 +25,15 @@ DEFAULT_EOS_TOKEN = "</s>"
 DEFAULT_UNK_TOKEN = "<unk>"
 DEFAULT_PAD_TOKEN = "<pad>"
 
-DEFAULT_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
+DEFAULT_MODEL = "meta-llama/Meta-Llama-3.1-8B"
 
 
 class GPT:
-    """Prompt GPT models to forecast a time series.
+    """Prompt GPT models to generate a time series.
 
     Args:
         name (str):
-            Model name. Default to `'gpt-3.5-turbo'`.
+            Model name. Default to `'gpt-4o'`.
         chat (bool):
             Whether you're using a chat model or not. Default to `True`.
         sep (str):
@@ -59,7 +59,7 @@ class GPT:
     def generate(
         self,
         text,
-        length=1,
+        length=96,
         temp=1,
         top_p=1,
         logprobs=False,
@@ -67,7 +67,7 @@ class GPT:
         samples=1,
         seed=None,
     ):
-        """Use GPT to forecast a signal.
+        """Use GPT to generate a signal.
 
         Args:
             text (str):
@@ -96,7 +96,7 @@ class GPT:
 
         Returns:
             list, list:
-                * List of forecasted signal values.
+                * List of generated signal values.
                 * Optionally, a list of the output tokens' log probabilities.
         """
         input_length = len(self.tokenizer.encode(text))
@@ -191,10 +191,10 @@ class HF:
 
         self.model.eval()
 
-    def forecast(
-        self, text, length=1, temp=1, top_p=1, raw=False, samples=1, padding=0
+    def generate(
+        self, text, length=96, temp=1, top_p=1, raw=False, samples=1, padding=0
     ):
-        """Use GPT to forecast a signal.
+        """Use the model to generate a signal.
 
         Args:
             text (str):

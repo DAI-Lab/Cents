@@ -217,10 +217,6 @@ class ACGAN:
                     + self.auxiliary_loss(fake_month, month_label_batch)
                 )
 
-                d_fake_loss_adv = self.adversarial_loss(
-                    fake_pred, torch.ones_like(fake_pred) * soft_zero
-                )
-
                 d_loss = 0.5 * (d_real_loss + d_fake_loss)
                 d_loss.backward()
                 self.optimizer_D.step()
@@ -251,27 +247,23 @@ class ACGAN:
                     + self.auxiliary_loss(pred_month, gen_month_labels)
                 )
 
-                g_loss_adv = self.adversarial_loss(
-                    validity, torch.ones_like(validity) * soft_one
-                )
-
                 g_loss.backward()
 
                 self.optimizer_G.step()
 
-                summary_writer.add_scalars(
-                    "data/train_loss",
-                    {"gen": g_loss.item(), "dis": d_loss.item()},
-                    global_step=step,
-                )
+                # summary_writer.add_scalars(
+                #     "data/train_loss",
+                #     {"gen": g_loss.item(), "dis": d_loss.item()},
+                #     global_step=step,
+                # )
 
-                summary_writer.add_scalars(
-                    "data/adv_loss",
-                    {"dis": d_fake_loss_adv.item(), "gen": g_loss_adv.item()},
-                    global_step=step,
-                )
+                # summary_writer.add_scalars(
+                #     "data/adv_loss",
+                #     {"dis": d_fake_loss_adv.item(), "gen": g_loss_adv.item()},
+                #     global_step=step,
+                # )
 
-                step += 1
+                # step += 1
 
             # Validation step
             if validate:
@@ -306,16 +298,16 @@ class ACGAN:
                         num_batches += 1
 
                     mean_mmd_loss = total_mmd_loss / num_batches
-                    summary_writer.add_scalars(
-                        "data/mean_mmd_loss",
-                        {
-                            "grid": total_mmd_loss[0],
-                            "solar": (
-                                total_mmd_loss[1] if total_mmd_loss.shape[0] > 1 else 0
-                            ),
-                        },
-                        global_step=epoch,
-                    )
+                    # summary_writer.add_scalars(
+                    #     "data/mean_mmd_loss",
+                    #     {
+                    #         "grid": total_mmd_loss[0],
+                    #         "solar": (
+                    #             total_mmd_loss[1] if total_mmd_loss.shape[0] > 1 else 0
+                    #         ),
+                    #     },
+                    #     global_step=epoch,
+                    # )
                     print(
                         f"Epoch [{epoch + 1}/{num_epoch}], Mean MMD Loss: {mean_mmd_loss}"
                     )
