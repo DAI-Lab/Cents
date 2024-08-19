@@ -45,7 +45,7 @@ class Evaluator:
         user_dataset = self.real_dataset.create_user_dataset(user_id)
         model = self.get_trained_model_for_user(self.model_name, user_dataset)
 
-        user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
+        user_log_dir = f"{self.writer.log_dir}/{self.model_name}/user_{user_id}"
         user_writer = SummaryWriter(user_log_dir)
 
         print("----------------------")
@@ -60,8 +60,6 @@ class Evaluator:
         # Get inverse transformed data
         real_user_data_inv = user_dataset.inverse_transform(real_user_data)
         syn_user_data_inv = user_dataset.inverse_transform(syn_user_data)
-
-        # TODO add assertion of inverste transformation success
 
         real_data_array = np.stack(real_user_data["timeseries"])
         syn_data_array = np.stack(syn_user_data["timeseries"])
@@ -141,8 +139,7 @@ class Evaluator:
     def evaluate_all_users(self):
         user_ids = self.real_dataset.data["dataid"].unique()
         for user_id in user_ids:
-            if user_id == 3700:
-                self.evaluate_for_user(user_id)
+            self.evaluate_for_user(user_id)
 
         print("Final Results: \n")
         print("--------------------")
@@ -154,6 +151,12 @@ class Evaluator:
         print(f"Mean User Discriminative Score: {discr_score}")
         print(f"Mean User Predictive Score: {pred_score}")
         print("--------------------")
+        self.writer.add_scalar("Mean User DTW", dtw)
+        self.writer.add_scalar("Mean User MMD", mmd)
+        self.writer.add_scalar("Mean User MSE", mse)
+        self.writer.add_scalar("Mean User Context FID", context_fid)
+        self.writer.add_scalar("Mean User Discriminative Score", discr_score)
+        self.writer.add_scalar("Mean User Predictive Score", pred_score)
         self.writer.flush()
         self.writer.close()
 
@@ -228,18 +231,17 @@ class Evaluator:
                 learning_rate=1e-4,
                 weight_path="runs/",
             )
-            model.train(train_dataset, val_dataset, batch_size=32, num_epoch=200)
+            model.train(train_dataset, val_dataset, batch_size=8, num_epoch=200)
 
         elif model_name == "diffcharge":
-            train_dataset, val_dataset = split_dataset(user_dataset)
             opt = Options("diffusion", isTrain=True)
             opt.input_dim = input_dim
             model = DDPM(opt=opt)
-            model.train(train_dataset, val_dataset)
+            model.train(user_dataset)
 
         elif model_name == "diffusion_ts":
             model = Diffusion_TS(seq_length=96, feature_size=input_dim, d_model=96)
-            model.train_model(user_dataset, batch_size=32)
+            model.train_model(user_dataset, batch_size=8)
 
         else:
             raise ValueError("Model name not recognized!")

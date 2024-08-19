@@ -111,12 +111,11 @@ class DDPM:
 
             return x
 
-    def train(self, x_train, x_val):
+    def train(self, dataset):
         # self.train()
         batch_size = self.opt.batch_size
         epoch_loss = []
-        train_loader = prepare_dataloader(x_train, batch_size)
-        val_loader = prepare_dataloader(x_val, batch_size)
+        train_loader = prepare_dataloader(dataset, batch_size)
 
         for epoch in range(self.opt.n_epochs):
             batch_loss = []
@@ -136,8 +135,6 @@ class DDPM:
             epoch_loss.append(np.mean(batch_loss))
             print(f"epoch={epoch}/{self.opt.n_epochs}, loss={epoch_loss[-1]}")
             self.lr_scheduler.step()
-            # save_path = f"weights/{self.opt.model_name}/{self.opt.network}/{self.opt.level}/{self.opt.cond_flag}/epoch{epoch}.pt"
-            # torch.save(self.eps_model.state_dict(), save_path)
 
     def generate(self, day_labels, month_labels):
         num_samples = day_labels.shape[0]

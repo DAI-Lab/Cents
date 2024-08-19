@@ -6,12 +6,8 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-import torch.nn.utils as utils
 import torch.optim as optim
-import torchvision.datasets as dsets
-import torchvision.transforms as transforms
 from tensorboardX import SummaryWriter
-from torch.autograd import Variable
 from tqdm import tqdm
 
 from data_utils.dataset import prepare_dataloader
@@ -160,10 +156,9 @@ class ACGAN:
             self.discriminator.parameters(),
             lr=self.learning_rate,
             betas=(0.5, 0.999),
-            weight_decay=1e-6,
         )
 
-    def train(self, x_train, x_val, batch_size=32, num_epoch=5):
+    def train(self, dataset, batch_size=32, num_epoch=5, validate=False):
         summary_writer = SummaryWriter()
         self.gen_losses = []
         self.dis_losses = []
@@ -171,8 +166,13 @@ class ACGAN:
         self.gen_adv_losses = []
         self.dis_adv_losses = []
 
-        train_loader = prepare_dataloader(x_train, batch_size)
-        val_loader = prepare_dataloader(x_val, batch_size)
+        if validate:
+            x_train, x_val = split_dataset(dataset)
+            train_loader = prepare_dataloader(x_train, batch_size)
+            val_loader = prepare_dataloader(x_val, batch_size)
+
+        else:
+            train_loader = prepare_dataloader(dataset)
 
         step = 0
 
@@ -263,46 +263,51 @@ class ACGAN:
                 step += 1
 
             # Validation step
-            with torch.no_grad():
-                total_mmd_loss = np.zeros(shape=(self.input_dim,))
-                num_batches = 0
-                for time_series_batch, month_label_batch, day_label_batch in val_loader:
-                    time_series_batch, month_label_batch, day_label_batch = (
+            if validate:
+                with torch.no_grad():
+                    total_mmd_loss = np.zeros(shape=(self.input_dim,))
+                    num_batches = 0
+                    for (
                         time_series_batch,
                         month_label_batch,
                         day_label_batch,
-                    )
-                    x_generated = self.generate(
-                        month_labels=month_label_batch, day_labels=day_label_batch
-                    )
-                    mmd_values = np.zeros(
-                        shape=(time_series_batch.shape[0], self.input_dim)
-                    )
-
-                    for dim in range(self.input_dim):
-                        mmd_values[:, dim] = mmd_loss(
-                            time_series_batch[:, :, dim].cpu().numpy(),
-                            x_generated[:, :, dim].cpu().numpy(),
+                    ) in val_loader:
+                        time_series_batch, month_label_batch, day_label_batch = (
+                            time_series_batch,
+                            month_label_batch,
+                            day_label_batch,
+                        )
+                        x_generated = self.generate(
+                            month_labels=month_label_batch, day_labels=day_label_batch
+                        )
+                        mmd_values = np.zeros(
+                            shape=(time_series_batch.shape[0], self.input_dim)
                         )
 
-                    batch_mmd_loss = np.mean(mmd_values, axis=0)
-                    total_mmd_loss += batch_mmd_loss
-                    num_batches += 1
+                        for dim in range(self.input_dim):
+                            mmd_values[:, dim] = mmd_loss(
+                                time_series_batch[:, :, dim].cpu().numpy(),
+                                x_generated[:, :, dim].cpu().numpy(),
+                            )
 
-                mean_mmd_loss = total_mmd_loss / num_batches
-                summary_writer.add_scalars(
-                    "data/mean_mmd_loss",
-                    {
-                        "grid": total_mmd_loss[0],
-                        "solar": (
-                            total_mmd_loss[1] if total_mmd_loss.shape[0] > 1 else 0
-                        ),
-                    },
-                    global_step=epoch,
-                )
-                print(
-                    f"Epoch [{epoch + 1}/{num_epoch}], Mean MMD Loss: {mean_mmd_loss}"
-                )
+                        batch_mmd_loss = np.mean(mmd_values, axis=0)
+                        total_mmd_loss += batch_mmd_loss
+                        num_batches += 1
+
+                    mean_mmd_loss = total_mmd_loss / num_batches
+                    summary_writer.add_scalars(
+                        "data/mean_mmd_loss",
+                        {
+                            "grid": total_mmd_loss[0],
+                            "solar": (
+                                total_mmd_loss[1] if total_mmd_loss.shape[0] > 1 else 0
+                            ),
+                        },
+                        global_step=epoch,
+                    )
+                    print(
+                        f"Epoch [{epoch + 1}/{num_epoch}], Mean MMD Loss: {mean_mmd_loss}"
+                    )
 
         # self.save_weight()
 

@@ -399,7 +399,7 @@ class Diffusion_TS(nn.Module):
         max_epochs = 1000
         results_folder = "./Checkpoints_syn"
         gradient_accumulate_every = 2
-        save_cycle = 100
+        save_cycle = 1000
         ema_decay = 0.99
         ema_update_interval = 10
         lr_scheduler_params = {

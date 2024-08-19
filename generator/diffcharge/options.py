@@ -6,11 +6,10 @@ class Options:
         self.model_name = model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.n_epochs = 1000
-        self.level = "station"  # ***
-        self.seq_len = 96  # station——288, driver——720
+        self.seq_len = 96  # 96 for pecanstreet
         self.cond_flag = "conditional"  # ***
         if isTrain:
-            self.batch_size = 8  # station——4, driver——8
+            self.batch_size = 8  #
             self.shuffle = True
         else:
             self.batch_size = 1
