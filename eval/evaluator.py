@@ -220,28 +220,20 @@ class Evaluator:
             int(user_dataset.is_pv_user) + 1
         )  # if user has available pv data, input dim is 2
 
-        if model_name == "acgan":
-            train_dataset, val_dataset = split_dataset(user_dataset)
+        opt = Options(model_name)
+        opt.input_dim = input_dim
 
-            model = ACGAN(
-                input_dim=input_dim,
-                noise_dim=256,
-                embedding_dim=256,
-                window_length=96,
-                learning_rate=1e-4,
-                weight_path="runs/",
-            )
-            model.train(train_dataset, val_dataset, batch_size=8, num_epoch=200)
+        if model_name == "acgan":
+            model = ACGAN(opt)
+            model.train_model(user_dataset)
 
         elif model_name == "diffcharge":
-            opt = Options("diffusion", isTrain=True)
-            opt.input_dim = input_dim
-            model = DDPM(opt=opt)
-            model.train(user_dataset)
+            model = DDPM(opt)
+            model.train_model(user_dataset)
 
         elif model_name == "diffusion_ts":
-            model = Diffusion_TS(seq_length=96, feature_size=input_dim, d_model=96)
-            model.train_model(user_dataset, batch_size=8)
+            model = Diffusion_TS(opt)
+            model.train_model(user_dataset)
 
         else:
             raise ValueError("Model name not recognized!")

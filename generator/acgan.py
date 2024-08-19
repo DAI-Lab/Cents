@@ -10,15 +10,19 @@ import torch.optim as optim
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from data_utils.dataset import prepare_dataloader
+from data_utils.dataset import prepare_dataloader, split_dataset
 from eval.loss import mmd_loss
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Generator(nn.Module):
     def __init__(
-        self, noise_dim, embedding_dim, final_window_length, input_dim, base_channels=64
+        self,
+        noise_dim,
+        embedding_dim,
+        final_window_length,
+        input_dim,
+        device,
+        base_channels=256,
     ):
         super(Generator, self).__init__()
         self.noise_dim = noise_dim
@@ -26,6 +30,7 @@ class Generator(nn.Module):
         self.final_window_length = final_window_length // 8
         self.input_dim = input_dim
         self.base_channels = base_channels
+        self.device = device
 
         self.month_embedding = nn.Embedding(12, embedding_dim)
         self.day_embedding = nn.Embedding(7, embedding_dim)
@@ -59,13 +64,15 @@ class Generator(nn.Module):
 
     def forward(self, noise, month_labels, day_labels):
         month_embedded = (
-            self.month_embedding(month_labels).view(-1, self.embedding_dim).to(device)
+            self.month_embedding(month_labels)
+            .view(-1, self.embedding_dim)
+            .to(self.device)
         )
         day_embedded = (
-            self.day_embedding(day_labels).view(-1, self.embedding_dim).to(device)
+            self.day_embedding(day_labels).view(-1, self.embedding_dim).to(self.device)
         )
 
-        x = torch.cat((noise, month_embedded, day_embedded), dim=1).to(device)
+        x = torch.cat((noise, month_embedded, day_embedded), dim=1).to(self.device)
         x = self.fc(x)
         x = x.view(-1, self.base_channels, self.final_window_length)
         x = self.conv_transpose_layers(x)
@@ -75,11 +82,12 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, window_length, input_dim, base_channels=64):
+    def __init__(self, window_length, input_dim, device, base_channels=256):
         super(Discriminator, self).__init__()
         self.input_dim = input_dim
         self.window_length = window_length
         self.base_channels = base_channels
+        self.device = device
 
         self.conv_layers = nn.Sequential(
             nn.Conv1d(
@@ -121,50 +129,47 @@ class Discriminator(nn.Module):
 
 
 class ACGAN:
-    def __init__(
-        self,
-        input_dim,
-        noise_dim,
-        embedding_dim,
-        window_length,
-        learning_rate,
-        weight_path,
-    ):
-        self.code_size = noise_dim
-        self.input_dim = input_dim
-        self.learning_rate = learning_rate
-        self.weight_path = weight_path
+    def __init__(self, opt):
+        self.code_size = opt.noise_dim
+        self.input_dim = opt.input_dim
+        self.lr_gen = opt.lr_gen
+        self.lr_discr = opt.lr_discr
+        self.seq_len = opt.seq_len
+        self.noise_dim = opt.noise_dim
+        self.cond_emb_dim = opt.cond_emb_dim
+        self.device = self.opt.device
 
         assert (
-            window_length % 8 == 0
+            self.seq_len % 8 == 0
         ), "window_length must be a multiple of 8 in this architecture!"
-        final_window_length = window_length
-        self.window_length = final_window_length
 
         self.generator = Generator(
-            noise_dim, embedding_dim, final_window_length, input_dim
-        ).to(device)
-        self.discriminator = Discriminator(window_length, input_dim).to(device)
+            self.noise_dim, self.cond_emb_dim, self.seq_len, self.input_dim, self.device
+        )
+        self.discriminator = Discriminator(self.seq_len, self.input_dim, self.device)
 
         self.adversarial_loss = nn.BCELoss()
         self.auxiliary_loss = nn.CrossEntropyLoss()
 
         self.optimizer_G = optim.Adam(
-            self.generator.parameters(), lr=self.learning_rate, betas=(0.5, 0.999)
+            self.generator.parameters(), lr=self.lr_gen, betas=(0.5, 0.999)
         )
         self.optimizer_D = optim.Adam(
             self.discriminator.parameters(),
-            lr=self.learning_rate,
+            lr=self.lr_discr,
             betas=(0.5, 0.999),
         )
 
-    def train(self, dataset, batch_size=32, num_epoch=5, validate=False):
+    def train_model(self, dataset, validate=False):
         summary_writer = SummaryWriter()
         self.gen_losses = []
         self.dis_losses = []
         self.mmd_losses = []
         self.gen_adv_losses = []
         self.dis_adv_losses = []
+
+        batch_size = self.opt.batch_size
+        num_epoch = self.opt.num_epoch
 
         if validate:
             x_train, x_val = split_dataset(dataset)
@@ -181,7 +186,9 @@ class ACGAN:
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
                 current_batch_size = time_series_batch.size(0)
-                noise = torch.randn((current_batch_size, self.code_size)).to(device)
+                noise = torch.randn((current_batch_size, self.code_size)).to(
+                    self.device
+                )
                 generated_time_series = self.generator(
                     noise, month_label_batch, day_label_batch
                 )
@@ -219,10 +226,14 @@ class ACGAN:
                 self.optimizer_D.step()
 
                 self.optimizer_G.zero_grad()
-                noise = torch.randn((current_batch_size, self.code_size)).to(device)
-                gen_day_labels = torch.randint(0, 7, (current_batch_size,)).to(device)
+                noise = torch.randn((current_batch_size, self.code_size)).to(
+                    self.device
+                )
+                gen_day_labels = torch.randint(0, 7, (current_batch_size,)).to(
+                    self.device
+                )
                 gen_month_labels = torch.randint(0, 12, (current_batch_size,)).to(
-                    device
+                    self.device
                 )
                 generated_time_series = self.generator(
                     noise, gen_month_labels, gen_day_labels
@@ -322,7 +333,7 @@ class ACGAN:
         ), "Number of weekday and month labels must be equal!"
 
         num_samples = day_labels.shape[0]
-        noise = torch.randn((num_samples, self.code_size)).to(device)
+        noise = torch.randn((num_samples, self.code_size)).to(self.device)
         return self._generate([noise] + [month_labels.clone()] + [day_labels.clone()])
 
     def save_weight(self):

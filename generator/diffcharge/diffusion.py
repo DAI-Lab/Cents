@@ -111,8 +111,7 @@ class DDPM:
 
             return x
 
-    def train(self, dataset):
-        # self.train()
+    def train_model(self, dataset):
         batch_size = self.opt.batch_size
         epoch_loss = []
         train_loader = prepare_dataloader(dataset, batch_size)

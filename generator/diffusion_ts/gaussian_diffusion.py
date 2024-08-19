@@ -41,62 +41,40 @@ def cosine_beta_schedule(timesteps, s=0.004):
 
 
 class Diffusion_TS(nn.Module):
-    def __init__(
-        self,
-        seq_length,
-        feature_size,
-        n_layer_enc=3,
-        n_layer_dec=6,
-        d_model=None,
-        timesteps=1000,
-        sampling_timesteps=None,
-        loss_type="l1",
-        beta_schedule="cosine",
-        n_heads=4,
-        mlp_hidden_times=4,
-        eta=0.0,
-        attn_pd=0.0,
-        resid_pd=0.0,
-        kernel_size=None,
-        padding_size=None,
-        use_ff=True,
-        reg_weight=None,
-        **kwargs,
-    ):
+    def __init__(self, opt):
         super(Diffusion_TS, self).__init__()
-
-        self.eta, self.use_ff = eta, use_ff
-        self.seq_length = seq_length
-        self.feature_size = feature_size
-        self.ff_weight = default(reg_weight, math.sqrt(self.seq_length) / 5)
+        self.opt = opt
+        self.eta, self.use_ff = opt.eta, opt.use_ff
+        self.seq_len = opt.seq_len
+        self.input_dim = opt.input_dim
+        self.ff_weight = default(opt.reg_weight, math.sqrt(self.seq_length) / 5)
 
         # Embedding layers for month and weekday
-        self.month_embed = nn.Embedding(12, d_model)
-        self.weekday_embed = nn.Embedding(7, d_model)
+        self.month_embed = nn.Embedding(12, opt.cond_emb_dim)
+        self.weekday_embed = nn.Embedding(7, opt.cond_emb_dim)
 
-        self.fc = nn.Linear(feature_size + d_model * 2, feature_size)
+        self.fc = nn.Linear(opt.input_dim + opt.d_model * 2, opt.input_dim)
 
         self.model = Transformer(
-            n_feat=feature_size + d_model * 2,
-            n_channel=seq_length,
-            n_layer_enc=n_layer_enc,
-            n_layer_dec=n_layer_dec,
-            n_heads=n_heads,
-            attn_pdrop=attn_pd,
-            resid_pdrop=resid_pd,
-            mlp_hidden_times=mlp_hidden_times,
-            max_len=seq_length,
-            n_embd=d_model,
-            conv_params=[kernel_size, padding_size],
-            **kwargs,
+            n_feat=opt.input_dim + opt.d_model * 2,
+            n_channel=opt.seq_len,
+            n_layer_enc=opt.n_layer_enc,
+            n_layer_dec=opt.n_layer_dec,
+            n_heads=opt.n_heads,
+            attn_pdrop=opt.attn_pd,
+            resid_pdrop=opt.resid_pd,
+            mlp_hidden_times=opt.mlp_hidden_times,
+            max_len=opt.seq_len,
+            n_embd=opt.d_model,
+            conv_params=[opt.kernel_size, opt.padding_size],
         )
 
-        if beta_schedule == "linear":
+        if opt.beta_schedule == "linear":
             betas = linear_beta_schedule(timesteps)
-        elif beta_schedule == "cosine":
+        elif opt.beta_schedule == "cosine":
             betas = cosine_beta_schedule(timesteps)
         else:
-            raise ValueError(f"unknown beta schedule {beta_schedule}")
+            raise ValueError(f"unknown beta schedule {opt.beta_schedule}")
 
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0).to(device)
@@ -104,12 +82,12 @@ class Diffusion_TS(nn.Module):
 
         (timesteps,) = betas.shape
         self.num_timesteps = int(timesteps)
-        self.loss_type = loss_type
+        self.loss_type = opt.loss_type
 
         # sampling related parameters
 
         self.sampling_timesteps = default(
-            sampling_timesteps, timesteps
+            opt.sampling_timesteps, timesteps
         )  # default num sampling timesteps to number of timesteps at training
 
         assert self.sampling_timesteps <= timesteps
@@ -299,9 +277,9 @@ class Diffusion_TS(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
     def generate_mts(self, batch_size=16):
-        feature_size, seq_length = self.feature_size, self.seq_length
+        input_dim, seq_length = self.self.input_dim, self.seq_length
         sample_fn = self.fast_sample if self.fast_sampling else self.sample
-        return sample_fn((batch_size, seq_length, feature_size))
+        return sample_fn((batch_size, seq_length, input_dim))
 
     @property
     def loss_fn(self):
@@ -358,13 +336,13 @@ class Diffusion_TS(nn.Module):
             c,
             n,
             device,
-            feature_size,
+            input_dim,
         ) = (
             *x.shape,
             x.device,
-            self.feature_size,
+            self.input_dim,
         )
-        assert n == feature_size, f"number of variable must be {feature_size}"
+        assert n == input_dim, f"number of variable must be {input_dim}"
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
         return self._train_loss(x_start=x, t=t, month=month, weekday=weekday, **kwargs)
 
@@ -374,59 +352,44 @@ class Diffusion_TS(nn.Module):
             c,
             n,
             device,
-            feature_size,
+            input_dim,
         ) = (
             *x.shape,
             x.device,
-            self.feature_size,
+            self.input_dim,
         )
-        assert n == feature_size, f"number of variable must be {feature_size}"
+        assert n == input_dim, f"number of variable must be {input_dim}"
         t = torch.tensor([t]).to(device)
         t = t.repeat(b)
         x = self.q_sample(x, t)
         trend, season, residual = self.model(x, t, return_res=True)
         return trend, season, residual, x
 
-    def train_model(self, train_dataset, batch_size=32):
+    def train_model(self, train_dataset):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.to(device)
 
         # Create DataLoader
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-
-        # Training parameters
-        base_lr = 1.0e-5
-        max_epochs = 1000
-        results_folder = "./Checkpoints_syn"
-        gradient_accumulate_every = 2
-        save_cycle = 1000
-        ema_decay = 0.99
-        ema_update_interval = 10
-        lr_scheduler_params = {
-            "factor": 0.5,
-            "patience": 200,
-            "min_lr": 1.0e-5,
-            "threshold": 1.0e-1,
-            "threshold_mode": "rel",
-            "verbose": False,
-        }
+        train_loader = DataLoader(
+            train_dataset, batch_size=self.opt.batch_size, shuffle=self.opt.shuffle
+        )
 
         # Create necessary directories
-        os.makedirs(results_folder, exist_ok=True)
+        os.makedirs(self.opt.results_folder, exist_ok=True)
 
         # Optimizer and EMA setup
         self.opt = Adam(
             filter(lambda p: p.requires_grad, self.parameters()),
-            lr=base_lr,
+            lr=self.opt.base_lr,
             betas=[0.9, 0.96],
         )
-        self.ema = EMA(self, beta=ema_decay, update_every=ema_update_interval).to(
-            device
-        )
-        self.scheduler = ReduceLROnPlateau(self.opt, **lr_scheduler_params)
+        self.ema = EMA(
+            self, beta=self.opt.ema_decay, update_every=self.opt.ema_update_interval
+        ).to(device)
+        self.scheduler = ReduceLROnPlateau(self.opt, **self.opt.lr_scheduler_params)
 
         # Training loop
-        for epoch in tqdm(range(max_epochs), desc="Training"):
+        for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
             total_loss = 0.0
             for i, (time_series_batch, month_label_batch, day_label_batch) in enumerate(
                 train_loader
@@ -439,11 +402,11 @@ class Diffusion_TS(nn.Module):
                 loss = self(
                     time_series_batch, weekday=day_label_batch, month=month_label_batch
                 )
-                loss = loss / gradient_accumulate_every
+                loss = loss / self.opt.gradient_accumulate_every
                 loss.backward()
                 total_loss += loss.item()
 
-                if (i + 1) % gradient_accumulate_every == 0:
+                if (i + 1) % self.opt.gradient_accumulate_every == 0:
                     torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
                     self.opt.step()
                     self.opt.zero_grad()
@@ -452,9 +415,9 @@ class Diffusion_TS(nn.Module):
             self.scheduler.step(total_loss)
 
             # Save model checkpoint
-            if (epoch + 1) % save_cycle == 0:
+            if (epoch + 1) % self.opt.save_cycle == 0:
                 checkpoint_path = os.path.join(
-                    results_folder, f"checkpoint-{epoch + 1}.pt"
+                    self.opt.results_folder, f"checkpoint-{epoch + 1}.pt"
                 )
                 torch.save(
                     {
@@ -471,7 +434,7 @@ class Diffusion_TS(nn.Module):
 
     def generate(self, day_labels, month_labels):
         num_samples = day_labels.shape[0]
-        shape = (num_samples, self.seq_length, self.feature_size)
+        shape = (num_samples, self.seq_length, self.input_dim)
         return self._generate(shape, [day_labels, month_labels])
 
     def _generate(self, shape, labels):
