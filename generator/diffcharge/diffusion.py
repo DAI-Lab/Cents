@@ -63,8 +63,12 @@ class DDPM:
         mean, var = self.q_xt_x0(x0, t)
         return mean + (var**0.5) * eps
 
-    def p_sample(self, xt, c, t):
-        eps_theta = self.eps_model(xt, c, t)
+    def p_sample(self, xt, c, t, guidance_scale=1.0):
+        eps_theta_cond = self.eps_model(xt, c, t)
+        eps_theta_uncond = self.eps_model(xt, torch.zeros_like(c, device=c.device), t)
+        eps_theta = eps_theta_uncond + guidance_scale * (
+            eps_theta_cond - eps_theta_uncond
+        )
         alpha_bar = self.gather(self.alpha_bar, t)
         alpha = self.gather(self.alpha, t)
         eps_coef = (1 - alpha) / (1 - alpha_bar) ** 0.5
@@ -76,17 +80,21 @@ class DDPM:
             z = torch.randn(xt.shape, device=xt.device)
         return mean + (var**0.5) * z
 
-    def cal_loss(self, x0, c):  # (B, L, 1)
+    def cal_loss(self, x0, c, drop_prob=0.1):  # (B, L, 1)
         batch_size = x0.shape[0]
         t = torch.randint(
             0, self.n_steps, (batch_size,), device=x0.device, dtype=torch.long
         )
         noise = torch.randn_like(x0)
         xt = self.q_sample(x0, t, eps=noise)
+
+        if torch.rand(1).item() < drop_prob:  # randomly drop conditioning
+            c = torch.zeros_like(c, device=c.device)  # zero out the conditioning
+
         eps_theta = self.eps_model(xt, c, t)
         return self.loss_func(noise, eps_theta)
 
-    def sample(self, weight_path, n_samples, condition, smooth=True):
+    def sample(self, n_samples, condition, smooth=True, guidance_scale=1.0):
         c = condition.to(self.opt.device)
 
         with torch.no_grad():
@@ -100,7 +108,7 @@ class DDPM:
                 t = torch.ones(n_samples, dtype=torch.long).to(self.opt.device) * (
                     self.n_steps - j - 1
                 )
-                x = self.p_sample(x, c, t)
+                x = self.p_sample(x, c, t, guidance_scale=guidance_scale)
 
             if smooth:
                 for i in range(n_samples):
@@ -127,7 +135,7 @@ class DDPM:
                     dim=1,
                 ).to(self.opt.device)
                 self.optimizer.zero_grad()
-                loss = self.cal_loss(x0, c)
+                loss = self.cal_loss(x0, c, drop_prob=0.1)
                 loss.backward()
                 self.optimizer.step()
                 batch_loss.append(loss.item())
@@ -138,12 +146,19 @@ class DDPM:
     def generate(self, day_labels, month_labels):
         num_samples = day_labels.shape[0]
         shape = (num_samples, self.opt.seq_len, self.opt.input_dim)
-        return self._generate(shape, [day_labels, month_labels])
+        return self._generate(
+            shape, [day_labels, month_labels], guidance_scale=self.opt.guidance_scale
+        )
 
-    def _generate(self, shape, labels):
+    def _generate(self, shape, labels, guidance_scale=1.0):
         with torch.no_grad():
             c = torch.cat([label.unsqueeze(1) for label in labels], dim=1).to(
                 self.opt.device
             )
-            samples = self.sample(None, n_samples=shape[0], condition=c, smooth=True)
+            samples = self.sample(
+                n_samples=shape[0],
+                condition=c,
+                smooth=True,
+                guidance_scale=guidance_scale,
+            )
             return samples

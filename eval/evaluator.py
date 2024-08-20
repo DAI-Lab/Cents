@@ -6,8 +6,6 @@ import pandas as pd
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from data_utils.dataset import PecanStreetDataset, split_dataset
-from data_utils.utils import check_inverse_transform
 from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
     Context_FID,
@@ -20,8 +18,8 @@ from eval.metrics import (
 from eval.predictive_metric import predictive_score_metrics
 from generator.acgan import ACGAN
 from generator.diffcharge.diffusion import DDPM
-from generator.diffcharge.options import Options
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
+from generator.options import Options
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -139,7 +137,8 @@ class Evaluator:
     def evaluate_all_users(self):
         user_ids = self.real_dataset.data["dataid"].unique()
         for user_id in user_ids:
-            self.evaluate_for_user(user_id)
+            if user_id == 27:
+                self.evaluate_for_user(user_id)
 
         print("Final Results: \n")
         print("--------------------")

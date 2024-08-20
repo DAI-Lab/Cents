@@ -145,7 +145,7 @@ class HF:
 
     Args:
         name (str):
-            Model name. Default to `'mistralai/Mistral-7B-Instruct-v0.2'`.
+            Model name. Default to `'meta-llama/Meta-Llama-3.1-8B'`.
         sep (str):
             String to separate each element in values. Default to `','`.
     """

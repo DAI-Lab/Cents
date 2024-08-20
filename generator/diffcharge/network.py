@@ -42,12 +42,16 @@ class Attention(nn.Module):
         nn.init.kaiming_normal_(conv1d_layer.weight)
         return conv1d_layer
 
-    def forward(self, x, c, t):
+    def forward(self, x, c=None, t=None, guidance_scale=1.0):
 
-        weekday_emb = self.weekday_embed(c[:, 0])
-        month_emb = self.month_embed(c[:, 1])
-        cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
-        cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
+        if c is not None:
+            weekday_emb = self.weekday_embed(c[:, 0])
+            month_emb = self.month_embed(c[:, 1])
+            cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
+            cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
+        else:
+            cond_emb = self.null_embed.unsqueeze(0).repeat(x.size(0), 1)
+
         cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
             1, self.opt.seq_len, 1
         )
@@ -60,6 +64,11 @@ class Attention(nn.Module):
         hid_enc = hid_enc + time_emb
         trans_enc = self.trans_encoder(hid_enc).permute(0, 2, 1)  # (B, hidden_dim, L)
         output = self.output_projector(trans_enc).permute(0, 2, 1)  # (B, L, input_dim)
+
+        if guidance_scale != 1.0:
+            uncond_output = self.forward(x, c=None, t=t, guidance_scale=1.0)
+            output = uncond_output + guidance_scale * (output - uncond_output)
+
         return output
 
 
@@ -87,12 +96,16 @@ class CNN(nn.Module):
         self.month_embed = nn.Embedding(12, opt.cond_emb_dim)
         self.weekday_embed = nn.Embedding(7, opt.cond_emb_dim)
 
-    def forward(self, x, c, t):
+    def forward(self, x, c=None, t=None, guidance_scale=1.0):
 
-        weekday_emb = self.weekday_embed(c[:, 0])
-        month_emb = self.month_embed(c[:, 1])
-        cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
-        cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
+        if c is not None:
+            weekday_emb = self.weekday_embed(c[:, 0])
+            month_emb = self.month_embed(c[:, 1])
+            cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
+            cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
+        else:
+            cond_emb = self.null_embed.unsqueeze(0).repeat(x.size(0), 1)
+
         cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
             1, self.opt.seq_len, 1
         )
@@ -106,4 +119,9 @@ class CNN(nn.Module):
         output = self.output_projector(hid_enc.permute(0, 2, 1)).permute(
             0, 2, 1
         )  # (B, L, input_dim)
+
+        if guidance_scale != 1.0:
+            uncond_output = self.forward(x, c=None, t=t, guidance_scale=1.0)
+            output = uncond_output + guidance_scale * (output - uncond_output)
+
         return output
