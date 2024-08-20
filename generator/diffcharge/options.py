@@ -10,14 +10,14 @@ class Options:
         self.seq_len = 96  # 96 for pecanstreet
         self.input_dim = 2  # 1
         self.noise_dim = 256
-        self.cond_emb_dim = 256
+        self.cond_emb_dim = 32
         self.shuffle = True
         if model_name == "diffcharge":
             self.n_epochs = 1000
-            self.init_lr = 5e-5
+            self.init_lr = 1e-5
             self.network = "cnn"  # "attention" or "cnn"
             self.hidden_dim = 256
-            self.cond_dim = 256
+            self.cond_emb_dim = 32
             self.nhead = 8
             self.beta_start = 1e-4
             self.beta_end = 0.02

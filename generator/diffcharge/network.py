@@ -20,7 +20,7 @@ class Attention(nn.Module):
         super(Attention, self).__init__()
         self.opt = opt
         self.cond_embedder = nn.Sequential(
-            nn.Linear(opt.cond_dim * 2, opt.hidden_dim), nn.Tanh()
+            nn.Linear(opt.cond_emb_dim * 2, opt.hidden_dim), nn.Tanh()
         )
         self.input_projector = nn.LSTM(
             opt.input_dim + opt.hidden_dim,
@@ -31,11 +31,11 @@ class Attention(nn.Module):
         self.encoder_layer = nn.TransformerEncoderLayer(
             d_model=opt.hidden_dim, nhead=opt.nhead, dim_feedforward=opt.hidden_dim
         )
-        self.trans_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=3)
+        self.trans_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=5)
         self.output_projector = self.conv1d_with_init(opt.hidden_dim, opt.input_dim, 1)
 
-        self.month_embed = nn.Embedding(12, opt.hidden_dim)
-        self.weekday_embed = nn.Embedding(7, opt.hidden_dim)
+        self.month_embed = nn.Embedding(12, opt.cond_emb_dim)
+        self.weekday_embed = nn.Embedding(7, opt.cond_emb_dim)
 
     def conv1d_with_init(self, in_channels, out_channels, kernel_size):
         conv1d_layer = nn.Conv1d(in_channels, out_channels, kernel_size)
@@ -69,25 +69,23 @@ class CNN(nn.Module):
         self.opt = opt
 
         self.cond_embedder = nn.Sequential(
-            nn.Linear(opt.cond_dim * 2, opt.hidden_dim), nn.Tanh()
+            nn.Linear(opt.cond_emb_dim * 2, opt.hidden_dim), nn.Tanh()
         )
 
         self.input_projector = nn.LSTM(
             opt.input_dim + opt.hidden_dim,
             opt.hidden_dim,
-            num_layers=4,
+            num_layers=6,
             batch_first=True,
         )
         self.output_projector = nn.Sequential(
             nn.Conv1d(opt.hidden_dim, opt.hidden_dim, kernel_size=1),
             nn.BatchNorm1d(opt.hidden_dim),
-            nn.Conv1d(opt.hidden_dim, opt.hidden_dim, kernel_size=1),
-            nn.BatchNorm1d(opt.hidden_dim),
             nn.Conv1d(opt.hidden_dim, opt.input_dim, kernel_size=1),
         )
 
-        self.month_embed = nn.Embedding(12, opt.hidden_dim)
-        self.weekday_embed = nn.Embedding(7, opt.hidden_dim)
+        self.month_embed = nn.Embedding(12, opt.cond_emb_dim)
+        self.weekday_embed = nn.Embedding(7, opt.cond_emb_dim)
 
     def forward(self, x, c, t):
 

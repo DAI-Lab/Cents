@@ -11,7 +11,7 @@ def evaluate_model(model_name, normalize=True, include_generation=True, threshol
 
 
 def main():
-    evaluate_model("diffusion_ts")
+    evaluate_model("diffcharge")
 
 
 if __name__ == "__main__":
