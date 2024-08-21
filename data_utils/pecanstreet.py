@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -315,17 +315,3 @@ class PecanStreetUserDataset(Dataset):
             torch.tensor(month, dtype=torch.long).to(device),
             torch.tensor(day, dtype=torch.long).to(device),
         )
-
-
-def prepare_dataloader(dataset, batch_size, shuffle=True):
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
-
-
-def split_dataset(dataset: Dataset, val_split: float = 0.1):
-    val_size = int(len(dataset) * val_split)
-    train_size = len(dataset) - val_size
-
-    train_dataset = torch.utils.data.Subset(dataset, range(train_size))
-    val_dataset = torch.utils.data.Subset(dataset, range(train_size, len(dataset)))
-
-    return train_dataset, val_dataset

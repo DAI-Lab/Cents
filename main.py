@@ -28,9 +28,9 @@ def evaluate_llm():
 
 
 def main():
-    # evaluate_model("diffcharge")
+    evaluate_model("diffcharge")
     # evaluate_llm()
-    dataset = OpenPowerDataset()
+    # dataset = OpenPowerDataset()
 
 
 if __name__ == "__main__":

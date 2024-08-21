@@ -9,7 +9,7 @@ class Options:
         self.batch_size = 8  #
         self.seq_len = 96  # 96 for pecanstreet
         self.input_dim = 2  # 1
-        self.noise_dim = 256
+        self.noise_dim = 512
         self.cond_emb_dim = 32
         self.shuffle = True
         if model_name == "diffcharge":
@@ -17,12 +17,12 @@ class Options:
             self.init_lr = 5e-5
             self.network = "cnn"  # "attention" or "cnn"
             self.guidance_scale = 1.0
-            self.hidden_dim = 256
+            self.hidden_dim = 512
             self.cond_emb_dim = 32
             self.nhead = 8
             self.beta_start = 1e-4
             self.beta_end = 0.02
-            self.n_steps = 100
+            self.n_steps = 1000
             self.schedule = "linear"  # "cosine" # "linear"  # "quadratic"
         elif model_name == "diffusion_ts":
             self.batch_size = 32
