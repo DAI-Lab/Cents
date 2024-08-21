@@ -312,8 +312,6 @@ class ACGAN:
                         f"Epoch [{epoch + 1}/{num_epoch}], Mean MMD Loss: {mean_mmd_loss}"
                     )
 
-        # self.save_weight()
-
     def _generate(self, x):
         self.generator.eval()
         with torch.no_grad():
@@ -327,20 +325,3 @@ class ACGAN:
         num_samples = day_labels.shape[0]
         noise = torch.randn((num_samples, self.code_size)).to(self.device)
         return self._generate([noise] + [month_labels.clone()] + [day_labels.clone()])
-
-    def save_weight(self):
-        torch.save(
-            self.generator.state_dict(), self.weight_path + "_acgan_generator.pth"
-        )
-        torch.save(
-            self.discriminator.state_dict(),
-            self.weight_path + "_acgan_discriminator.pth",
-        )
-
-    def load_weight(self):
-        self.generator.load_state_dict(
-            torch.load(self.weight_path + "_acgan_generator.pth")
-        )
-        self.discriminator.load_state_dict(
-            torch.load(self.weight_path + "_acgan_discriminator.pth")
-        )

@@ -1,6 +1,7 @@
 from data_utils.dataset import PecanStreetDataset
 from eval.evaluator import Evaluator
 from generator.llm.llm import HF
+from generator.llm.preprocessing import Signal2String
 
 
 def evaluate_model(model_name, normalize=True, include_generation=True, threshold=None):
@@ -12,9 +13,7 @@ def evaluate_model(model_name, normalize=True, include_generation=True, threshol
 
 
 def evaluate_llm():
-    hf = HF()
-    text = "0.5, 1.0, 0.3, 0.7, 0.2"
-    output = hf.generate(text)
+    hf = HF(sep=",")
 
 
 def main():

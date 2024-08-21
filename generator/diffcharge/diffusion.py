@@ -80,7 +80,7 @@ class DDPM:
             z = torch.randn(xt.shape, device=xt.device)
         return mean + (var**0.5) * z
 
-    def cal_loss(self, x0, c, drop_prob=0.1):  # (B, L, 1)
+    def cal_loss(self, x0, c, drop_prob=0.15):  # (B, L, 1)
         batch_size = x0.shape[0]
         t = torch.randint(
             0, self.n_steps, (batch_size,), device=x0.device, dtype=torch.long

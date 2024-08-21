@@ -14,8 +14,8 @@ class Options:
         self.shuffle = True
         if model_name == "diffcharge":
             self.n_epochs = 1000
-            self.init_lr = 2e-5
-            self.network = "cnn"  # "attention" or "cnn"
+            self.init_lr = 1e-5
+            self.network = "attention"  # "attention" or "cnn"
             self.guidance_scale = 1.0
             self.hidden_dim = 256
             self.cond_emb_dim = 32

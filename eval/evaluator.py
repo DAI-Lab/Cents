@@ -150,15 +150,15 @@ class Evaluator:
         print(f"Mean User Discriminative Score: {discr_score}")
         print(f"Mean User Predictive Score: {pred_score}")
         print("--------------------")
-        self.writer.add_scalar(f"{self.model_name}/Mean User DTW", dtw)
-        self.writer.add_scalar(f"{self.model_name}/Mean User MMD", mmd)
-        self.writer.add_scalar(f"{self.model_name}/Mean User MSE", mse)
-        self.writer.add_scalar(f"{self.model_name}/Mean User Context FID", context_fid)
+        self.writer.add_scalar(f"{self.model_name}/Mean_User_DTW", dtw)
+        self.writer.add_scalar(f"{self.model_name}/Mean_User_MMD", mmd)
+        self.writer.add_scalar(f"{self.model_name}/Mean_User_MSE", mse)
+        self.writer.add_scalar(f"{self.model_name}/Mean_User_Context_FID", context_fid)
         self.writer.add_scalar(
-            f"{self.model_name}/Mean User Discriminative Score", discr_score
+            f"{self.model_name}/Mean_User_Discriminative_Score", discr_score
         )
         self.writer.add_scalar(
-            f"{self.model_name}/Mean User Predictive Score", pred_score
+            f"{self.model_name}/Mean_User_Predictive_Score", pred_score
         )
         self.writer.flush()
         self.writer.close()
