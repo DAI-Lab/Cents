@@ -1,4 +1,4 @@
-from data_utils.dataset import PecanStreetDataset
+from data_utils.pecanstreet import PecanStreetDataset
 from eval.evaluator import Evaluator
 from generator.llm.llm import HF
 from generator.llm.preprocessing import Signal2String
@@ -27,8 +27,8 @@ def evaluate_llm():
 
 
 def main():
-    # evaluate_model("diffcharge", threshold=(-5, 5))
-    evaluate_llm()
+    evaluate_model("diffcharge", threshold=(-6, 6))
+    # evaluate_llm()
 
 
 if __name__ == "__main__":

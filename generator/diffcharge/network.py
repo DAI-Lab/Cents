@@ -84,7 +84,7 @@ class CNN(nn.Module):
         self.input_projector = nn.LSTM(
             opt.input_dim + opt.hidden_dim,
             opt.hidden_dim,
-            num_layers=6,
+            num_layers=4,
             batch_first=True,
         )
         self.output_projector = nn.Sequential(

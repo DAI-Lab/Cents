@@ -224,7 +224,15 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
             # Do t-SNE Analysis together
             prep_data_final = np.concatenate((prep_data, prep_data_hat), axis=0)
             # TSNE analysis
-            tsne = TSNE(n_components=2, verbose=1, perplexity=25, n_iter=300)
+            tsne = TSNE(
+                n_components=2,
+                learning_rate="auto",
+                init="pca",
+                verbose=1,
+                perplexity=5,
+                n_iter=300,
+                early_exaggeration=5.0,
+            )
             tsne_results = tsne.fit_transform(prep_data_final)
 
             # Plotting

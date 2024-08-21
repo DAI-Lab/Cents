@@ -28,7 +28,7 @@ class Evaluator:
     def __init__(self, real_dataset, model_name, log_dir="runs"):
         self.real_dataset = real_dataset
         self.model_name = model_name
-        self.writer = SummaryWriter(log_dir)
+        self.writer = SummaryWriter(f"{log_dir}/{model_name}")
         self.metrics = {
             "dtw": [],
             "mmd": [],
@@ -133,12 +133,23 @@ class Evaluator:
 
         user_writer.flush()
         user_writer.close()
+        return syn_data_array_inv[:, :, 0], real_data_array_inv[:, :, 0]
 
     def evaluate_all_users(self):
         user_ids = self.real_dataset.data["dataid"].unique()
+        syn_data = []
+        real_data = []
+
         for user_id in user_ids:
-            if user_id == 27:
-                self.evaluate_for_user(user_id)
+            syn_user_data, real_user_data = self.evaluate_for_user(user_id)
+            syn_data.append(syn_user_data)
+            real_data.append(real_user_data)
+
+        syn_data = np.concatenate(syn_data, axis=0)
+        real_data = np.concatenate(real_data, axis=0)
+
+        plot = visualization(real_data, syn_data, "tsne")
+        self.writer.add_figure(tag=f"TSNE", figure=plot)
 
         print("Final Results: \n")
         print("--------------------")

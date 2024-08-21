@@ -6,7 +6,7 @@ class Options:
         self.seed = 42
         self.model_name = model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.batch_size = 4  #
+        self.batch_size = 8  #
         self.seq_len = 96  # 96 for pecanstreet
         self.input_dim = 2  # 1
         self.noise_dim = 256
@@ -14,8 +14,8 @@ class Options:
         self.shuffle = True
         if model_name == "diffcharge":
             self.n_epochs = 1000
-            self.init_lr = 1e-5
-            self.network = "attention"  # "attention" or "cnn"
+            self.init_lr = 1e-4
+            self.network = "cnn"  # "attention" or "cnn"
             self.guidance_scale = 1.0
             self.hidden_dim = 256
             self.cond_emb_dim = 32
@@ -62,5 +62,5 @@ class Options:
         elif model_name == "acgan":
             self.n_epochs = 200
             self.validate = False
-            self.lr_gen = 1e-5
-            self.lr_discr = 1e-5
+            self.lr_gen = 1e-4
+            self.lr_discr = 1e-4
