@@ -89,7 +89,7 @@ class DDPM:
         xt = self.q_sample(x0, t, eps=noise)
 
         if torch.rand(1).item() < drop_prob:  # randomly drop conditioning
-            c = torch.zeros_like(c, device=c.device)  # zero out the conditioning
+            c = torch.zeros_like(c, device=c.device)
 
         eps_theta = self.eps_model(xt, c, t)
         return self.loss_func(noise, eps_theta)

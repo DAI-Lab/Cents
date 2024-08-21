@@ -78,11 +78,6 @@ class PecanStreetDataset(Dataset):
             drop=True
         )
 
-        if self.threshold:
-            data["grid"] = np.clip(data["grid"], *self.threshold)
-            if self.include_generation and "solar" in data.columns:
-                data["solar"] = np.clip(data["solar"], *self.threshold)
-
         if self.normalize:
             self.stats["grid"] = self._calculate_and_store_statistics(
                 filtered_data, "grid"
@@ -127,6 +122,10 @@ class PecanStreetDataset(Dataset):
 
             values = np.array(row[column])
             normalized = (values - mean) / (std + 1e-8)
+
+            if self.threshold:
+                values = np.clip(values, *self.threshold)
+
             scaled = (normalized - norm_min) / ((norm_max - norm_min) + 1e-8)
             return scaled
 

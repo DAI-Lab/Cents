@@ -43,7 +43,7 @@ class Evaluator:
         user_dataset = self.real_dataset.create_user_dataset(user_id)
         model = self.get_trained_model_for_user(self.model_name, user_dataset)
 
-        user_log_dir = f"{self.writer.log_dir}/{self.model_name}/user_{user_id}"
+        user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
         user_writer = SummaryWriter(user_log_dir)
 
         print("----------------------")
@@ -141,12 +141,13 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            syn_user_data, real_user_data = self.evaluate_for_user(user_id)
-            syn_data.append(syn_user_data)
-            real_data.append(real_user_data)
+            if user_id == 27:
+                syn_user_data, real_user_data = self.evaluate_for_user(user_id)
+                syn_data.append(syn_user_data)
+                real_data.append(real_user_data)
 
-        syn_data = np.concatenate(syn_data, axis=0)
-        real_data = np.concatenate(real_data, axis=0)
+        syn_data = np.expand_dims(np.concatenate(syn_data, axis=0), axis=-1)
+        real_data = np.expand_dims(np.concatenate(real_data, axis=0), axis=-1)
 
         plot = visualization(real_data, syn_data, "tsne")
         self.writer.add_figure(tag=f"TSNE", figure=plot)

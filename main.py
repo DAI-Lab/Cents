@@ -1,12 +1,13 @@
+from data_utils.openpower import OpenPowerDataset
 from data_utils.pecanstreet import PecanStreetDataset
 from eval.evaluator import Evaluator
 from generator.llm.llm import HF
 from generator.llm.preprocessing import Signal2String
 
 
-def evaluate_model(model_name, normalize=True, include_generation=True, threshold=None):
+def evaluate_model(model_name, normalize=True, include_generation=True):
     full_dataset = PecanStreetDataset(
-        normalize=normalize, include_generation=include_generation, threshold=threshold
+        normalize=normalize, include_generation=include_generation, threshold=(-10, 10)
     )
     evaluator = Evaluator(full_dataset, model_name)
     evaluator.evaluate_all_users()
@@ -27,8 +28,9 @@ def evaluate_llm():
 
 
 def main():
-    evaluate_model("diffcharge", threshold=(-6, 6))
+    # evaluate_model("diffcharge")
     # evaluate_llm()
+    dataset = OpenPowerDataset()
 
 
 if __name__ == "__main__":
