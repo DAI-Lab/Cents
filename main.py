@@ -13,12 +13,22 @@ def evaluate_model(model_name, normalize=True, include_generation=True, threshol
 
 
 def evaluate_llm():
-    hf = HF(sep=",")
+    hf = HF(name="meta-llama/Meta-Llama-3.1-8B", sep=",")
+    converter = Signal2String(decimal=4)
+    full_dataset = PecanStreetDataset(
+        normalize=True, include_generation=False, threshold=(-5, 5)
+    )
+    user_dataset = full_dataset.create_user_dataset(661)
+    text = user_dataset.data.timeseries.iloc[0].squeeze()
+    text = converter.transform(text)
+    output = hf.generate(text)[0]
+    output = converter.reverse_transform(output)
+    print(output)
 
 
 def main():
-    evaluate_model("diffcharge", threshold=(-5, 5))
-    # evaluate_llm()
+    # evaluate_model("diffcharge", threshold=(-5, 5))
+    evaluate_llm()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
 {
-    "system_message": "You are a helpful assistant that performs synthetic time series generation for household electrical load daily usage profiles. The user will provide a few example time series for a month and weekday combination and you will generate a synthetic time series sampled from the distribution. The time series is represented by decimal strings separated by commas.",
-    "user_message": "Please generate a time series similar to the following sequence without producing any additional text. Do not say anything like 'the synthetic time series is', just return the numbers. Sequence:\n"
+    "system_message": "You are a helpful assistant that performs synthetic time series generation for household electrical load daily usage profiles. The user will provide an example time series for a month and weekday combination and you will generate a synthetic time series sampled from the distribution. The time series is represented by decimal strings separated by commas.",
+    "user_message": "Please generate a time series similar in shape to the following sequence without producing any additional text. Do not say anything like 'the synthetic time series is', just return the sequence of 96 values. The example sequence is:\n"
 }

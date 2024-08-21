@@ -20,12 +20,13 @@ BIAS = 30
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_BOS_TOKEN = "<s>"
-DEFAULT_EOS_TOKEN = "</s>"
+DEFAULT_BOS_TOKEN = "<|begin_of_text|>"
+DEFAULT_EOS_TOKEN = "<|end_of_text|>"
 DEFAULT_UNK_TOKEN = "<unk>"
 DEFAULT_PAD_TOKEN = "<pad>"
 
 DEFAULT_MODEL = "meta-llama/Meta-Llama-3.1-8B"
+MISTRAL_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 
 
 class GPT:
@@ -157,17 +158,19 @@ class HF:
         self.tokenizer = AutoTokenizer.from_pretrained(self.name, use_fast=False)
 
         # special tokens
-        special_tokens_dict = dict()
-        if self.tokenizer.eos_token is None:
-            special_tokens_dict["eos_token"] = DEFAULT_EOS_TOKEN
-        if self.tokenizer.bos_token is None:
-            special_tokens_dict["bos_token"] = DEFAULT_BOS_TOKEN
-        if self.tokenizer.unk_token is None:
-            special_tokens_dict["unk_token"] = DEFAULT_UNK_TOKEN
-        if self.tokenizer.pad_token is None:
-            special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
+        if name == MISTRAL_MODEL:
+            special_tokens_dict = dict()
+            if self.tokenizer.eos_token is None:
+                special_tokens_dict["eos_token"] = DEFAULT_EOS_TOKEN
+            if self.tokenizer.bos_token is None:
+                special_tokens_dict["bos_token"] = DEFAULT_BOS_TOKEN
+            if self.tokenizer.unk_token is None:
+                special_tokens_dict["unk_token"] = DEFAULT_UNK_TOKEN
+            if self.tokenizer.pad_token is None:
+                special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
 
-        self.tokenizer.add_special_tokens(special_tokens_dict)
+            self.tokenizer.add_special_tokens(special_tokens_dict)
+
         self.tokenizer.pad_token = (
             self.tokenizer.eos_token
         )  # indicate the end of the time series
@@ -186,7 +189,7 @@ class HF:
         self.model = AutoModelForCausalLM.from_pretrained(
             self.name,
             device_map="auto",
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,
         )
 
         self.model.eval()
@@ -232,7 +235,7 @@ class HF:
             max_new_tokens=max_tokens,
             temperature=temp,
             top_p=top_p,
-            bad_words_ids=self.invalid_tokens,
+            # bad_words_ids=self.invalid_tokens,
             renormalize_logits=True,
             num_return_sequences=samples
         )
