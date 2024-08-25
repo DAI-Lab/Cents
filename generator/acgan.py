@@ -32,20 +32,20 @@ class Generator(nn.Module):
         self.base_channels = base_channels
         self.device = device
 
-        self.month_embedding = nn.Embedding(12, embedding_dim)
-        self.day_embedding = nn.Embedding(7, embedding_dim)
+        self.month_embedding = nn.Embedding(12, embedding_dim).to(self.device)
+        self.day_embedding = nn.Embedding(7, embedding_dim).to(self.device)
 
         self.fc = nn.Linear(
             noise_dim + 2 * embedding_dim, self.final_window_length * base_channels
-        )
+        ).to(self.device)
 
         self.conv_transpose_layers = nn.Sequential(
-            nn.BatchNorm1d(base_channels),
+            nn.BatchNorm1d(base_channels).to(self.device),
             nn.LeakyReLU(0.2, inplace=True),
             nn.ConvTranspose1d(
                 base_channels, base_channels // 2, kernel_size=4, stride=2, padding=1
-            ),
-            nn.BatchNorm1d(base_channels // 2),
+            ).to(self.device),
+            nn.BatchNorm1d(base_channels // 2).to(self.device),
             nn.LeakyReLU(0.2, inplace=True),
             nn.ConvTranspose1d(
                 base_channels // 2,
@@ -53,26 +53,20 @@ class Generator(nn.Module):
                 kernel_size=4,
                 stride=2,
                 padding=1,
-            ),
-            nn.BatchNorm1d(base_channels // 4),
+            ).to(self.device),
+            nn.BatchNorm1d(base_channels // 4).to(self.device),
             nn.LeakyReLU(0.2, inplace=True),
             nn.ConvTranspose1d(
                 base_channels // 4, input_dim, kernel_size=4, stride=2, padding=1
-            ),
-            nn.Sigmoid(),
-        )
+            ).to(self.device),
+            nn.Sigmoid().to(self.device),
+        ).to(self.device)
 
     def forward(self, noise, month_labels, day_labels):
-        month_embedded = (
-            self.month_embedding(month_labels)
-            .view(-1, self.embedding_dim)
-            .to(self.device)
-        )
-        day_embedded = (
-            self.day_embedding(day_labels).view(-1, self.embedding_dim).to(self.device)
-        )
+        month_embedded = self.month_embedding(month_labels)
+        day_embedded = self.day_embedding(day_labels)
 
-        x = torch.cat((noise, month_embedded, day_embedded), dim=1).to(self.device)
+        x = torch.cat((noise, month_embedded, day_embedded), dim=1)
         x = self.fc(x)
         x = x.view(-1, self.base_channels, self.final_window_length)
         x = self.conv_transpose_layers(x)
@@ -92,7 +86,7 @@ class Discriminator(nn.Module):
         self.conv_layers = nn.Sequential(
             nn.Conv1d(
                 input_dim, base_channels // 4, kernel_size=4, stride=2, padding=1
-            ),
+            ).to(self.device),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv1d(
                 base_channels // 4,
@@ -100,20 +94,26 @@ class Discriminator(nn.Module):
                 kernel_size=4,
                 stride=2,
                 padding=1,
-            ),
-            nn.BatchNorm1d(base_channels // 2),
+            ).to(self.device),
+            nn.BatchNorm1d(base_channels // 2).to(self.device),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv1d(
                 base_channels // 2, base_channels, kernel_size=4, stride=2, padding=1
-            ),
-            nn.BatchNorm1d(base_channels),
+            ).to(self.device),
+            nn.BatchNorm1d(base_channels).to(self.device),
             nn.LeakyReLU(0.2, inplace=True),
-        )
+        ).to(self.device)
 
-        self.fc_discriminator = nn.Linear((window_length // 8) * base_channels, 1)
-        self.fc_aux_day = nn.Linear((window_length // 8) * base_channels, 7)
-        self.fc_aux_month = nn.Linear((window_length // 8) * base_channels, 12)
-        self.softmax = nn.Softmax(dim=1)
+        self.fc_discriminator = nn.Linear((window_length // 8) * base_channels, 1).to(
+            self.device
+        )
+        self.fc_aux_day = nn.Linear((window_length // 8) * base_channels, 7).to(
+            self.device
+        )
+        self.fc_aux_month = nn.Linear((window_length // 8) * base_channels, 12).to(
+            self.device
+        )
+        self.softmax = nn.Softmax(dim=1).to(self.device)
 
     def forward(self, x):
         x = x.permute(
@@ -130,6 +130,7 @@ class Discriminator(nn.Module):
 
 class ACGAN:
     def __init__(self, opt):
+        self.opt = opt
         self.code_size = opt.noise_dim
         self.input_dim = opt.input_dim
         self.lr_gen = opt.lr_gen
@@ -137,7 +138,7 @@ class ACGAN:
         self.seq_len = opt.seq_len
         self.noise_dim = opt.noise_dim
         self.cond_emb_dim = opt.cond_emb_dim
-        self.device = self.opt.device
+        self.device = opt.device
 
         assert (
             self.seq_len % 8 == 0
@@ -145,19 +146,19 @@ class ACGAN:
 
         self.generator = Generator(
             self.noise_dim, self.cond_emb_dim, self.seq_len, self.input_dim, self.device
-        )
-        self.discriminator = Discriminator(self.seq_len, self.input_dim, self.device)
+        ).to(self.device)
+        self.discriminator = Discriminator(
+            self.seq_len, self.input_dim, self.device
+        ).to(self.device)
 
-        self.adversarial_loss = nn.BCELoss()
-        self.auxiliary_loss = nn.CrossEntropyLoss()
+        self.adversarial_loss = nn.BCELoss().to(self.device)
+        self.auxiliary_loss = nn.CrossEntropyLoss().to(self.device)
 
         self.optimizer_G = optim.Adam(
             self.generator.parameters(), lr=self.lr_gen, betas=(0.5, 0.999)
         )
         self.optimizer_D = optim.Adam(
-            self.discriminator.parameters(),
-            lr=self.lr_discr,
-            betas=(0.5, 0.999),
+            self.discriminator.parameters(), lr=self.lr_discr, betas=(0.5, 0.999)
         )
 
     def train_model(self, dataset, validate=False):
@@ -169,7 +170,7 @@ class ACGAN:
         self.dis_adv_losses = []
 
         batch_size = self.opt.batch_size
-        num_epoch = self.opt.num_epoch
+        num_epoch = self.opt.n_epochs
 
         if validate:
             x_train, x_val = split_dataset(dataset)
@@ -177,7 +178,7 @@ class ACGAN:
             val_loader = prepare_dataloader(x_val, batch_size)
 
         else:
-            train_loader = prepare_dataloader(dataset)
+            train_loader = prepare_dataloader(dataset, batch_size)
 
         step = 0
 
@@ -248,22 +249,7 @@ class ACGAN:
                 )
 
                 g_loss.backward()
-
                 self.optimizer_G.step()
-
-                # summary_writer.add_scalars(
-                #     "data/train_loss",
-                #     {"gen": g_loss.item(), "dis": d_loss.item()},
-                #     global_step=step,
-                # )
-
-                # summary_writer.add_scalars(
-                #     "data/adv_loss",
-                #     {"dis": d_fake_loss_adv.item(), "gen": g_loss_adv.item()},
-                #     global_step=step,
-                # )
-
-                # step += 1
 
             # Validation step
             if validate:
@@ -275,11 +261,6 @@ class ACGAN:
                         month_label_batch,
                         day_label_batch,
                     ) in val_loader:
-                        time_series_batch, month_label_batch, day_label_batch = (
-                            time_series_batch,
-                            month_label_batch,
-                            day_label_batch,
-                        )
                         x_generated = self.generate(
                             month_labels=month_label_batch, day_labels=day_label_batch
                         )
@@ -298,16 +279,6 @@ class ACGAN:
                         num_batches += 1
 
                     mean_mmd_loss = total_mmd_loss / num_batches
-                    # summary_writer.add_scalars(
-                    #     "data/mean_mmd_loss",
-                    #     {
-                    #         "grid": total_mmd_loss[0],
-                    #         "solar": (
-                    #             total_mmd_loss[1] if total_mmd_loss.shape[0] > 1 else 0
-                    #         ),
-                    #     },
-                    #     global_step=epoch,
-                    # )
                     print(
                         f"Epoch [{epoch + 1}/{num_epoch}], Mean MMD Loss: {mean_mmd_loss}"
                     )
@@ -324,4 +295,10 @@ class ACGAN:
 
         num_samples = day_labels.shape[0]
         noise = torch.randn((num_samples, self.code_size)).to(self.device)
-        return self._generate([noise] + [month_labels.clone()] + [day_labels.clone()])
+        return self._generate(
+            [
+                noise,
+                month_labels.clone().to(self.device),
+                day_labels.clone().to(self.device),
+            ]
+        )

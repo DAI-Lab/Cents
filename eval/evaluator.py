@@ -141,10 +141,10 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            if user_id == 27:
-                syn_user_data, real_user_data = self.evaluate_for_user(user_id)
-                syn_data.append(syn_user_data)
-                real_data.append(real_user_data)
+            # if user_id == 27:
+            syn_user_data, real_user_data = self.evaluate_for_user(user_id)
+            syn_data.append(syn_user_data)
+            real_data.append(real_user_data)
 
         syn_data = np.expand_dims(np.concatenate(syn_data, axis=0), axis=-1)
         real_data = np.expand_dims(np.concatenate(real_data, axis=0), axis=-1)

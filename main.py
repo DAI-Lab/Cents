@@ -28,9 +28,9 @@ def evaluate_llm():
 
 
 def main():
+    evaluate_model("acgan")
     evaluate_model("diffcharge")
-    # evaluate_llm()
-    # dataset = OpenPowerDataset()
+    evaluate_model("diffusion_ts")
 
 
 if __name__ == "__main__":
