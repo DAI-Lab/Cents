@@ -6,18 +6,18 @@ class Options:
         self.seed = 42
         self.model_name = model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.batch_size = 8  #
+        self.batch_size = 16  #
         self.seq_len = 96  # 96 for pecanstreet
         self.input_dim = 2  # 1
-        self.noise_dim = 512
+        self.noise_dim = 256
         self.cond_emb_dim = 32
         self.shuffle = True
         if model_name == "diffcharge":
             self.n_epochs = 1000
-            self.init_lr = 5e-5
+            self.init_lr = 3e-5
             self.network = "cnn"  # "attention" or "cnn"
-            self.guidance_scale = 1.0
-            self.hidden_dim = 512
+            self.guidance_scale = 1.2
+            self.hidden_dim = 256
             self.cond_emb_dim = 32
             self.nhead = 8
             self.beta_start = 1e-4
@@ -25,16 +25,16 @@ class Options:
             self.n_steps = 1000
             self.schedule = "linear"  # "cosine" # "linear"  # "quadratic"
         elif model_name == "diffusion_ts":
-            self.batch_size = 32
+            self.batch_size = 16
             self.n_epochs = 1000
             self.n_steps = 1000
             self.base_lr = 1e-4
-            self.n_layer_enc = 3
-            self.n_layer_dec = 4
-            self.d_model = 128
+            self.n_layer_enc = 4
+            self.n_layer_dec = 5
+            self.d_model = 256
             self.cond_emb_dim = self.d_model
             self.sampling_timesteps = None
-            self.loss_type = "l2"
+            self.loss_type = "l1"
             self.beta_schedule = "cosine"
             self.n_heads = 4
             self.mlp_hidden_times = 4
@@ -62,5 +62,5 @@ class Options:
         elif model_name == "acgan":
             self.n_epochs = 200
             self.validate = False
-            self.lr_gen = 1e-4
+            self.lr_gen = 2e-4
             self.lr_discr = 1e-4

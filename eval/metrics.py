@@ -346,3 +346,70 @@ def plot_range_with_syn_values(df, syn_df, month, weekday, dimension=0):
     plt.tight_layout()
     plt.show()
     return f
+
+
+def plot_syn_with_closest_real_ts(df, syn_df, month, weekday, dimension=0):
+    filtered_df = df[(df["month"] == month) & (df["weekday"] == weekday)]
+    real_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
+
+    syn_filtered_df = syn_df[
+        (syn_df["month"] == month) & (syn_df["weekday"] == weekday)
+    ]
+
+    if syn_filtered_df.empty:
+        print(f"No synthetic data for month={month}, weekday={weekday}")
+        return
+
+    syn_values = np.array(
+        [ts[:, dimension] for ts in syn_filtered_df["timeseries"]]
+    ).squeeze()
+
+    timestamps = pd.date_range(start="00:00", end="23:45", freq="15T").strftime("%H:%M")
+
+    f = plt.figure(figsize=(15, 7))
+
+    for index in range(syn_values.shape[0]):
+        syn_ts = syn_values[index]
+
+        # Find the closest real time series using DTW
+        min_dtw_distance = float("inf")
+        closest_real_ts = None
+
+        for real_ts in real_data:
+            distance = dtw.distance(syn_ts, real_ts)
+            if distance < min_dtw_distance:
+                min_dtw_distance = distance
+                closest_real_ts = real_ts
+
+        # Plot synthetic time series
+        plt.plot(
+            timestamps,
+            syn_ts,
+            color="blue",
+            marker="o",
+            markersize=2,
+            linestyle="-",
+            label=f"Synthetic TS {index}",
+        )
+
+        # Plot closest real time series
+        plt.plot(
+            timestamps,
+            closest_real_ts,
+            color="red",
+            marker="x",
+            markersize=2,
+            linestyle="--",
+            label=f"Closest Real TS {index}",
+        )
+
+    plt.title(
+        f"Synthetic vs Closest Real Time Series (DTW) for Month={month}, Weekday={weekday}"
+    )
+    plt.xlabel("Time of Day")
+    plt.ylabel("Values")
+    plt.xticks(rotation=45)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+    return f

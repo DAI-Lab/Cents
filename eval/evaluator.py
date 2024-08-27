@@ -13,6 +13,7 @@ from eval.metrics import (
     calculate_period_bound_mse,
     dynamic_time_warping_dist,
     plot_range_with_syn_values,
+    plot_syn_with_closest_real_ts,
     visualization,
 )
 from eval.predictive_metric import predictive_score_metrics
@@ -129,6 +130,15 @@ class Evaluator:
                 user_writer.add_figure(
                     tag=f"Range_Plot_Month_{month}_Weekday_{weekday}",
                     figure=fig,
+                )
+
+                fig2 = plot_syn_with_closest_real_ts(
+                    real_user_data_inv, syn_user_data_inv, month, weekday
+                )
+
+                user_writer.add_figure(
+                    tag=f"Closest_Real_TS_Plot_Month_{month}_Weekday_{weekday}",
+                    figure=fig2,
                 )
 
         user_writer.flush()
