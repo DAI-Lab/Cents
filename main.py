@@ -39,7 +39,7 @@ def evaluate_llm():
 def main():
     # evaluate_model("acgan")
     # evaluate_model("diffcharge")
-    evaluate_single_dataset_model("diffusion_ts")
+    evaluate_single_dataset_model("acgan")
     # evaluate_llm()
 
 

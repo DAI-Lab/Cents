@@ -6,7 +6,7 @@ class Options:
         self.seed = 42
         self.model_name = model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.batch_size = 16  #
+        self.batch_size = 64  #
         self.seq_len = 96  # 96 for pecanstreet
         self.input_dim = 2  # 1
         self.noise_dim = 256
@@ -25,13 +25,13 @@ class Options:
             self.n_steps = 1000
             self.schedule = "linear"  # "cosine" # "linear"  # "quadratic"
         elif model_name == "diffusion_ts":
-            self.batch_size = 16
+            self.batch_size = 64
             self.n_epochs = 1000
             self.n_steps = 1000
             self.base_lr = 1e-4
             self.n_layer_enc = 4
             self.n_layer_dec = 5
-            self.d_model = 256
+            self.d_model = 128
             self.cond_emb_dim = self.d_model
             self.sampling_timesteps = None
             self.loss_type = "l1"
@@ -60,7 +60,7 @@ class Options:
             }
 
         elif model_name == "acgan":
-            self.n_epochs = 200
+            self.n_epochs = 100
             self.validate = False
             self.lr_gen = 2e-4
             self.lr_discr = 1e-4
