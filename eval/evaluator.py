@@ -40,10 +40,8 @@ class Evaluator:
         }
 
     def evaluate_for_user(self, user_id):
-
         user_dataset = self.real_dataset.create_user_dataset(user_id)
         model = self.get_trained_model_for_user(self.model_name, user_dataset)
-
         user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
         user_writer = SummaryWriter(user_log_dir)
 
@@ -51,14 +49,18 @@ class Evaluator:
         print(f"Starting evaluation for user {user_id}")
         print("----------------------")
 
-        real_user_data = user_dataset.data
+        self.run_eval(user_dataset, model, user_writer, user_id)
 
-        syn_user_data = self.generate_data_for_eval(model, user_dataset.data)
-        syn_user_data["dataid"] = user_id
+    def run_eval(self, dataset, model, writer, user_id=None):
+
+        real_user_data = dataset.data
+
+        syn_user_data = self.generate_data_for_eval(model, dataset.data)
+        syn_user_data["dataid"] = real_user_data["dataid"]
 
         # Get inverse transformed data
-        real_user_data_inv = user_dataset.inverse_transform(real_user_data)
-        syn_user_data_inv = user_dataset.inverse_transform(syn_user_data)
+        real_user_data_inv = dataset.inverse_transform(real_user_data)
+        syn_user_data_inv = dataset.inverse_transform(syn_user_data)
 
         real_data_array = np.stack(real_user_data["timeseries"])
         syn_data_array = np.stack(syn_user_data["timeseries"])
@@ -69,29 +71,29 @@ class Evaluator:
         dtw_mean, dtw_std = dynamic_time_warping_dist(
             real_data_array_inv, syn_data_array_inv
         )
-        user_writer.add_scalar("DTW/mean", dtw_mean)
-        user_writer.add_scalar("DTW/std", dtw_std)
+        writer.add_scalar("DTW/mean", dtw_mean)
+        writer.add_scalar("DTW/std", dtw_std)
         self.metrics["dtw"].append((user_id, dtw_mean, dtw_std))
 
         # Compute maximum mean discrepancy between real and synthetic data for all daily load profiles and get mean
         mmd_mean, mmd_std = calculate_mmd(real_data_array_inv, syn_data_array_inv)
-        user_writer.add_scalar("MMD/mean", mmd_mean)
-        user_writer.add_scalar("MMD/std", mmd_std)
+        writer.add_scalar("MMD/mean", mmd_mean)
+        writer.add_scalar("MMD/std", mmd_std)
         self.metrics["mmd"].append((user_id, mmd_mean, mmd_std))
 
         # Compute Period Bound MSE using original scale data and dataframe
         mse_mean, mse_std = calculate_period_bound_mse(
             syn_data_array_inv, real_user_data_inv
         )
-        user_writer.add_scalar("MSE/mean", mse_mean)
-        user_writer.add_scalar("MSE/std", mse_std)
+        writer.add_scalar("MSE/mean", mse_mean)
+        writer.add_scalar("MSE/std", mse_std)
         self.metrics["mse"].append((user_id, mse_mean, mse_std))
 
         # Compute Context FID using normalized and scaled data
         print(f"Training TS2Vec for user {user_id}...")
         fid_score = Context_FID(real_data_array, syn_data_array)
         print("Done!")
-        user_writer.add_scalar("FID/score", fid_score)
+        writer.add_scalar("FID/score", fid_score)
         self.metrics["fid"].append((user_id, fid_score))
 
         # Compute discriminative score using original scale data
@@ -100,14 +102,14 @@ class Evaluator:
             real_data_array_inv, syn_data_array_inv
         )
         print("Done!")
-        user_writer.add_scalar("Discr/score", discr_score)
+        writer.add_scalar("Discr/score", discr_score)
         self.metrics["discr"].append((user_id, discr_score))
 
         # Compute predictive score using original scale data
         print(f"Computing predictive score for user {user_id}...")
         pred_score = predictive_score_metrics(real_data_array_inv, syn_data_array_inv)
         print("Done!")
-        user_writer.add_scalar("Pred/score", pred_score)
+        writer.add_scalar("Pred/score", pred_score)
         self.metrics["pred"].append((user_id, pred_score))
 
         # Randomly select three months and three weekdays
@@ -119,7 +121,7 @@ class Evaluator:
         # Add KDE plot
         plots = visualization(real_data_array_inv, syn_data_array_inv, "kernel")
         for i, plot in enumerate(plots):
-            user_writer.add_figure(tag=f"KDE Dimension {i}", figure=plot)
+            writer.add_figure(tag=f"KDE Dimension {i}", figure=plot)
 
         # Plot the range and synthetic values for each combination
         for month in selected_months:
@@ -127,7 +129,7 @@ class Evaluator:
                 fig = plot_range_with_syn_values(
                     real_user_data_inv, syn_user_data_inv, month, weekday
                 )
-                user_writer.add_figure(
+                writer.add_figure(
                     tag=f"Range_Plot_Month_{month}_Weekday_{weekday}",
                     figure=fig,
                 )
@@ -136,13 +138,13 @@ class Evaluator:
                     real_user_data_inv, syn_user_data_inv, month, weekday
                 )
 
-                user_writer.add_figure(
+                writer.add_figure(
                     tag=f"Closest_Real_TS_Plot_Month_{month}_Weekday_{weekday}",
                     figure=fig2,
                 )
 
-        user_writer.flush()
-        user_writer.close()
+        writer.flush()
+        writer.close()
         return syn_data_array_inv[:, :, 0], real_data_array_inv[:, :, 0]
 
     def evaluate_all_users(self):
@@ -208,6 +210,30 @@ class Evaluator:
         columns = ["month", "weekday", "date_day", "timeseries"]
         syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
         return syn_ts_df
+
+    def evaluate_all_pv_users(self):
+        dataset = self.real_dataset.create_all_pv_user_dataset()
+        model = self.get_trained_model_for_user(self.model_name, dataset)
+        user_log_dir = f"{self.writer.log_dir}/pv_users"
+        user_writer = SummaryWriter(user_log_dir)
+
+        print("----------------------")
+        print(f"Starting evaluation for all pv users")
+        print("----------------------")
+
+        self.run_eval(dataset, model, user_writer, None)
+
+    def evaluate_all_non_pv_users(self):
+        dataset = self.real_dataset.create_non_pv_user_dataset()
+        model = self.get_trained_model_for_user(self.model_name, dataset)
+        user_log_dir = f"{self.writer.log_dir}/pv_users"
+        user_writer = SummaryWriter(user_log_dir)
+
+        print("----------------------")
+        print(f"Starting evaluation for all non-pv users")
+        print("----------------------")
+
+        self.run_eval(dataset, model, user_writer, None)
 
     def get_summary_metrics(self):
         """

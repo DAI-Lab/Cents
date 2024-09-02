@@ -197,6 +197,22 @@ class PecanStreetDataset(Dataset):
             user_data, self.stats, self.user_flags[user_id], self.include_generation
         )
 
+    def create_all_pv_user_dataset(self):
+        pv_users = [user for user, has_pv in self.user_flags.items() if has_pv]
+        pv_data = self.data[self.data["dataid"].isin(pv_users)].copy()
+
+        return PecanStreetUserDataset(
+            pv_data, self.stats, is_pv_user=True, include_generation=True
+        )
+
+    def create_non_pv_user_dataset(self):
+        non_pv_users = [user for user, has_pv in self.user_flags.items() if not has_pv]
+        non_pv_data = self.data[self.data["dataid"].isin(non_pv_users)].copy()
+
+        return PecanStreetUserDataset(
+            non_pv_data, self.stats, is_pv_user=False, include_generation=False
+        )
+
     def __len__(self):
         return len(self.data)
 

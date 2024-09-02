@@ -5,7 +5,9 @@ from generator.llm.llm import HF
 from generator.llm.preprocessing import Signal2String
 
 
-def evaluate_model(model_name, normalize=True, include_generation=True):
+def evaluate_individual_user_models(
+    model_name, normalize=True, include_generation=True
+):
     full_dataset = PecanStreetDataset(
         normalize=normalize, include_generation=include_generation, threshold=(-10, 10)
     )
@@ -13,24 +15,32 @@ def evaluate_model(model_name, normalize=True, include_generation=True):
     evaluator.evaluate_all_users()
 
 
+def evaluate_single_dataset_model(model_name, normalize=True, include_generation=True):
+    full_dataset = PecanStreetDataset(
+        normalize=normalize, include_generation=include_generation, threshold=(-10, 10)
+    )
+    evaluator = Evaluator(full_dataset, model_name)
+    evaluator.evaluate_all_pv_users()
+    evaluator.evaluate_all_non_pv_users()
+
+
 def evaluate_llm():
     hf = HF(name="meta-llama/Meta-Llama-3.1-8B", sep=",")
-    converter = Signal2String(decimal=4)
     full_dataset = PecanStreetDataset(
         normalize=True, include_generation=False, threshold=(-5, 5)
     )
     user_dataset = full_dataset.create_user_dataset(661)
-    text = user_dataset.data.timeseries.iloc[0].squeeze()
-    text = converter.transform(text)
-    output = hf.generate(text)[0]
-    output = converter.reverse_transform(output)
-    print(output)
+    row = user_dataset.data.iloc[0]
+    weekdays = [row.weekday]
+    months = [row.month]
+    hf.generate(weekdays, months)
 
 
 def main():
-    evaluate_model("acgan")
-    evaluate_model("diffcharge")
-    evaluate_model("diffusion_ts")
+    # evaluate_model("acgan")
+    # evaluate_model("diffcharge")
+    evaluate_single_dataset_model("diffusion_ts")
+    # evaluate_llm()
 
 
 if __name__ == "__main__":

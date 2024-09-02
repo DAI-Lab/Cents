@@ -194,7 +194,7 @@ class HF:
 
         self.model.eval()
 
-    def generate(
+    def generate_timeseries(
         self, text, length=96, temp=1, top_p=1, raw=False, samples=1, padding=0
     ):
         """Use the model to generate a signal.
@@ -250,3 +250,16 @@ class HF:
             return responses, generate_ids
 
         return responses
+
+    def train_model(self, dataset):
+        self.dataset = dataset.data
+
+    def generate(self, day_labels, month_labels):
+        assert (
+            day_labels.shape == month_labels.shape
+        ), "Number of weekday and month labels must be equal!"
+
+        for day, month in zip(day_labels, month_labels):
+            example_ts = self.dataset[
+                self.dataset["weekday"] == "day" & self.dataset["month"] == "month"
+            ]
