@@ -162,7 +162,7 @@ class ACGAN:
         )
 
     def train_model(self, dataset, validate=False):
-        summary_writer = SummaryWriter()
+        # summary_writer = SummaryWriter()
         self.gen_losses = []
         self.dis_losses = []
         self.mmd_losses = []
