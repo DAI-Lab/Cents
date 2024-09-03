@@ -201,43 +201,20 @@ class PecanStreetDataset(Dataset):
         pv_users = [user for user, has_pv in self.user_flags.items() if has_pv]
         pv_data = self.data[self.data["dataid"].isin(pv_users)].copy()
 
-        pv_dataset = PecanStreetDataset(
-            geography=self.geography,
-            config_path=self.config_path,
-            normalize=self.normalize,
-            threshold=self.threshold,
-            include_generation=True,
+        return PecanStreetUserDataset(
+            data=pv_data, stats=self.stats, is_pv_user=True, include_generation=True
         )
-
-        pv_dataset.data = pv_data
-        pv_dataset.metadata = self.metadata[self.metadata["dataid"].isin(pv_users)]
-        pv_dataset.user_flags = {
-            user: flag for user, flag in self.user_flags.items() if flag
-        }
-        pv_dataset.stats = self.stats
-        return pv_dataset
 
     def create_non_pv_user_dataset(self):
         non_pv_users = [user for user, has_pv in self.user_flags.items() if not has_pv]
         non_pv_data = self.data[self.data["dataid"].isin(non_pv_users)].copy()
 
-        non_pv_dataset = PecanStreetDataset(
-            geography=self.geography,
-            config_path=self.config_path,
-            normalize=self.normalize,
-            threshold=self.threshold,
+        return PecanStreetUserDataset(
+            data=non_pv_data,
+            stats=self.stats,
+            is_pv_user=False,
             include_generation=False,
         )
-
-        non_pv_dataset.data = non_pv_data
-        non_pv_dataset.metadata = self.metadata[
-            self.metadata["dataid"].isin(non_pv_users)
-        ]
-        non_pv_dataset.user_flags = {
-            user: flag for user, flag in self.user_flags.items() if not flag
-        }
-        non_pv_dataset.stats = self.stats
-        return non_pv_dataset
 
     def __len__(self):
         return len(self.data)

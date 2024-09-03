@@ -56,7 +56,7 @@ class Evaluator:
         real_user_data = dataset.data
 
         syn_user_data = self.generate_data_for_eval(model, dataset.data)
-        syn_user_data["dataid"] = real_user_data["dataid"]
+        syn_user_data["dataid"] = real_user_data.reset_index()["dataid"]
 
         # Get inverse transformed data
         real_user_data_inv = dataset.inverse_transform(real_user_data)
