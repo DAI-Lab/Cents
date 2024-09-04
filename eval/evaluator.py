@@ -55,7 +55,7 @@ class Evaluator:
 
         real_user_data = dataset.data
 
-        syn_user_data = self.generate_data_for_eval(model, dataset.data)
+        syn_user_data = self.generate_dataset_for_eval(model, dataset.data)
         syn_user_data["dataid"] = real_user_data.reset_index()["dataid"]
 
         # Get inverse transformed data
@@ -126,6 +126,13 @@ class Evaluator:
         # Plot the range and synthetic values for each combination
         for month in selected_months:
             for weekday in selected_weekdays:
+
+                syn_user_data_inv = dataset.inverse_transform(
+                    self.generate_samples_for_eval(
+                        model, month, weekday, num_samples=100
+                    )
+                )
+
                 fig = plot_range_with_syn_values(
                     real_user_data_inv, syn_user_data_inv, month, weekday
                 )
@@ -153,10 +160,10 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            # if user_id == 27:
-            syn_user_data, real_user_data = self.evaluate_for_user(user_id)
-            syn_data.append(syn_user_data)
-            real_data.append(real_user_data)
+            if user_id == 3687:
+                syn_user_data, real_user_data = self.evaluate_for_user(user_id)
+                syn_data.append(syn_user_data)
+                real_data.append(real_user_data)
 
         syn_data = np.expand_dims(np.concatenate(syn_data, axis=0), axis=-1)
         real_data = np.expand_dims(np.concatenate(real_data, axis=0), axis=-1)
@@ -187,7 +194,33 @@ class Evaluator:
         self.writer.flush()
         self.writer.close()
 
-    def generate_data_for_eval(self, model, real_user_df):
+    def generate_samples_for_eval(
+        self, model, month, weekday, num_samples
+    ):  # pass the real df and solve the whole issue with the dataids
+        month_labels = torch.tensor([month] * num_samples).to(device)
+        day_labels = torch.tensor([weekday] * num_samples).to(device)
+
+        generated_ts = (
+            model.generate(month_labels=month_labels, day_labels=day_labels)
+            .cpu()
+            .numpy()
+        )
+
+        if len(generated_ts.shape) == 2:
+            generated_ts = generated_ts.reshape(
+                generated_ts.shape[0], -1, generated_ts.shape[1]
+            )
+
+        syn_ts = []
+        for idx in range(num_samples):
+            gen_ts = generated_ts[idx]
+            syn_ts.append((month, weekday, None, gen_ts))
+
+        columns = ["month", "weekday", "date_day", "timeseries"]
+        syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
+        return syn_ts_df
+
+    def generate_dataset_for_eval(self, model, real_user_df):
         month_labels = torch.tensor(real_user_df["month"].values).to(device)
         day_labels = torch.tensor(real_user_df["weekday"].values).to(device)
 

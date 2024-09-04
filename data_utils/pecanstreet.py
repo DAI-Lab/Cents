@@ -194,7 +194,11 @@ class PecanStreetDataset(Dataset):
             raise ValueError(f"User ID {user_id} not found in the dataset.")
         user_data = self.data[self.data["dataid"] == user_id].copy()
         return PecanStreetUserDataset(
-            user_data, self.stats, self.user_flags[user_id], self.include_generation
+            user_data,
+            self.stats,
+            self.user_flags[user_id],
+            self.include_generation,
+            self.metadata,
         )
 
     def create_all_pv_user_dataset(self):
@@ -202,7 +206,11 @@ class PecanStreetDataset(Dataset):
         pv_data = self.data[self.data["dataid"].isin(pv_users)].copy()
 
         return PecanStreetUserDataset(
-            data=pv_data, stats=self.stats, is_pv_user=True, include_generation=True
+            data=pv_data,
+            stats=self.stats,
+            is_pv_user=True,
+            include_generation=True,
+            metadata=self.metadata,
         )
 
     def create_non_pv_user_dataset(self):
@@ -214,6 +222,7 @@ class PecanStreetDataset(Dataset):
             stats=self.stats,
             is_pv_user=False,
             include_generation=False,
+            metadata=self.metadata,
         )
 
     def __len__(self):
@@ -238,11 +247,21 @@ class PecanStreetUserDataset(Dataset):
         stats: dict,
         is_pv_user: bool,
         include_generation: bool,
+        metadata: pd.DataFrame,
     ):
         self.data = self.validate_data(data)
         self.stats = stats
         self.is_pv_user = is_pv_user
         self.include_generation = include_generation
+        self.metadata = metadata
+        self.include_user_metadata()
+
+    def include_user_metadata(self):
+        self.data = pd.merge(
+            left=self.data,
+            right=self.metadata[["dataid", "city", "pv", "car1"]],
+            on="dataid",
+        )
 
     def validate_data(self, data):
         shapes = data["timeseries"].apply(
@@ -258,7 +277,6 @@ class PecanStreetUserDataset(Dataset):
                 )
             )
         self.is_pv_user = False
-
         return data
 
     def inverse_transform_column(self, row, colname):

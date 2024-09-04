@@ -25,13 +25,13 @@ class Options:
             self.n_steps = 1000
             self.schedule = "linear"  # "cosine" # "linear"  # "quadratic"
         elif model_name == "diffusion_ts":
-            self.batch_size = 64
+            self.batch_size = 16
             self.n_epochs = 1000
             self.n_steps = 1000
             self.base_lr = 1e-4
             self.n_layer_enc = 4
             self.n_layer_dec = 5
-            self.d_model = 128
+            self.d_model = 256
             self.cond_emb_dim = self.d_model
             self.sampling_timesteps = None
             self.loss_type = "l1"
