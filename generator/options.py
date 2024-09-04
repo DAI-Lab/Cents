@@ -60,7 +60,7 @@ class Options:
             }
 
         elif model_name == "acgan":
-            self.n_epochs = 100
+            self.n_epochs = 200
             self.validate = False
             self.lr_gen = 2e-4
             self.lr_discr = 1e-4

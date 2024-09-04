@@ -49,7 +49,7 @@ class Evaluator:
         print(f"Starting evaluation for user {user_id}")
         print("----------------------")
 
-        self.run_eval(user_dataset, model, user_writer, user_id)
+        return self.run_eval(user_dataset, model, user_writer, user_id)
 
     def run_eval(self, dataset, model, writer, user_id=None):
 
@@ -127,14 +127,15 @@ class Evaluator:
         for month in selected_months:
             for weekday in selected_weekdays:
 
-                syn_user_data_inv = dataset.inverse_transform(
+                dataid_for_vis = real_user_data.dataid.iloc[0]
+                syn_data_for_vis = dataset.inverse_transform(
                     self.generate_samples_for_eval(
-                        model, month, weekday, num_samples=100
+                        dataid_for_vis, model, month, weekday, num_samples=100
                     )
                 )
 
                 fig = plot_range_with_syn_values(
-                    real_user_data_inv, syn_user_data_inv, month, weekday
+                    real_user_data_inv, syn_data_for_vis, month, weekday
                 )
                 writer.add_figure(
                     tag=f"Range_Plot_Month_{month}_Weekday_{weekday}",
@@ -142,7 +143,7 @@ class Evaluator:
                 )
 
                 fig2 = plot_syn_with_closest_real_ts(
-                    real_user_data_inv, syn_user_data_inv, month, weekday
+                    real_user_data_inv, syn_data_for_vis, month, weekday
                 )
 
                 writer.add_figure(
@@ -194,9 +195,7 @@ class Evaluator:
         self.writer.flush()
         self.writer.close()
 
-    def generate_samples_for_eval(
-        self, model, month, weekday, num_samples
-    ):  # pass the real df and solve the whole issue with the dataids
+    def generate_samples_for_eval(self, dataid, model, month, weekday, num_samples):
         month_labels = torch.tensor([month] * num_samples).to(device)
         day_labels = torch.tensor([weekday] * num_samples).to(device)
 
@@ -218,6 +217,7 @@ class Evaluator:
 
         columns = ["month", "weekday", "date_day", "timeseries"]
         syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
+        syn_ts_df["dataid"] = dataid
         return syn_ts_df
 
     def generate_dataset_for_eval(self, model, real_user_df):
