@@ -1,4 +1,5 @@
 import random
+from typing import Any, Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,11 +27,32 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Evaluator:
-    def __init__(self, real_dataset, model_name, log_dir="runs"):
+    """
+    A class for evaluating generative models on time series data.
+
+    This class provides methods to evaluate different generative models on real datasets,
+    compute various metrics, and visualize the results.
+
+    Attributes:
+        real_dataset: The real dataset used for evaluation.
+        model_name (str): The name of the generative model being evaluated.
+        writer (SummaryWriter): TensorBoard writer for logging evaluation results.
+        metrics (Dict[str, List]): Dictionary to store computed metrics for each evaluation.
+    """
+
+    def __init__(self, real_dataset: Any, model_name: str, log_dir: str = "runs"):
+        """
+        Initialize the Evaluator.
+
+        Args:
+            real_dataset: The real dataset used for evaluation.
+            model_name (str): The name of the generative model being evaluated.
+            log_dir (str): Directory for storing TensorBoard logs.
+        """
         self.real_dataset = real_dataset
         self.model_name = model_name
         self.writer = SummaryWriter(f"{log_dir}/{model_name}")
-        self.metrics = {
+        self.metrics: Dict[str, List] = {
             "dtw": [],
             "mmd": [],
             "mse": [],
@@ -39,7 +61,16 @@ class Evaluator:
             "pred": [],
         }
 
-    def evaluate_for_user(self, user_id):
+    def evaluate_for_user(self, user_id: int) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Evaluate the model for a specific user.
+
+        Args:
+            user_id (int): The ID of the user to evaluate.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: Synthetic and real data for the user.
+        """
         user_dataset = self.real_dataset.create_user_dataset(user_id)
         model = self.get_trained_model_for_user(self.model_name, user_dataset)
         user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
@@ -51,14 +82,25 @@ class Evaluator:
 
         return self.run_eval(user_dataset, model, user_writer, user_id)
 
-    def run_eval(self, dataset, model, writer, user_id=None):
+    def run_eval(
+        self, dataset: Any, model: Any, writer: SummaryWriter, user_id: int = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Run the evaluation for a given dataset and model.
 
+        Args:
+            dataset: The dataset to evaluate.
+            model: The trained model to evaluate.
+            writer (SummaryWriter): TensorBoard writer for logging results.
+            user_id (int, optional): The ID of the user being evaluated.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: Synthetic and real data arrays.
+        """
         real_user_data = dataset.data
-
         syn_user_data = self.generate_dataset_for_eval(model, dataset.data)
         syn_user_data["dataid"] = real_user_data.reset_index()["dataid"]
 
-        # Get inverse transformed data
         real_user_data_inv = dataset.inverse_transform(real_user_data)
         syn_user_data_inv = dataset.inverse_transform(syn_user_data)
 
@@ -67,101 +109,42 @@ class Evaluator:
         real_data_array_inv = np.stack(real_user_data_inv["timeseries"])
         syn_data_array_inv = np.stack(syn_user_data_inv["timeseries"])
 
-        # Compute dtw using original scale data
-        dtw_mean, dtw_std = dynamic_time_warping_dist(
-            real_data_array_inv, syn_data_array_inv
+        # Compute metrics
+        self._compute_dtw(real_data_array_inv, syn_data_array_inv, writer, user_id)
+        self._compute_mmd(real_data_array_inv, syn_data_array_inv, writer, user_id)
+        self._compute_mse(syn_data_array_inv, real_user_data_inv, writer, user_id)
+        self._compute_fid(real_data_array, syn_data_array, writer, user_id)
+        self._compute_discriminative_score(
+            real_data_array_inv, syn_data_array_inv, writer, user_id
         )
-        writer.add_scalar("DTW/mean", dtw_mean)
-        writer.add_scalar("DTW/std", dtw_std)
-        self.metrics["dtw"].append((user_id, dtw_mean, dtw_std))
-
-        # Compute maximum mean discrepancy between real and synthetic data for all daily load profiles and get mean
-        mmd_mean, mmd_std = calculate_mmd(real_data_array_inv, syn_data_array_inv)
-        writer.add_scalar("MMD/mean", mmd_mean)
-        writer.add_scalar("MMD/std", mmd_std)
-        self.metrics["mmd"].append((user_id, mmd_mean, mmd_std))
-
-        # Compute Period Bound MSE using original scale data and dataframe
-        mse_mean, mse_std = calculate_period_bound_mse(
-            syn_data_array_inv, real_user_data_inv
+        self._compute_predictive_score(
+            real_data_array_inv, syn_data_array_inv, writer, user_id
         )
-        writer.add_scalar("MSE/mean", mse_mean)
-        writer.add_scalar("MSE/std", mse_std)
-        self.metrics["mse"].append((user_id, mse_mean, mse_std))
 
-        # Compute Context FID using normalized and scaled data
-        print(f"Training TS2Vec for user {user_id}...")
-        fid_score = Context_FID(real_data_array, syn_data_array)
-        print("Done!")
-        writer.add_scalar("FID/score", fid_score)
-        self.metrics["fid"].append((user_id, fid_score))
-
-        # Compute discriminative score using original scale data
-        print(f"Computing discriminative score for user {user_id}...")
-        discr_score, _, _ = discriminative_score_metrics(
-            real_data_array_inv, syn_data_array_inv
+        # Visualization
+        self._create_visualizations(
+            real_user_data,
+            real_user_data_inv,
+            syn_user_data_inv,
+            dataset,
+            model,
+            writer,
         )
-        print("Done!")
-        writer.add_scalar("Discr/score", discr_score)
-        self.metrics["discr"].append((user_id, discr_score))
-
-        # Compute predictive score using original scale data
-        print(f"Computing predictive score for user {user_id}...")
-        pred_score = predictive_score_metrics(real_data_array_inv, syn_data_array_inv)
-        print("Done!")
-        writer.add_scalar("Pred/score", pred_score)
-        self.metrics["pred"].append((user_id, pred_score))
-
-        # Randomly select three months and three weekdays
-        unique_months = real_user_data["month"].unique()
-        unique_weekdays = real_user_data["weekday"].unique()
-        selected_months = random.sample(list(unique_months), 1)
-        selected_weekdays = random.sample(list(unique_weekdays), 1)
-
-        # Add KDE plot
-        plots = visualization(real_data_array_inv, syn_data_array_inv, "kernel")
-        for i, plot in enumerate(plots):
-            writer.add_figure(tag=f"KDE Dimension {i}", figure=plot)
-
-        # Plot the range and synthetic values for each combination
-        for month in selected_months:
-            for weekday in selected_weekdays:
-
-                dataid_for_vis = real_user_data.dataid.iloc[0]
-                syn_data_for_vis = dataset.inverse_transform(
-                    self.generate_samples_for_eval(
-                        dataid_for_vis, model, month, weekday, num_samples=100
-                    )
-                )
-
-                fig = plot_range_with_syn_values(
-                    real_user_data_inv, syn_data_for_vis, month, weekday
-                )
-                writer.add_figure(
-                    tag=f"Range_Plot_Month_{month}_Weekday_{weekday}",
-                    figure=fig,
-                )
-
-                fig2 = plot_syn_with_closest_real_ts(
-                    real_user_data_inv, syn_data_for_vis, month, weekday
-                )
-
-                writer.add_figure(
-                    tag=f"Closest_Real_TS_Plot_Month_{month}_Weekday_{weekday}",
-                    figure=fig2,
-                )
 
         writer.flush()
         writer.close()
         return syn_data_array_inv[:, :, 0], real_data_array_inv[:, :, 0]
 
     def evaluate_all_users(self):
+        """
+        Evaluate the model for all users in the dataset.
+        """
         user_ids = self.real_dataset.data["dataid"].unique()
         syn_data = []
         real_data = []
 
         for user_id in user_ids:
-            if user_id == 3687:
+            if user_id == 6377:
                 syn_user_data, real_user_data = self.evaluate_for_user(user_id)
                 syn_data.append(syn_user_data)
                 real_data.append(real_user_data)
@@ -172,30 +155,24 @@ class Evaluator:
         plot = visualization(real_data, syn_data, "tsne")
         self.writer.add_figure(tag=f"TSNE", figure=plot)
 
-        print("Final Results: \n")
-        print("--------------------")
-        dtw, mmd, mse, context_fid, discr_score, pred_score = self.get_summary_metrics()
-        print(f"Mean User DTW: {dtw}")
-        print(f"Mean User MMD: {mmd}")
-        print(f"Mean User Bound MSE: {mse}")
-        print(f"Mean User Context-FID: {context_fid}")
-        print(f"Mean User Discriminative Score: {discr_score}")
-        print(f"Mean User Predictive Score: {pred_score}")
-        print("--------------------")
-        self.writer.add_scalar(f"{self.model_name}/Mean_User_DTW", dtw)
-        self.writer.add_scalar(f"{self.model_name}/Mean_User_MMD", mmd)
-        self.writer.add_scalar(f"{self.model_name}/Mean_User_MSE", mse)
-        self.writer.add_scalar(f"{self.model_name}/Mean_User_Context_FID", context_fid)
-        self.writer.add_scalar(
-            f"{self.model_name}/Mean_User_Discriminative_Score", discr_score
-        )
-        self.writer.add_scalar(
-            f"{self.model_name}/Mean_User_Predictive_Score", pred_score
-        )
-        self.writer.flush()
-        self.writer.close()
+        self._log_final_results()
 
-    def generate_samples_for_eval(self, dataid, model, month, weekday, num_samples):
+    def generate_samples_for_eval(
+        self, dataid: int, model: Any, month: int, weekday: int, num_samples: int
+    ) -> pd.DataFrame:
+        """
+        Generate synthetic samples for evaluation.
+
+        Args:
+            dataid (int): The ID of the data point.
+            model: The trained model to generate samples.
+            month (int): The month for which to generate samples.
+            weekday (int): The weekday for which to generate samples.
+            num_samples (int): The number of samples to generate.
+
+        Returns:
+            pd.DataFrame: A DataFrame containing the generated samples.
+        """
         month_labels = torch.tensor([month] * num_samples).to(device)
         day_labels = torch.tensor([weekday] * num_samples).to(device)
 
@@ -210,17 +187,28 @@ class Evaluator:
                 generated_ts.shape[0], -1, generated_ts.shape[1]
             )
 
-        syn_ts = []
-        for idx in range(num_samples):
-            gen_ts = generated_ts[idx]
-            syn_ts.append((month, weekday, None, gen_ts))
+        syn_ts = [
+            (month, weekday, None, generated_ts[idx]) for idx in range(num_samples)
+        ]
 
         columns = ["month", "weekday", "date_day", "timeseries"]
         syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
         syn_ts_df["dataid"] = dataid
         return syn_ts_df
 
-    def generate_dataset_for_eval(self, model, real_user_df):
+    def generate_dataset_for_eval(
+        self, model: Any, real_user_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Generate a synthetic dataset for evaluation.
+
+        Args:
+            model: The trained model to generate samples.
+            real_user_df (pd.DataFrame): The real user data.
+
+        Returns:
+            pd.DataFrame: A DataFrame containing the generated dataset.
+        """
         month_labels = torch.tensor(real_user_df["month"].values).to(device)
         day_labels = torch.tensor(real_user_df["weekday"].values).to(device)
 
@@ -235,59 +223,56 @@ class Evaluator:
                 generated_ts.shape[0], -1, generated_ts.shape[1]
             )
 
-        syn_ts = []
-        for idx, (_, row) in enumerate(real_user_df.iterrows()):
-            gen_ts = generated_ts[idx]
-            syn_ts.append((row["month"], row["weekday"], row["date_day"], gen_ts))
+        syn_ts = [
+            (row["month"], row["weekday"], row["date_day"], generated_ts[idx])
+            for idx, (_, row) in enumerate(real_user_df.iterrows())
+        ]
 
         columns = ["month", "weekday", "date_day", "timeseries"]
-        syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
-        return syn_ts_df
+        return pd.DataFrame(syn_ts, columns=columns)
 
     def evaluate_all_pv_users(self):
+        """
+        Evaluate the model for all PV users in the dataset.
+        """
         dataset = self.real_dataset.create_all_pv_user_dataset()
         model = self.get_trained_model_for_user(self.model_name, dataset)
         user_log_dir = f"{self.writer.log_dir}/pv_users"
         user_writer = SummaryWriter(user_log_dir)
 
         print("----------------------")
-        print(f"Starting evaluation for all pv users")
+        print("Starting evaluation for all PV users")
         print("----------------------")
 
         self.run_eval(dataset, model, user_writer, None)
 
     def evaluate_all_non_pv_users(self):
+        """
+        Evaluate the model for all non-PV users in the dataset.
+        """
         dataset = self.real_dataset.create_non_pv_user_dataset()
         model = self.get_trained_model_for_user(self.model_name, dataset)
-        user_log_dir = f"{self.writer.log_dir}/pv_users"
+        user_log_dir = f"{self.writer.log_dir}/non_pv_users"
         user_writer = SummaryWriter(user_log_dir)
 
         print("----------------------")
-        print(f"Starting evaluation for all non-pv users")
+        print("Starting evaluation for all non-PV users")
         print("----------------------")
 
         self.run_eval(dataset, model, user_writer, None)
 
-    def get_summary_metrics(self):
+    def get_summary_metrics(self) -> Tuple[float, float, float, float, float, float]:
         """
         Calculate the mean values for all users across all metrics.
 
         Returns:
-            A tuple containing the mean values for dtw, mse, and fid.
+            Tuple[float, float, float, float, float, float]: Mean values for DTW, MMD, MSE, FID,
+            discriminative score, and predictive score.
         """
         metrics_summary = {
-            "dtw": [],
-            "mmd": [],
-            "mse": [],
-            "fid": [],
-            "discr": [],
-            "pred": [],
+            metric: np.mean([value[1] for value in self.metrics[metric]])
+            for metric in self.metrics.keys()
         }
-
-        # Collect mean values for each metric
-        for metric in metrics_summary.keys():
-            mean_values = [value[1] for value in self.metrics[metric]]
-            metrics_summary[metric] = np.mean(mean_values)
 
         return (
             metrics_summary["dtw"],
@@ -298,28 +283,198 @@ class Evaluator:
             metrics_summary["pred"],
         )
 
-    def get_trained_model_for_user(self, model_name, user_dataset):
+    def get_trained_model_for_user(self, model_name: str, user_dataset: Any) -> Any:
+        """
+        Get a trained model for a specific user dataset.
 
-        input_dim = (
-            int(user_dataset.is_pv_user) + 1
-        )  # if user has available pv data, input dim is 2
+        Args:
+            model_name (str): The name of the model to train.
+            user_dataset: The user dataset to train the model on.
+
+        Returns:
+            Any: The trained model.
+
+        Raises:
+            ValueError: If the model name is not recognized.
+        """
+        input_dim = int(user_dataset.is_pv_user) + 1
 
         opt = Options(model_name)
         opt.input_dim = input_dim
 
         if model_name == "acgan":
             model = ACGAN(opt)
-            model.train_model(user_dataset)
-
         elif model_name == "diffcharge":
             model = DDPM(opt)
-            model.train_model(user_dataset)
-
         elif model_name == "diffusion_ts":
             model = Diffusion_TS(opt)
-            model.train_model(user_dataset)
-
         else:
             raise ValueError("Model name not recognized!")
 
+        model.train_model(user_dataset)
         return model
+
+    def _compute_dtw(
+        self,
+        real_data: np.ndarray,
+        syn_data: np.ndarray,
+        writer: SummaryWriter,
+        user_id: int,
+    ):
+        """Compute Dynamic Time Warping distance."""
+        dtw_mean, dtw_std = dynamic_time_warping_dist(real_data, syn_data)
+        writer.add_scalar("DTW/mean", dtw_mean)
+        writer.add_scalar("DTW/std", dtw_std)
+        self.metrics["dtw"].append((user_id, dtw_mean, dtw_std))
+
+    def _compute_mmd(
+        self,
+        real_data: np.ndarray,
+        syn_data: np.ndarray,
+        writer: SummaryWriter,
+        user_id: int,
+    ):
+        """Compute Maximum Mean Discrepancy."""
+        mmd_mean, mmd_std = calculate_mmd(real_data, syn_data)
+        writer.add_scalar("MMD/mean", mmd_mean)
+        writer.add_scalar("MMD/std", mmd_std)
+        self.metrics["mmd"].append((user_id, mmd_mean, mmd_std))
+
+    def _compute_mse(
+        self,
+        syn_data: np.ndarray,
+        real_data: pd.DataFrame,
+        writer: SummaryWriter,
+        user_id: int,
+    ):
+        """Compute Period Bound Mean Squared Error."""
+        mse_mean, mse_std = calculate_period_bound_mse(syn_data, real_data)
+        writer.add_scalar("MSE/mean", mse_mean)
+        writer.add_scalar("MSE/std", mse_std)
+        self.metrics["mse"].append((user_id, mse_mean, mse_std))
+
+    def _compute_fid(
+        self,
+        real_data: np.ndarray,
+        syn_data: np.ndarray,
+        writer: SummaryWriter,
+        user_id: int,
+    ):
+        """Compute Context Fréchet Inception Distance."""
+        print(f"Training TS2Vec for user {user_id}...")
+        fid_score = Context_FID(real_data, syn_data)
+        print("Done!")
+        writer.add_scalar("FID/score", fid_score)
+        self.metrics["fid"].append((user_id, fid_score))
+
+    def _compute_discriminative_score(
+        self,
+        real_data: np.ndarray,
+        syn_data: np.ndarray,
+        writer: SummaryWriter,
+        user_id: int,
+    ):
+        """Compute discriminative score."""
+        print(f"Computing discriminative score for user {user_id}...")
+        discr_score, _, _ = discriminative_score_metrics(real_data, syn_data)
+        print("Done!")
+        writer.add_scalar("Discr/score", discr_score)
+        self.metrics["discr"].append((user_id, discr_score))
+
+    def _compute_predictive_score(
+        self,
+        real_data: np.ndarray,
+        syn_data: np.ndarray,
+        writer: SummaryWriter,
+        user_id: int,
+    ):
+        """Compute predictive score."""
+        print(f"Computing predictive score for user {user_id}...")
+        pred_score = predictive_score_metrics(real_data, syn_data)
+        print("Done!")
+        writer.add_scalar("Pred/score", pred_score)
+        self.metrics["pred"].append((user_id, pred_score))
+
+    def _create_visualizations(
+        self,
+        real_user_data: pd.DataFrame,
+        real_user_data_inv: pd.DataFrame,
+        syn_user_data_inv: pd.DataFrame,
+        dataset: Any,
+        model: Any,
+        writer: SummaryWriter,
+    ):
+        """
+        Create various visualizations for the evaluation results.
+
+        Args:
+            real_user_data (pd.DataFrame): Original real user data.
+            real_user_data_inv (pd.DataFrame): Inverse-transformed real user data.
+            syn_user_data_inv (pd.DataFrame): Inverse-transformed synthetic user data.
+            dataset (Any): The dataset object.
+            model (Any): The trained model.
+            writer (SummaryWriter): TensorBoard writer for logging visualizations.
+        """
+        # Visualization 1: Plot range with synthetic values
+        range_plot = plot_range_with_syn_values(real_user_data_inv, syn_user_data_inv)
+        writer.add_figure("Visualizations/Range_Plot", range_plot)
+
+        # Visualization 2: Plot synthetic data with closest real time series
+        closest_plot = plot_syn_with_closest_real_ts(
+            real_user_data_inv, syn_user_data_inv
+        )
+        writer.add_figure("Visualizations/Closest_Real_TS", closest_plot)
+
+        # Visualization 3: Generate and visualize samples for specific conditions
+        for month in range(1, 13):
+            for weekday in range(7):
+                samples = self.generate_samples_for_eval(
+                    real_user_data["dataid"].iloc[0],
+                    model,
+                    month,
+                    weekday,
+                    num_samples=5,
+                )
+                samples_inv = dataset.inverse_transform(samples)
+
+                fig, ax = plt.subplots(figsize=(10, 5))
+                for _, row in samples_inv.iterrows():
+                    ax.plot(row["timeseries"])
+                ax.set_title(f"Generated Samples for Month {month}, Weekday {weekday}")
+                ax.set_xlabel("Time")
+                ax.set_ylabel("Value")
+                writer.add_figure(
+                    f"Visualizations/Generated_Samples/Month_{month}_Weekday_{weekday}",
+                    fig,
+                )
+
+        # Visualization 4: t-SNE visualization of real and synthetic data
+        real_data_array = np.stack(real_user_data_inv["timeseries"])
+        syn_data_array = np.stack(syn_user_data_inv["timeseries"])
+        tsne_plot = visualization(real_data_array, syn_data_array, "tsne")
+        writer.add_figure("Visualizations/TSNE", tsne_plot)
+
+    def _log_final_results(self):
+        """
+        Log the final evaluation results.
+        """
+        dtw_mean, mmd_mean, mse_mean, fid_mean, discr_mean, pred_mean = (
+            self.get_summary_metrics()
+        )
+
+        self.writer.add_scalar("Final_Results/DTW", dtw_mean)
+        self.writer.add_scalar("Final_Results/MMD", mmd_mean)
+        self.writer.add_scalar("Final_Results/MSE", mse_mean)
+        self.writer.add_scalar("Final_Results/FID", fid_mean)
+        self.writer.add_scalar("Final_Results/Discriminative_Score", discr_mean)
+        self.writer.add_scalar("Final_Results/Predictive_Score", pred_mean)
+
+        print("Final Evaluation Results:")
+        print(f"DTW: {dtw_mean:.4f}")
+        print(f"MMD: {mmd_mean:.4f}")
+        print(f"MSE: {mse_mean:.4f}")
+        print(f"FID: {fid_mean:.4f}")
+        print(f"Discriminative Score: {discr_mean:.4f}")
+        print(f"Predictive Score: {pred_mean:.4f}")
+
+        self.writer.close()

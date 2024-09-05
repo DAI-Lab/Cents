@@ -42,9 +42,7 @@ def evaluate_llm():
 
 
 def main():
-    evaluate_individual_user_models("acgan")
-    # evaluate_single_dataset_model("acgan")
-    # evaluate_single_dataset_model("diffusion_ts", "newyork")
+    evaluate_single_dataset_model("diffusion_ts", "newyork")
 
 
 if __name__ == "__main__":
