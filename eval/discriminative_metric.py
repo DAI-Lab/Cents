@@ -1,3 +1,5 @@
+from typing import List, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,7 +10,20 @@ from tqdm.auto import tqdm
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def batch_generator(data, time, batch_size):
+def batch_generator(
+    data: np.ndarray, time: List[int], batch_size: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Generates a random batch of data and corresponding sequence lengths.
+
+    Args:
+        data (np.ndarray): The dataset, of shape (n_samples, seq_len, n_features).
+        time (List[int]): List of sequence lengths for each sample.
+        batch_size (int): Size of the batch to generate.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Batch of data and corresponding sequence lengths.
+    """
     no = len(data)
     idx = np.random.permutation(no)
     train_idx = idx[:batch_size]
@@ -20,21 +35,58 @@ def batch_generator(data, time, batch_size):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, input_dim, hidden_dim):
+    """
+    A discriminator model for evaluating the similarity between original and generated time series data.
+
+    Attributes:
+        gru (nn.GRU): A GRU layer to process time series data.
+        fc (nn.Linear): A fully connected layer to output classification logits.
+    """
+
+    def __init__(self, input_dim: int, hidden_dim: int):
+        """
+        Initializes the Discriminator model.
+
+        Args:
+            input_dim (int): Dimensionality of the input time series data.
+            hidden_dim (int): Number of hidden units in the GRU layer.
+        """
         super(Discriminator, self).__init__()
         self.gru = nn.GRU(input_dim, hidden_dim, batch_first=True)
         self.fc = nn.Linear(hidden_dim, 1)
 
-    def forward(self, x, t):
+    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the discriminator.
+
+        Args:
+            x (torch.Tensor): Input time series data, shape (batch_size, seq_len, input_dim).
+            t (torch.Tensor): Corresponding sequence lengths for the batch.
+
+        Returns:
+            torch.Tensor: Logits for the classification task.
+        """
         _, h_n = self.gru(x)
         return self.fc(h_n.squeeze(0))
 
 
-def discriminative_score_metrics(ori_data, generated_data):
+def discriminative_score_metrics(
+    ori_data: np.ndarray, generated_data: np.ndarray
+) -> Tuple[float, float, float]:
+    """
+    Computes the discriminative score by training a discriminator to classify between original and generated data.
+
+    Args:
+        ori_data (np.ndarray): Original time series data, shape (n_samples, seq_len, n_features).
+        generated_data (np.ndarray): Generated time series data, same shape as ori_data.
+
+    Returns:
+        Tuple[float, float, float]: Discriminative score, accuracy on generated data, and accuracy on original data.
+    """
     # Basic Parameters
     no, seq_len, dim = np.asarray(ori_data).shape
 
-    # Set maximum sequence length and each sequence length
+    # Extract time information
     ori_time, ori_max_seq_len = extract_time(ori_data)
     generated_time, generated_max_seq_len = extract_time(generated_data)
     max_seq_len = max(ori_max_seq_len, generated_max_seq_len)
@@ -48,7 +100,7 @@ def discriminative_score_metrics(ori_data, generated_data):
     optimizer = optim.Adam(discriminator.parameters())
     criterion = nn.BCEWithLogitsLoss()
 
-    # Train/test division for both original and generated data
+    # Train/test split
     (
         train_x,
         train_x_hat,
@@ -60,9 +112,9 @@ def discriminative_score_metrics(ori_data, generated_data):
         test_t_hat,
     ) = train_test_divide(ori_data, generated_data, ori_time, generated_time)
 
-    # Training step
-    for _ in tqdm(range(iterations), desc="training", total=iterations):
-        # Batch setting
+    # Training loop
+    for _ in tqdm(range(iterations), desc="Training", total=iterations):
+        # Batch generation
         X_mb, T_mb = batch_generator(train_x, train_t, batch_size)
         X_hat_mb, T_hat_mb = batch_generator(train_x_hat, train_t_hat, batch_size)
 
@@ -71,7 +123,7 @@ def discriminative_score_metrics(ori_data, generated_data):
         T_mb = torch.LongTensor(T_mb).to(device)
         T_hat_mb = torch.LongTensor(T_hat_mb).to(device)
 
-        # Train discriminator
+        # Discriminator forward and backward pass
         optimizer.zero_grad()
         y_pred_real = discriminator(X_mb, T_mb)
         y_pred_fake = discriminator(X_hat_mb, T_hat_mb)
@@ -83,7 +135,7 @@ def discriminative_score_metrics(ori_data, generated_data):
         loss.backward()
         optimizer.step()
 
-    # Test the performance on the testing set
+    # Testing the discriminator on the testing set
     with torch.no_grad():
         test_x = torch.FloatTensor(test_x).to(device)
         test_x_hat = torch.FloatTensor(test_x_hat).to(device)
@@ -102,9 +154,8 @@ def discriminative_score_metrics(ori_data, generated_data):
         (np.ones(len(y_pred_real_curr)), np.zeros(len(y_pred_fake_curr)))
     )
 
-    # Compute the accuracy
+    # Compute accuracy and discriminative score
     acc = accuracy_score(y_label_final, (y_pred_final > 0.5))
-
     fake_acc = accuracy_score(np.zeros(len(y_pred_fake_curr)), (y_pred_fake_curr > 0.5))
     real_acc = accuracy_score(np.ones(len(y_pred_real_curr)), (y_pred_real_curr > 0.5))
 
@@ -112,19 +163,17 @@ def discriminative_score_metrics(ori_data, generated_data):
     return discriminative_score, fake_acc, real_acc
 
 
-def extract_time(data):
+def extract_time(data: np.ndarray) -> Tuple[List[int], int]:
     """
-    Extract time information from the input data.
+    Extracts the sequence lengths for each sample in the dataset.
 
     Args:
-    - data: numpy array of shape (n_timeseries, n_timestamps, n_dimensions)
+        data (np.ndarray): Time series data, shape (n_samples, seq_len, n_features).
 
     Returns:
-    - time: list of actual sequence lengths for each time series
-    - max_seq_len: maximum sequence length across all time series
+        Tuple[List[int], int]: List of sequence lengths and the maximum sequence length.
     """
     # Assume that zero padding is used for shorter sequences
-    # Non-zero values in any dimension indicate a valid timestamp
     time = (data.sum(axis=2) != 0).sum(axis=1)
     max_seq_len = time.max()
 
@@ -132,23 +181,36 @@ def extract_time(data):
 
 
 def train_test_divide(
-    ori_data, generated_data, ori_time, generated_time, test_ratio=0.2
-):
+    ori_data: np.ndarray,
+    generated_data: np.ndarray,
+    ori_time: List[int],
+    generated_time: List[int],
+    test_ratio: float = 0.2,
+) -> Tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    List[int],
+    List[int],
+    List[int],
+    List[int],
+]:
     """
-    Divide original and generated data into training and testing sets.
+    Splits the original and generated data into training and testing sets.
 
     Args:
-    - ori_data: original data, shape (n_timeseries, n_timestamps, n_dimensions)
-    - generated_data: synthetic data, same shape as ori_data
-    - ori_time: list of sequence lengths for original data
-    - generated_time: list of sequence lengths for generated data
-    - test_ratio: proportion of data to use for testing (default: 0.2)
+        ori_data (np.ndarray): Original data, shape (n_samples, seq_len, n_features).
+        generated_data (np.ndarray): Generated data, same shape as ori_data.
+        ori_time (List[int]): Sequence lengths for the original data.
+        generated_time (List[int]): Sequence lengths for the generated data.
+        test_ratio (float, optional): Proportion of data to use for testing. Defaults to 0.2.
 
     Returns:
-    - train_x, train_x_hat, test_x, test_x_hat: training and testing data for original and generated sets
-    - train_t, train_t_hat, test_t, test_t_hat: corresponding time information for each set
+        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[int], List[int], List[int], List[int]]:
+        Training and testing datasets for original and generated data, along with corresponding sequence lengths.
     """
-    # Determine split indices
+    # Randomly shuffle the indices
     ori_idx = np.random.permutation(len(ori_data))
     generated_idx = np.random.permutation(len(generated_data))
 

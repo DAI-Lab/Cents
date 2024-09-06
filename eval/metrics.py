@@ -14,36 +14,30 @@ from eval.loss import gaussian_kernel_matrix, maximum_mean_discrepancy
 from eval.t2vec.t2vec import TS2Vec
 
 
-def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[np.ndarray, float]:
+def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float]:
     """
     Compute the Dynamic Time Warping (DTW) distance between two multivariate time series.
 
     Args:
         X: Time series data 1 with shape (n_timeseries, timeseries_length, n_dimensions).
         Y: Time series data 2 with shape (n_timeseries, timeseries_length, n_dimensions).
-        norm: Norm function to compute distances (default is Euclidean norm).
 
     Returns:
-        A tuple containing the mean and standard deviation of the DTW distances.
+        Tuple[float, float]: The mean and standard deviation of DTW distances between time series pairs.
     """
     assert (X.shape[0], X.shape[2]) == (
         Y.shape[0],
         Y.shape[2],
-    ), "Input arrays must have the same n_timeseries and n_dimensions!"
+    ), "Input arrays must have the same shape!"
 
     n_timeseries, _, n_dimensions = X.shape
-
     dtw_distances = []
 
     for i in range(n_timeseries):
-
-        distances = []
-        for dim in range(n_dimensions):
-            dist = dtw.distance(X[i, :, dim], Y[i, :, dim])
-            distances.append(dist**2)
-
-        dtw_distance = np.sqrt(sum(distances))
-        dtw_distances.append(dtw_distance)
+        distances = [
+            dtw.distance(X[i, :, dim], Y[i, :, dim]) ** 2 for dim in range(n_dimensions)
+        ]
+        dtw_distances.append(np.sqrt(sum(distances)))
 
     dtw_distances = np.array(dtw_distances)
     return np.mean(dtw_distances), np.std(dtw_distances)
@@ -52,8 +46,19 @@ def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[np.ndarray,
 def get_period_bounds(
     df: pd.DataFrame, month: int, weekday: int
 ) -> Tuple[np.ndarray, np.ndarray]:
-    df = df.loc[(df["month"] == month) & (df["weekday"] == weekday)].copy()
-    array_timeseries = np.array(df["timeseries"].to_list())
+    """
+    Get the minimum and maximum bounds for time series values within a specified month and weekday.
+
+    Args:
+        df: DataFrame containing time series data.
+        month: The month to filter on.
+        weekday: The weekday to filter on.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: Arrays containing the minimum and maximum values for each timestamp.
+    """
+    df_filtered = df[(df["month"] == month) & (df["weekday"] == weekday)].copy()
+    array_timeseries = np.array(df_filtered["timeseries"].to_list())
     min_values = np.min(array_timeseries, axis=0)
     max_values = np.max(array_timeseries, axis=0)
     return min_values, max_values
@@ -62,12 +67,21 @@ def get_period_bounds(
 def calculate_period_bound_mse(
     synthetic_timeseries: np.ndarray, real_dataframe: pd.DataFrame
 ) -> Tuple[float, float]:
+    """
+    Calculate the Mean Squared Error (MSE) between synthetic and real time series data, considering period bounds.
+
+    Args:
+        synthetic_timeseries: The synthetic time series data.
+        real_dataframe: DataFrame containing real time series data.
+
+    Returns:
+        Tuple[float, float]: The mean and standard deviation of the period-bound MSE.
+    """
     mse_list = []
     n_dimensions = synthetic_timeseries.shape[-1]
 
     for idx, (_, row) in enumerate(real_dataframe.iterrows()):
-        month = row["month"]
-        weekday = row["weekday"]
+        month, weekday = row["month"], row["weekday"]
 
         mse = 0.0
         for dim_idx in range(n_dimensions):
@@ -88,19 +102,27 @@ def calculate_period_bound_mse(
 
 
 def calculate_mmd(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float]:
+    """
+    Calculate the Maximum Mean Discrepancy (MMD) between two sets of time series.
+
+    Args:
+        X: First set of time series data (n_samples, seq_len, n_features).
+        Y: Second set of time series data (same shape as X).
+
+    Returns:
+        Tuple[float, float]: The mean and standard deviation of the MMD scores.
+    """
     assert (X.shape[0], X.shape[2]) == (
         Y.shape[0],
         Y.shape[2],
-    ), "Input arrays must have the same n_timeseries and n_dimensions!"
+    ), "Input arrays must have the same shape!"
 
     n_timeseries, _, n_dimensions = X.shape
-
     discrepancies = []
-    sigmas = [1]
+    sigmas = [1]  # Hyperparameter for Gaussian kernel
     gaussian_kernel = partial(gaussian_kernel_matrix, sigmas=np.array(sigmas))
 
     for i in range(n_timeseries):
-
         distances = []
         for dim in range(n_dimensions):
             x = np.expand_dims(X[i, :, dim], axis=-1)
@@ -115,8 +137,17 @@ def calculate_mmd(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float]:
     return np.mean(discrepancies), np.std(discrepancies)
 
 
-def calculate_fid(act1, act2):
+def calculate_fid(act1: np.ndarray, act2: np.ndarray) -> float:
+    """
+    Calculate the Fréchet Inception Distance (FID) between two sets of feature representations.
 
+    Args:
+        act1: Feature representations of dataset 1.
+        act2: Feature representations of dataset 2.
+
+    Returns:
+        float: FID score between the two feature sets.
+    """
     mu1, sigma1 = act1.mean(axis=0), np.cov(act1, rowvar=False)
     mu2, sigma2 = act2.mean(axis=0), np.cov(act2, rowvar=False)
     ssdiff = np.sum((mu1 - mu2) ** 2.0)
@@ -129,7 +160,17 @@ def calculate_fid(act1, act2):
     return fid
 
 
-def Context_FID(ori_data, generated_data):
+def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
+    """
+    Calculate the FID score between original and generated data representations using TS2Vec embeddings.
+
+    Args:
+        ori_data: Original time series data.
+        generated_data: Generated time series data.
+
+    Returns:
+        float: FID score between the original and generated data representations.
+    """
     model = TS2Vec(
         input_dims=ori_data.shape[-1],
         device=0,
@@ -148,15 +189,18 @@ def Context_FID(ori_data, generated_data):
     return results
 
 
-def visualization(ori_data, generated_data, analysis, compare=3000):
-    """Using PCA, t-SNE or KDE plots for generated and original data visualization.
+def visualization(
+    ori_data: np.ndarray, generated_data: np.ndarray, analysis: str, compare: int = 3000
+):
+    """
+    Visualize the original and generated data using PCA, t-SNE, or KDE plots.
 
     Args:
-     - ori_data: original data
-     - generated_data: generated synthetic data
-     - analysis: tsne or pca or kernel
+        ori_data: Original data (n_samples, seq_len, n_features).
+        generated_data: Generated data (same shape as ori_data).
+        analysis: 'pca', 'tsne', or 'kernel' for PCA, t-SNE, or KDE visualization.
+        compare: Number of samples to compare.
     """
-    # Analysis sample size (for faster computation)
     anal_sample_no = min([compare, ori_data.shape[0]])
     idx = np.random.permutation(ori_data.shape[0])[:anal_sample_no]
 
@@ -164,66 +208,46 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
     generated_data = generated_data[idx]
 
     no, seq_len, dim = ori_data.shape
-
     plots = []
 
     for d in range(dim):
-        prep_data = []
-        prep_data_hat = []
+        prep_data = np.array([ori_data[i, :, d] for i in range(anal_sample_no)])
+        prep_data_hat = np.array(
+            [generated_data[i, :, d] for i in range(anal_sample_no)]
+        )
 
-        for i in range(anal_sample_no):
-            if i == 0:
-                prep_data = np.reshape(ori_data[0, :, d], [1, seq_len])
-                prep_data_hat = np.reshape(generated_data[0, :, d], [1, seq_len])
-            else:
-                prep_data = np.concatenate(
-                    (prep_data, np.reshape(ori_data[i, :, d], [1, seq_len]))
-                )
-                prep_data_hat = np.concatenate(
-                    (prep_data_hat, np.reshape(generated_data[i, :, d], [1, seq_len]))
-                )
-
-        # Visualization parameter
-        colors = ["red" for i in range(anal_sample_no)] + [
-            "blue" for i in range(anal_sample_no)
-        ]
+        # Visualization
+        colors = ["red"] * anal_sample_no + ["blue"] * anal_sample_no
 
         if analysis == "pca":
-            # PCA Analysis
             pca = PCA(n_components=2)
-            pca.fit(prep_data)
-            pca_results = pca.transform(prep_data)
+            pca_results = pca.fit_transform(prep_data)
             pca_hat_results = pca.transform(prep_data_hat)
 
-            # Plotting
             f, ax = plt.subplots(1)
-            plt.scatter(
+            ax.scatter(
                 pca_results[:, 0],
                 pca_results[:, 1],
                 c=colors[:anal_sample_no],
                 alpha=0.2,
                 label="Original",
             )
-            plt.scatter(
+            ax.scatter(
                 pca_hat_results[:, 0],
                 pca_hat_results[:, 1],
                 c=colors[anal_sample_no:],
                 alpha=0.2,
                 label="Synthetic",
             )
-
             ax.legend()
-            plt.title(f"PCA plot for Dimension {d}")
-            plt.xlabel("x-pca")
-            plt.ylabel("y_pca")
+            ax.set_title(f"PCA plot for Dimension {d}")
+            ax.set_xlabel("x-pca")
+            ax.set_ylabel("y-pca")
             plt.show()
-
             plots.append(f)
 
         elif analysis == "tsne":
-            # Do t-SNE Analysis together
             prep_data_final = np.concatenate((prep_data, prep_data_hat), axis=0)
-            # TSNE analysis
             tsne = TSNE(
                 n_components=2,
                 learning_rate="auto",
@@ -235,36 +259,28 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
             )
             tsne_results = tsne.fit_transform(prep_data_final)
 
-            # Plotting
             f, ax = plt.subplots(1)
-
-            plt.scatter(
+            ax.scatter(
                 tsne_results[:anal_sample_no, 0],
                 tsne_results[:anal_sample_no, 1],
                 c=colors[:anal_sample_no],
                 alpha=0.2,
                 label="Original",
             )
-            plt.scatter(
+            ax.scatter(
                 tsne_results[anal_sample_no:, 0],
                 tsne_results[anal_sample_no:, 1],
                 c=colors[anal_sample_no:],
                 alpha=0.2,
                 label="Synthetic",
             )
-
             ax.legend()
-            plt.title(f"t-SNE plot for Dimension {d}")
-            plt.xlabel("x-tsne")
-            plt.ylabel("y_tsne")
+            ax.set_title(f"t-SNE plot for Dimension {d}")
             plt.show()
-
             plots.append(f)
 
         elif analysis == "kernel":
             f, ax = plt.subplots(1)
-
-            # Update KDE plot for original data
             sns.kdeplot(
                 data=prep_data.flatten(),
                 fill=True,
@@ -272,8 +288,6 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
                 label="Original",
                 ax=ax,
             )
-
-            # Update KDE plot for synthetic data
             sns.kdeplot(
                 data=prep_data_hat.flatten(),
                 fill=True,
@@ -282,20 +296,27 @@ def visualization(ori_data, generated_data, analysis, compare=3000):
                 ax=ax,
                 linestyle="--",
             )
-
-            plt.legend()
-            plt.xlabel("Data Value")
-            plt.ylabel("Data Density Estimate")
-            plt.title(f"KDE plot for Dimension {d}")
+            ax.legend()
+            ax.set_title(f"KDE plot for Dimension {d}")
             plt.show()
-            plt.close()
-
             plots.append(f)
 
     return plots
 
 
-def plot_range_with_syn_values(df, syn_df, month, weekday, dimension=0):
+def plot_range_with_syn_values(
+    df: pd.DataFrame, syn_df: pd.DataFrame, month: int, weekday: int, dimension: int = 0
+):
+    """
+    Plot the range of real data and compare with synthetic time series for a given month, weekday, and dimension.
+
+    Args:
+        df: DataFrame containing real time series data.
+        syn_df: DataFrame containing synthetic time series data.
+        month: Month for filtering.
+        weekday: Weekday for filtering.
+        dimension: Time series dimension to plot.
+    """
     filtered_df = df[(df["month"] == month) & (df["weekday"] == weekday)]
     array_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
 
@@ -305,14 +326,11 @@ def plot_range_with_syn_values(df, syn_df, month, weekday, dimension=0):
     syn_filtered_df = syn_df[
         (syn_df["month"] == month) & (syn_df["weekday"] == weekday)
     ]
-
     if syn_filtered_df.empty:
         print(f"No synthetic data for month={month}, weekday={weekday}")
         return
 
-    syn_values = np.array(
-        [ts[:, dimension] for ts in syn_filtered_df["timeseries"]]
-    ).squeeze()
+    syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
     timestamps = pd.date_range(start="00:00", end="23:45", freq="15T").strftime("%H:%M")
 
     f = plt.figure(figsize=(15, 7))
@@ -348,26 +366,33 @@ def plot_range_with_syn_values(df, syn_df, month, weekday, dimension=0):
     return f
 
 
-def plot_syn_with_closest_real_ts(df, syn_df, month, weekday, dimension=0):
+def plot_syn_with_closest_real_ts(
+    df: pd.DataFrame, syn_df: pd.DataFrame, month: int, weekday: int, dimension: int = 0
+):
+    """
+    Plot synthetic time series along with the closest real time series using DTW.
+
+    Args:
+        df: DataFrame containing real time series data.
+        syn_df: DataFrame containing synthetic time series data.
+        month: Month for filtering.
+        weekday: Weekday for filtering.
+        dimension: Time series dimension to plot.
+    """
     filtered_df = df[(df["month"] == month) & (df["weekday"] == weekday)]
     real_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
 
     syn_filtered_df = syn_df[
         (syn_df["month"] == month) & (syn_df["weekday"] == weekday)
     ]
-
     if syn_filtered_df.empty:
         print(f"No synthetic data for month={month}, weekday={weekday}")
         return
 
-    syn_values = np.array(
-        [ts[:, dimension] for ts in syn_filtered_df["timeseries"]]
-    ).squeeze()
-
+    syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
     timestamps = pd.date_range(start="00:00", end="23:45", freq="15T").strftime("%H:%M")
 
     f = plt.figure(figsize=(15, 7))
-
     for index in range(syn_values.shape[0]):
         syn_ts = syn_values[index]
 

@@ -42,7 +42,7 @@ def evaluate_llm():
 
 
 def main():
-    evaluate_single_dataset_model("diffusion_ts", "newyork")
+    evaluate_individual_user_models("diffusion_ts", "newyork")
 
 
 if __name__ == "__main__":
