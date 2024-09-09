@@ -1,11 +1,14 @@
-"""Reimplementation of Diffusion-TS.
+"""
+This class is adapted/taken from the Diffusion_TS GitHub repository:
 
-Reference: Jinsung Yoon, Daniel Jarrett, Mihaela van der Schaar,
-"Time-series Generative Adversarial Networks,"
-Neural Information Processing Systems (NeurIPS), 2019.
+Repository: https://github.com/Y-debug-sys/Diffusion-TS
+Author: Xinyu Yuan
+License: MIT License
 
-Reference: Xinyu Yuan, Yan Qiao, "Diffusion-TS: Interpretable Diffusion for General Time Series Generation".
+Modifications:
+- None
 
+Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
 """
 
 import numpy as np

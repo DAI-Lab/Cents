@@ -1,3 +1,21 @@
+"""Time-series Generative Adversarial Networks (TimeGAN) Codebase.
+
+Reference: Jinsung Yoon, Daniel Jarrett, Mihaela van der Schaar,
+"Time-series Generative Adversarial Networks,"
+Neural Information Processing Systems (NeurIPS), 2019.
+
+Paper link: https://papers.nips.cc/paper/8789-time-series-generative-adversarial-networks
+
+Last updated Date: April 24th 2020
+Code author: Jinsung Yoon (jsyoon0823@gmail.com)
+
+-----------------------------
+
+predictive_metrics.py
+
+Note: Use Post-hoc RNN to predict one-step ahead (last feature)
+"""
+
 import numpy as np
 import torch
 import torch.nn as nn

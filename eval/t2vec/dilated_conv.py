@@ -1,3 +1,16 @@
+"""
+This class is adapted/taken from the Diffusion_TS GitHub repository:
+
+Repository: https://github.com/Y-debug-sys/Diffusion-TS
+Author: Xinyu Yuan
+License: MIT License
+
+Modifications:
+- None
+
+Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
+"""
+
 import numpy as np
 import torch
 import torch.nn.functional as F

@@ -1,4 +1,18 @@
-import datetime
+"""
+This class is adapted/taken from the synthetic-timeseries-smart-grid GitHub repository:
+
+Repository: https://github.com/vermouth1992/synthetic-time-series-smart-grid
+Author: Chi Zhang
+License: MIT License
+
+Modifications:
+- Hyperparameters and network structure
+- Training loop changes
+- Changes in conditioning logic
+
+Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
+"""
+
 from typing import Tuple
 
 import matplotlib.pyplot as plt

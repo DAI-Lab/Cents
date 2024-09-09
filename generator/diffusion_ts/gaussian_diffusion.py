@@ -1,3 +1,17 @@
+"""
+This class is adapted/taken from the Diffusion_TS GitHub repository:
+
+Repository: https://github.com/Y-debug-sys/Diffusion-TS
+Author: Xinyu Yuan
+License: MIT License
+
+Modifications:
+- Conditioning and sampling logic
+- Added further functions and removed unused functionality
+
+Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
+"""
+
 import copy
 import math
 import os

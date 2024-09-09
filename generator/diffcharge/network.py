@@ -1,3 +1,17 @@
+"""
+This class is adapted/taken from the DiffCharge GitHub repository:
+
+Repository: https://github.com/LSY-Cython/DiffCharge
+Author: Siyang Li, Hui Xiong, Yize Chen (HKUST-GZ
+License: None
+
+Modifications (if any):
+- Changes to conditioning logic
+- Added classifier-free-guidance sampling
+
+Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
+"""
+
 import torch
 from torch import nn
 
