@@ -143,10 +143,10 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            if user_id == 6377:
-                syn_user_data, real_user_data = self.evaluate_for_user(user_id)
-                syn_data.append(syn_user_data)
-                real_data.append(real_user_data)
+            # if user_id == 6377:
+            syn_user_data, real_user_data = self.evaluate_for_user(user_id)
+            syn_data.append(syn_user_data)
+            real_data.append(real_user_data)
 
         syn_data = np.expand_dims(np.concatenate(syn_data, axis=0), axis=-1)
         real_data = np.expand_dims(np.concatenate(real_data, axis=0), axis=-1)
@@ -414,38 +414,29 @@ class Evaluator:
             model (Any): The trained model.
             writer (SummaryWriter): TensorBoard writer for logging visualizations.
         """
+        sample_month = real_user_data.month.sample(1).values[0]
+        sample_weekday = real_user_data.weekday.sample(1).values[0]
+
+        samples = self.generate_samples_for_eval(
+            real_user_data["dataid"].iloc[0],
+            model,
+            sample_month,
+            sample_weekday,
+            num_samples=100,
+        )
+        samples = dataset.inverse_transform(samples)
+
         # Visualization 1: Plot range with synthetic values
-        range_plot = plot_range_with_syn_values(real_user_data_inv, syn_user_data_inv)
+        range_plot = plot_range_with_syn_values(
+            real_user_data_inv, samples, sample_month, sample_weekday
+        )
         writer.add_figure("Visualizations/Range_Plot", range_plot)
 
-        # Visualization 2: Plot synthetic data with closest real time series
+        # Visualization 2: Plot closest real signals with synthetic values
         closest_plot = plot_syn_with_closest_real_ts(
-            real_user_data_inv, syn_user_data_inv
+            real_user_data_inv, samples, sample_month, sample_weekday
         )
         writer.add_figure("Visualizations/Closest_Real_TS", closest_plot)
-
-        # Visualization 3: Generate and visualize samples for specific conditions
-        for month in range(1, 13):
-            for weekday in range(7):
-                samples = self.generate_samples_for_eval(
-                    real_user_data["dataid"].iloc[0],
-                    model,
-                    month,
-                    weekday,
-                    num_samples=5,
-                )
-                samples_inv = dataset.inverse_transform(samples)
-
-                fig, ax = plt.subplots(figsize=(10, 5))
-                for _, row in samples_inv.iterrows():
-                    ax.plot(row["timeseries"])
-                ax.set_title(f"Generated Samples for Month {month}, Weekday {weekday}")
-                ax.set_xlabel("Time")
-                ax.set_ylabel("Value")
-                writer.add_figure(
-                    f"Visualizations/Generated_Samples/Month_{month}_Weekday_{weekday}",
-                    fig,
-                )
 
         # Visualization 4: t-SNE visualization of real and synthetic data
         real_data_array = np.stack(real_user_data_inv["timeseries"])

@@ -25,8 +25,8 @@ def evaluate_single_dataset_model(
         threshold=(-10, 10),
     )
     evaluator = Evaluator(full_dataset, model_name)
-    evaluator.evaluate_all_pv_users()
     evaluator.evaluate_all_non_pv_users()
+    evaluator.evaluate_all_pv_users()
 
 
 def evaluate_llm():
@@ -43,6 +43,7 @@ def evaluate_llm():
 
 def main():
     evaluate_individual_user_models("diffusion_ts", "newyork")
+    # evaluate_single_dataset_model("acgan", "newyork")
 
 
 if __name__ == "__main__":

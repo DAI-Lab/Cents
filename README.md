@@ -1,71 +1,94 @@
-# Synthetic Household-Level Electricity Load Timeseries Generation
+<p align="left">
+<img width=15% src="https://dai.lids.mit.edu/wp-content/uploads/2018/06/Logo_DAI_highres.png" alt=“DAI-Lab” />
+<i>An open source project from Data to AI Lab at MIT.</i>
+</p>
 
-<img src="docs/images/dai_logo.png" alt="DAI Logo" width="100" height="100">
+<!-- Uncomment these lines after releasing the package to PyPI for version and downloads badges -->
+<!--[![PyPI Shield](https://img.shields.io/pypi/v/EnData.svg)](https://pypi.python.org/pypi/EnData)-->
+<!--[![Downloads](https://pepy.tech/badge/EnData)](https://pepy.tech/project/EnData)-->
+[![Github Actions Shield](https://img.shields.io/github/workflow/status/michael-fuest/EnData/Run%20Tests)](https://github.com/michael-fuest/EnData/actions)
+[![Coverage Status](https://codecov.io/gh/michael-fuest/EnData/branch/master/graph/badge.svg)](https://codecov.io/gh/michael-fuest/EnData)
 
-Repository for experimentation on algorithms for synthetic household-level electricity load timeseries generation.
 
-## Setup Instructions
 
-### Setting Up a Virtual Environment
+# EnData
 
-To set up a virtual environment using `virtualenv`, follow these steps:
+A package for generative modeling and evaluation of synthetic household-level electricity load timeseries.
 
-1. Install `virtualenv` if you haven't already:
+- Documentation: https://michael-fuest.github.io/EnData
+- Homepage: https://github.com/michael-fuest/EnData
 
-    ```bash
-    pip install virtualenv
-    ```
+# Overview
 
-2. Create a virtual environment named `venv`:
+TODO: Provide a short overview of the project here.
 
-    ```bash
-    virtualenv venv
-    ```
+# Install
 
-3. Activate the virtual environment:
+## Requirements
 
-    - On Windows:
+**EnData** has been developed and tested on [Python 3.5, 3.6, 3.7 and 3.8](https://www.python.org/downloads/)
 
-        ```bash
-        venv\Scripts\activate
-        ```
+Also, although it is not strictly required, the usage of a [virtualenv](https://virtualenv.pypa.io/en/latest/)
+is highly recommended in order to avoid interfering with other software installed in the system
+in which **EnData** is run.
 
-    - On macOS and Linux:
-
-        ```bash
-        source venv/bin/activate
-        ```
-
-### Installing Dependencies
-
-Once the virtual environment is activated, you can install the required dependencies using `pip`:
+These are the minimum commands needed to create a virtualenv using python3.8 for **EnData**:
 
 ```bash
-pip install -r requirements.txt
+pip install virtualenv
+virtualenv -p $(which python3.8) EnData-venv
 ```
 
-## Configuration
+Afterwards, you have to execute this command to activate the virtualenv:
 
-### Config File
-
-The configuration for this project is managed via a `config.yml` file located in the `config` directory. This file specifies the paths and columns for the datasets used in the project. Here is an example configuration:
-
-```yaml
-datasets:
-  pecanstreetdata:
-    path: "Users/michaelfuest/Research/DAI/EnData/data/pecanstreet/"
-    columns: ["dataid", "building_type", "city", "pv", "car1", "car2", "grid", "solar", "solar2"]
-  goinerdata:
-    path: "Users/michaelfuest/Research/DAI/EnData/data/goiner/"
-    columns: ["pv", "id"]
+```bash
+source EnData-venv/bin/activate
 ```
 
-### Pecan Street Dataset
+Remember to execute it every time you start a new console to work on **EnData**!
 
-The Pecan Street Dataset can be downloaded [here](https://www.pecanstreet.org/dataport/).
+<!-- Uncomment this section after releasing the package to PyPI for installation instructions
+## Install from PyPI
 
-Note: Access to the dataset requires a working university account. Metadata reports and the data dictionary can also be found on the Pecan Street Dataport website.
+After creating the virtualenv and activating it, we recommend using
+[pip](https://pip.pypa.io/en/stable/) in order to install **EnData**:
 
-## License
+```bash
+pip install EnData
+```
 
-This project is licensed under the MIT License. For more details, refer to the [LICENSE](LICENSE) file.
+This will pull and install the latest stable release from [PyPI](https://pypi.org/).
+-->
+
+## Install from source
+
+With your virtualenv activated, you can clone the repository and install it from
+source by running `make install` on the `stable` branch:
+
+```bash
+git clone git@github.com:michael-fuest/EnData.git
+cd EnData
+git checkout stable
+make install
+```
+
+## Install for Development
+
+If you want to contribute to the project, a few more steps are required to make the project ready
+for development.
+
+Please head to the [Contributing Guide](https://michael-fuest.github.io/EnData/contributing.html#get-started)
+for more details about this process.
+
+# Quickstart
+
+In this short tutorial we will guide you through a series of steps that will help you
+getting started with **EnData**.
+
+TODO: Create a step by step guide here.
+
+# What's next?
+
+For more details about **EnData** and all its possibilities
+and features, please check the [documentation site](
+https://michael-fuest.github.io/EnData/).
