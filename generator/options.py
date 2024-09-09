@@ -1,66 +1,112 @@
 import torch
 
+from generator.config import load_model_config
+
 
 class Options:
-    def __init__(self, model_name):
+    """
+    Class to handle model-specific configuration options.
+
+    Args:
+        model_name (str): The name of the model to load parameters for. This can be one of the predefined models
+                          such as "diffcharge", "diffusion_ts", or "acgan".
+
+    Attributes:
+        seed (int): Random seed for reproducibility.
+        model_name (str): The name of the model.
+        device (torch.device): Device on which to run the model (CUDA or CPU).
+        batch_size (int): Batch size for training.
+        seq_len (int): Sequence length for the time series.
+        input_dim (int): Input dimension of the data.
+        noise_dim (int): Dimension of the noise input.
+        cond_emb_dim (int): Dimension of the conditional embedding (if applicable).
+        shuffle (bool): Whether to shuffle the data.
+        (Additional attributes specific to different models are dynamically added.)
+    """
+
+    def __init__(self, model_name: str):
+        config = load_model_config()
         self.seed = 42
         self.model_name = model_name
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.batch_size = 64  #
-        self.seq_len = 96  # 96 for pecanstreet
-        self.input_dim = 2  # 1
-        self.noise_dim = 256
-        self.cond_emb_dim = 32
-        self.shuffle = True
-        if model_name == "diffcharge":
-            self.n_epochs = 1000
-            self.init_lr = 3e-5
-            self.network = "cnn"  # "attention" or "cnn"
-            self.guidance_scale = 1.2
-            self.hidden_dim = 256
-            self.cond_emb_dim = 32
-            self.nhead = 8
-            self.beta_start = 1e-4
-            self.beta_end = 0.02
-            self.n_steps = 1000
-            self.schedule = "linear"  # "cosine" # "linear"  # "quadratic"
-        elif model_name == "diffusion_ts":
-            self.batch_size = 16
-            self.n_epochs = 1000
-            self.n_steps = 1000
-            self.base_lr = 1e-4
-            self.n_layer_enc = 4
-            self.n_layer_dec = 5
-            self.d_model = 256
-            self.cond_emb_dim = self.d_model
-            self.sampling_timesteps = None
-            self.loss_type = "l1"
-            self.beta_schedule = "cosine"
-            self.n_heads = 4
-            self.mlp_hidden_times = 4
-            self.eta = 0.0
-            self.attn_pd = 0.0
-            self.resid_pd = 0.0
-            self.kernel_size = None
-            self.padding_size = None
-            self.use_ff = True
-            self.reg_weight = None
-            self.results_folder = "./Checkpoints_syn"
-            self.gradient_accumulate_every = 2
-            self.save_cycle = 1000
-            self.ema_decay = 0.99
-            self.ema_update_interval = 10
-            self.lr_scheduler_params = {
-                "factor": 0.5,
-                "patience": 200,
-                "min_lr": 1.0e-5,
-                "threshold": 1.0e-1,
-                "threshold_mode": "rel",
-                "verbose": False,
-            }
 
+        self.seq_len = config.seq_len
+        self.input_dim = config.input_dim
+        self.noise_dim = config.noise_dim
+        self.cond_emb_dim = config.cond_emb_dim
+        self.shuffle = config.shuffle
+
+        model_params = config.model[model_name]
+
+        if model_name == "diffcharge":
+            self._load_diffcharge_params(model_params)
+        elif model_name == "diffusion_ts":
+            self._load_diffusion_ts_params(model_params)
         elif model_name == "acgan":
-            self.n_epochs = 200
-            self.validate = False
-            self.lr_gen = 2e-4
-            self.lr_discr = 1e-4
+            self._load_acgan_params(model_params)
+
+    def _load_diffcharge_params(self, model_params):
+        """
+        Load parameters specific to the "diffcharge" model.
+
+        Args:
+            model_params: Configuration dictionary for the diffcharge model.
+        """
+        self.batch_size = model_params.batch_size
+        self.n_epochs = model_params.n_epochs
+        self.init_lr = model_params.init_lr
+        self.network = model_params.network
+        self.guidance_scale = model_params.guidance_scale
+        self.hidden_dim = model_params.hidden_dim
+        self.nhead = model_params.nhead
+        self.beta_start = model_params.beta_start
+        self.beta_end = model_params.beta_end
+        self.n_steps = model_params.n_steps
+        self.schedule = model_params.schedule
+
+    def _load_diffusion_ts_params(self, model_params):
+        """
+        Load parameters specific to the "diffusion_ts" model.
+
+        Args:
+            model_params: Configuration dictionary for the diffusion_ts model.
+        """
+        self.batch_size = model_params.batch_size
+        self.n_epochs = model_params.n_epochs
+        self.n_steps = model_params.n_steps
+        self.base_lr = model_params.base_lr
+        self.n_layer_enc = model_params.n_layer_enc
+        self.n_layer_dec = model_params.n_layer_dec
+        self.d_model = model_params.d_model
+        self.cond_emb_dim = model_params.cond_emb_dim
+        self.sampling_timesteps = model_params.sampling_timesteps
+        self.loss_type = model_params.loss_type
+        self.beta_schedule = model_params.beta_schedule
+        self.n_heads = model_params.n_heads
+        self.mlp_hidden_times = model_params.mlp_hidden_times
+        self.eta = model_params.eta
+        self.attn_pd = model_params.attn_pd
+        self.resid_pd = model_params.resid_pd
+        self.kernel_size = model_params.kernel_size
+        self.padding_size = model_params.padding_size
+        self.use_ff = model_params.use_ff
+        self.reg_weight = model_params.reg_weight
+        self.results_folder = model_params.results_folder
+        self.gradient_accumulate_every = model_params.gradient_accumulate_every
+        self.save_cycle = model_params.save_cycle
+        self.ema_decay = model_params.ema_decay
+        self.ema_update_interval = model_params.ema_update_interval
+        self.lr_scheduler_params = model_params.lr_scheduler_params
+
+    def _load_acgan_params(self, model_params):
+        """
+        Load parameters specific to the "acgan" model.
+
+        Args:
+            model_params: Configuration dictionary for the acgan model.
+        """
+        self.batch_size = model_params.batch_size
+        self.n_epochs = model_params.n_epochs
+        self.validate = model_params.validate
+        self.lr_gen = model_params.lr_gen
+        self.lr_discr = model_params.lr_discr

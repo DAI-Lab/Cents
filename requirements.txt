@@ -23,3 +23,5 @@ dtaidistance
 seaborn
 einops
 sentencepiece
+hydra
+omegaconf

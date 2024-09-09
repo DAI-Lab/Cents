@@ -17,9 +17,9 @@ from eval.metrics import (
     visualization,
 )
 from eval.predictive_metric import predictive_score_metrics
-from generator.acgan import ACGAN
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
+from generator.gan.acgan import ACGAN
 from generator.options import Options
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
