@@ -13,26 +13,37 @@ jobs:
       matrix:
         python-version: [3.8, 3.9]
         os: [ubuntu-latest, macos-latest]
-        include:
-          - python-version: 3.8
-            os: ubuntu-latest
-            skip: true
+      max-parallel: 1  # Run jobs sequentially (one at a time)
 
     steps:
     - uses: actions/checkout@v3
+
+    # Cache Python dependencies to avoid reinstalling them in each build
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    # Set up the Python environment
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
 
+    # Install dependencies
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install tox tox-gh-actions
 
+    # Run tests with tox
     - name: Test with tox
       run: tox
 
+    # Upload coverage to Codecov
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
