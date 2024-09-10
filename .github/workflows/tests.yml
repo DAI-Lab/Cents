@@ -46,6 +46,9 @@ jobs:
     - name: Test with tox
       run: tox
 
+    - name: Check disk space after installation
+      run: df -h
+
     # Upload coverage to Codecov
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
