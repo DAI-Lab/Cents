@@ -11,7 +11,34 @@ with open("README.md", encoding="utf-8") as readme_file:
 with open("HISTORY.md", encoding="utf-8") as history_file:
     history = history_file.read()
 
-install_requires = []
+install_requires = [
+    "numpy>=1.23.5",
+    "openai>=1.35.13",
+    "pandas>=1.5.3",
+    "matplotlib>=3.7.5",
+    "scikit-learn>=1.1.3",
+    "tiktoken>=0.7.0",
+    "transformers>=4.44.0",
+    "torch>=1.9.0",
+    "accelerate>=0.32.1",
+    "torchvision>=0.18.1",
+    "tensorboard>=2.5.0",
+    "tensorboardX>=2.6.2.2",
+    "pyyaml>=6.0.1",
+    "pre-commit>=3.5.0",
+    "mypy>=1.10.1",
+    "black>=24.4.2",
+    "isort>=5.13.2",
+    "autoflake>=2.3.1",
+    "tensorflow>=2.12.0",
+    "mkl>=2024.2.0",
+    "dtaidistance>=2.3.12",
+    "seaborn>=0.13.2",
+    "einops>=0.8.0",
+    "sentencepiece>=0.2.0",
+    "hydra-core>=1.3.2",
+    "omegaconf>=2.3.0",
+]
 
 setup_requires = [
     "pytest-runner>=2.11.1",

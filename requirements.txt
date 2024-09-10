@@ -24,4 +24,4 @@ seaborn
 einops
 sentencepiece
 hydra
-omegaconf
+omegaconfa
