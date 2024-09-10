@@ -61,9 +61,9 @@ development_requires = [
     "autodocsumm>=0.1.10",
     # style check
     "flake8>=3.7.7",
-    "isort>=4.3.4",
+    # "isort>=4.3.4",
     # fix style issues
-    "autoflake>=1.2",
+    # "autoflake>=1.2",
     "autopep8>=1.4.3",
     # distribute on PyPI
     "twine>=1.10.0",

@@ -39,6 +39,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install tox tox-gh-actions
 
+    - name: Clear pip cache to save disk space
+      run: pip cache purge
+
     # Run tests with tox
     - name: Test with tox
       run: tox
