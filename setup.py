@@ -55,9 +55,8 @@ development_requires = [
     "pip>=9.0.1",
     "watchdog>=0.8.3",
     # docs
-    "m2r>=0.2.0,<0.3",
-    "Sphinx>=4.0.0",
-    "jinja2>=3.1.0",
+    "m2r2>=0.2.0",
+    "Sphinx>=4.0.2,<6.0.0",
     "sphinx_rtd_theme>=0.2.4,<0.5",
     "autodocsumm>=0.1.10",
     # style check
@@ -82,11 +81,8 @@ setup(
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Natural Language :: English",
-        # "Programming Language :: Python :: 3",
-        # "Programming Language :: Python :: 3.5",
-        # "Programming Language :: Python :: 3.6",
-        "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
     ],
     description="A package for generative modeling and evaluation of synthetic household-level electricity load timeseries.",
     extras_require={
@@ -102,7 +98,7 @@ setup(
     keywords="endata EnData EnData",
     name="EnData",
     packages=find_packages(include=["endata", "endata.*"]),
-    python_requires=">=3.5",
+    python_requires=">=3.8",
     setup_requires=setup_requires,
     test_suite="tests",
     tests_require=tests_require,
