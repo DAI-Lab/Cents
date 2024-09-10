@@ -36,7 +36,6 @@ install_requires = [
     "seaborn>=0.13.2",
     "einops>=0.8.0",
     "sentencepiece>=0.2.0",
-    "hydra-core>=1.3.2",
     "omegaconf>=2.3.0",
 ]
 
