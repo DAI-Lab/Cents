@@ -20,13 +20,7 @@ from einops import rearrange, reduce, repeat
 from torch import nn
 
 from generator.diffusion_ts.model_utils import (
-    GELU2,
-    AdaLayerNorm,
-    Conv_MLP,
-    LearnablePositionalEncoding,
-    Transpose,
-    series_decomp,
-)
+    GELU2, AdaLayerNorm, Conv_MLP, LearnablePositionalEncoding, Transpose, series_decomp,)
 
 
 class TrendBlock(nn.Module):

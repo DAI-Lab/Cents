@@ -23,6 +23,7 @@ DEFAULT_MODEL = "meta-llama/Meta-Llama-3.1-8B"
 MISTRAL_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 LOGGER = logging.getLogger(__name__)
 
+
 class HF:
     """Prompt Pretrained models on HuggingFace to forecast a time series.
 

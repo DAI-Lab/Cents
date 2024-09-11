@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Tuple
+
 import numpy as np
 import pandas as pd
 import torch
@@ -299,7 +300,7 @@ class Evaluator:
             "diffcharge": DDPM,
             "diffusion_ts": Diffusion_TS,
             "mistral": lambda opt: HF("mistralai/Mistral-7B-Instruct-v0.2"),
-            "llama": lambda opt: HF("meta-llama/Meta-Llama-3.1-8B")
+            "llama": lambda opt: HF("meta-llama/Meta-Llama-3.1-8B"),
         }
 
         if model_name in model_dict:
