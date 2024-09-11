@@ -1,9 +1,12 @@
 import json
 import logging
 import os
+from typing import List
 
 import numpy as np
 import torch
+from openai import OpenAI
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from generator.llm.preprocessing import Signal2String
@@ -19,7 +22,6 @@ DEFAULT_PAD_TOKEN = "<pad>"
 DEFAULT_MODEL = "meta-llama/Meta-Llama-3.1-8B"
 MISTRAL_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
 LOGGER = logging.getLogger(__name__)
-
 
 class HF:
     """Prompt Pretrained models on HuggingFace to forecast a time series.
@@ -123,7 +125,12 @@ class HF:
         return processed_responses
 
     def train_model(self, dataset):
-        """Train the model on the given dataset."""
+        """
+        Train the model on the given dataset. This function exists to keep model
+        interfaces consistent, and does not "train" the model per se, but rather ensures
+        that the dataset can be accessed from within the HF class to be passed as part of
+        the prompt.
+        """
         self.dataset = dataset.data
 
     def generate(self, day_labels, month_labels):
@@ -134,23 +141,132 @@ class HF:
 
         gen_ts_dataset = []
 
-        for day, month in zip(day_labels, month_labels):
-            example_ts = (
-                self.dataset[
-                    (self.dataset["weekday"] == day.item())
-                    & (self.dataset["month"] == month.item())
-                ]
-                .sample(1)
-                .timeseries.values[0][:, 0]
-            )
+        total_iterations = len(day_labels)
+        with tqdm(
+            total=total_iterations,
+            desc=f"Generating Time Series Dataset with {self.name}",
+        ) as pbar:
+            for day, month in zip(day_labels, month_labels):
+                example_ts = (
+                    self.dataset[
+                        (self.dataset["weekday"] == day.item())
+                        & (self.dataset["month"] == month.item())
+                    ]
+                    .sample(1)
+                    .timeseries.values[0][:, 0]
+                )
 
-            converter = Signal2String(decimal=4)
-            example_ts_string = converter.transform(example_ts)
-            gen_ts_string = self.generate_timeseries(example_ts_string)
-            gen_ts = converter.reverse_transform(
-                gen_ts_string[0], trunc=example_ts.shape[0]
+                converter = Signal2String(decimal=4)
+                example_ts_string = converter.transform(example_ts)
+                gen_ts_string = self.generate_timeseries(example_ts_string)
+                gen_ts = converter.reverse_transform(
+                    gen_ts_string[0], trunc=example_ts.shape[0]
+                )
+                gen_ts_dataset.append(gen_ts)
+                pbar.update(1)
+
+        gen_ts_dataset = torch.tensor(np.array(gen_ts_dataset))
+        return gen_ts_dataset
+
+
+class GPT:
+    """Use GPT-4o to generate time series forecasts.
+
+    Args:
+        model_name (str): GPT model name. Default to 'gpt-4o'.
+        sep (str): String to separate each element in values. Default to ','.
+    """
+
+    def __init__(self, model_name="gpt-4", sep=","):
+        self.model_name = model_name
+        self.sep = sep
+        self.client = OpenAI()
+
+        # Load prompt templates
+        self.zero_shot_prompt = self.load_prompt_template(
+            "gpt_system_prompt_zero_shot.txt"
+        )
+        self.one_shot_prompt = self.load_prompt_template(
+            "gpt_system_prompt_one_shot.txt"
+        )
+
+    def load_prompt_template(self, filename: str) -> str:
+        """Load the prompt template from a file."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(current_dir, "..", "template", filename)
+        with open(file_path, "r") as f:
+            return f.read()
+
+    def generate_timeseries(
+        self, example_ts: str, length: int = 96, temp: float = 1, top_p: float = 1
+    ) -> List[str]:
+        """Generate a time series forecast."""
+        messages = [
+            {"role": "system", "content": self.zero_shot_prompt},
+            {
+                "role": "user",
+                "content": f"Generate a time series of exactly {length} comma-separated values similar to this example: {example_ts}",
+            },
+        ]
+
+        response = self.client.chat.completions.create(
+            model=self.model_name, messages=messages, temperature=temp, top_p=top_p
+        )
+
+        generated_ts = response.choices[0].message.content.strip()
+        values = generated_ts.split(self.sep)
+        values = [v.strip() for v in values if v.strip().replace(".", "", 1).isdigit()]
+
+        # Ensure exactly 'length' values are returned
+        if len(values) < length:
+            LOGGER.warning(
+                f"Generated {len(values)} values instead of {length}. Padding with zeros."
             )
-            gen_ts_dataset.append(gen_ts)
+            values.extend(["0"] * (length - len(values)))
+        elif len(values) > length:
+            LOGGER.warning(
+                f"Generated {len(values)} values instead of {length}. Truncating."
+            )
+            values = values[:length]
+
+        return self.sep.join(values)
+
+    def train_model(self, dataset):
+        """Store the dataset for later use in generation."""
+        self.dataset = dataset.data
+
+    def generate(
+        self, day_labels: torch.Tensor, month_labels: torch.Tensor
+    ) -> torch.Tensor:
+        """Generate time series based on weekday and month labels."""
+        assert (
+            day_labels.shape == month_labels.shape
+        ), "Number of weekday and month labels must be equal!"
+
+        gen_ts_dataset = []
+
+        # Create a tqdm progress bar
+        total_iterations = len(day_labels)
+        with tqdm(total=total_iterations, desc="Generating Time Series") as pbar:
+            for day, month in zip(day_labels, month_labels):
+                example_ts = (
+                    self.dataset[
+                        (self.dataset["weekday"] == day.item())
+                        & (self.dataset["month"] == month.item())
+                    ]
+                    .sample(1)
+                    .timeseries.values[0][:, 0]
+                )
+
+                converter = Signal2String(decimal=4)
+                example_ts_string = converter.transform(example_ts)
+                gen_ts_string = self.generate_timeseries(example_ts_string)
+                gen_ts = converter.reverse_transform(
+                    gen_ts_string, trunc=example_ts.shape[0]
+                )
+                gen_ts_dataset.append(gen_ts)
+
+                pbar.update(1)
 
         gen_ts_dataset = torch.tensor(np.array(gen_ts_dataset))
         return gen_ts_dataset

@@ -1,6 +1,4 @@
 from typing import Any, Dict, List, Tuple
-
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -8,18 +6,13 @@ from torch.utils.tensorboard import SummaryWriter
 
 from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
-    Context_FID,
-    calculate_mmd,
-    calculate_period_bound_mse,
-    dynamic_time_warping_dist,
-    plot_range_with_syn_values,
-    plot_syn_with_closest_real_ts,
-    visualization,
-)
+    Context_FID, calculate_mmd, calculate_period_bound_mse, dynamic_time_warping_dist,
+    plot_range_with_syn_values, plot_syn_with_closest_real_ts, visualization,)
 from eval.predictive_metric import predictive_score_metrics
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
+from generator.llm.llm import HF
 from generator.options import Options
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -143,10 +136,10 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            # if user_id == 6377:
-            syn_user_data, real_user_data = self.evaluate_for_user(user_id)
-            syn_data.append(syn_user_data)
-            real_data.append(real_user_data)
+            if user_id == 6377:
+                syn_user_data, real_user_data = self.evaluate_for_user(user_id)
+                syn_data.append(syn_user_data)
+                real_data.append(real_user_data)
 
         syn_data = np.expand_dims(np.concatenate(syn_data, axis=0), axis=-1)
         real_data = np.expand_dims(np.concatenate(real_data, axis=0), axis=-1)
@@ -301,12 +294,17 @@ class Evaluator:
         opt = Options(model_name)
         opt.input_dim = input_dim
 
-        if model_name == "acgan":
-            model = ACGAN(opt)
-        elif model_name == "diffcharge":
-            model = DDPM(opt)
-        elif model_name == "diffusion_ts":
-            model = Diffusion_TS(opt)
+        model_dict = {
+            "acgan": ACGAN,
+            "diffcharge": DDPM,
+            "diffusion_ts": Diffusion_TS,
+            "mistral": lambda opt: HF("mistralai/Mistral-7B-Instruct-v0.2"),
+            "llama": lambda opt: HF("meta-llama/Meta-Llama-3.1-8B")
+        }
+
+        if model_name in model_dict:
+            model_class = model_dict[model_name]
+            model = model_class(opt) if not callable(model_class) else model_class(opt)
         else:
             raise ValueError("Model name not recognized!")
 

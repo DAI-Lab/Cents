@@ -36,14 +36,12 @@ class Options:
         self.cond_emb_dim = config.cond_emb_dim
         self.shuffle = config.shuffle
 
-        model_params = config.model[model_name]
-
         if model_name == "diffcharge":
-            self._load_diffcharge_params(model_params)
+            self._load_diffcharge_params(config["diffcharge"])
         elif model_name == "diffusion_ts":
-            self._load_diffusion_ts_params(model_params)
+            self._load_diffusion_ts_params(config["diffusion_ts"])
         elif model_name == "acgan":
-            self._load_acgan_params(model_params)
+            self._load_acgan_params(config["acgan"])
 
     def _load_diffcharge_params(self, model_params):
         """
