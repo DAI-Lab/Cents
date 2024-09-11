@@ -1,8 +1,9 @@
+import torch
+
 from data_utils.openpower import OpenPowerDataset
 from data_utils.pecanstreet import PecanStreetDataset
 from eval.evaluator import Evaluator
 from generator.llm.llm import HF
-from generator.llm.preprocessing import Signal2String
 
 
 def evaluate_individual_user_models(
@@ -30,20 +31,22 @@ def evaluate_single_dataset_model(
 
 
 def evaluate_llm():
-    hf = HF(name="meta-llama/Meta-Llama-3.1-8B", sep=",")
+    hf = HF(name="mistralai/Mistral-7B-Instruct-v0.2", sep=",")
     full_dataset = PecanStreetDataset(
         normalize=True, include_generation=False, threshold=(-5, 5)
     )
     user_dataset = full_dataset.create_user_dataset(661)
     row = user_dataset.data.iloc[0]
-    weekdays = [row.weekday]
-    months = [row.month]
+    weekdays = torch.tensor([row.weekday])
+    months = torch.tensor([row.month])
+    hf.train_model(user_dataset)
     hf.generate(weekdays, months)
 
 
 def main():
-    evaluate_individual_user_models("diffusion_ts", "newyork")
-    # evaluate_single_dataset_model("acgan", "newyork")
+    # evaluate_individual_user_models("diffusion_ts", "newyork")
+    # evaluate_single_dataset_model("diffusion_ts", "austin")
+    evaluate_llm()
 
 
 if __name__ == "__main__":

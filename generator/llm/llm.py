@@ -1,154 +1,32 @@
-# -*- coding: utf-8 -*-
-
 import json
 import logging
 import os
 
-import tiktoken
+import numpy as np
 import torch
-from openai import OpenAI
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-PROMPT_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "gpt_messages.json"
+from generator.llm.preprocessing import Signal2String
+
+HF_PROMPT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "hf_prompt_template.json"
 )
-
-PROMPTS = json.load(open(PROMPT_PATH))
-
 VALID_NUMBERS = list("0123456789")
-BIAS = 30
-
-LOGGER = logging.getLogger(__name__)
-
 DEFAULT_BOS_TOKEN = "<|begin_of_text|>"
 DEFAULT_EOS_TOKEN = "<|end_of_text|>"
 DEFAULT_UNK_TOKEN = "<unk>"
 DEFAULT_PAD_TOKEN = "<pad>"
-
 DEFAULT_MODEL = "meta-llama/Meta-Llama-3.1-8B"
 MISTRAL_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"
-
-
-class GPT:
-    """Prompt GPT models to generate a time series.
-
-    Args:
-        name (str):
-            Model name. Default to `'gpt-4o'`.
-        chat (bool):
-            Whether you're using a chat model or not. Default to `True`.
-        sep (str):
-            String to separate each element in values. Default to `','`.
-    """
-
-    def __init__(self, name="gpt-4o", chat=True, sep=","):
-        self.name = name
-        self.chat = chat
-        self.sep = sep
-
-        self.client = OpenAI()
-        self.tokenizer = tiktoken.encoding_for_model(self.name)
-
-        valid_tokens = []
-        for number in VALID_NUMBERS:
-            token = self.tokenizer.encode(number)
-            valid_tokens.extend(token)
-
-        valid_tokens.extend(self.tokenizer.encode(self.sep))
-        self.logit_bias = {token: BIAS for token in valid_tokens}
-
-    def generate(
-        self,
-        text,
-        length=96,
-        temp=1,
-        top_p=1,
-        logprobs=False,
-        top_logprobs=None,
-        samples=1,
-        seed=None,
-    ):
-        """Use GPT to generate a signal.
-
-        Args:
-            text (str):
-                A string containing an example time series.
-            length (int):
-                Desired length of the generated time series.
-            temp (float):
-                Sampling temperature to use, between 0 and 2. Higher values like 0.8 will
-                make the output more random, while lower values like 0.2 will make it
-                more focused and deterministic. Do not use with `top_p`. Default to `1`.
-            top_p (float):
-                Alternative to sampling with temperature, called nucleus sampling, where the
-                model considers the results of the tokens with top_p probability mass.
-                So 0.1 means only the tokens comprising the top 10% probability mass are
-                considered. Do not use with `temp`. Default to `1`.
-            logprobs (bool):
-                Whether to return the log probabilities of the output tokens or not.
-                Defaults to `False`.
-            top_logprobs (int):
-                An integer between 0 and 20 specifying the number of most likely tokens
-                to return at each token position. Default to `None`.
-            samples (int):
-                Number of forecasts to generate for each input message. Default to `1`.
-            seed (int):
-                Beta feature by OpenAI to sample deterministically. Default to `None`.
-
-        Returns:
-            list, list:
-                * List of generated signal values.
-                * Optionally, a list of the output tokens' log probabilities.
-        """
-        input_length = len(self.tokenizer.encode(text))
-        average_length = (input_length + 1) // len(text.split(","))
-        max_tokens = average_length * length
-
-        if self.chat:
-            message = " ".join([PROMPTS["user_message"], text, self.sep])
-            response = self.client.chat.completions.create(
-                model=self.name,
-                messages=[
-                    {"role": "system", "content": PROMPTS["system_message"]},
-                    {"role": "user", "content": message},
-                ],
-                max_tokens=max_tokens,
-                temperature=temp,
-                logprobs=logprobs,
-                top_logprobs=top_logprobs,
-                n=samples,
-            )
-            responses = [choice.message.content for choice in response.choices]
-
-        else:
-            message = " ".join(text, self.sep)
-            response = self.client.completions.create(
-                model=self.name,
-                prompt=message,
-                max_tokens=max_tokens,
-                temperature=temp,
-                logprobs=logprobs,
-                top_logprobs=top_logprobs,
-                logit_bias=self.logit_bias,
-                n=samples,
-            )
-            responses = [choice.text for choice in response.choices]
-
-        if logprobs:
-            probs = [choice.logprobs for choice in response.choices]
-            return responses, probs
-
-        return responses
+LOGGER = logging.getLogger(__name__)
 
 
 class HF:
     """Prompt Pretrained models on HuggingFace to forecast a time series.
 
     Args:
-        name (str):
-            Model name. Default to `'meta-llama/Meta-Llama-3.1-8B'`.
-        sep (str):
-            String to separate each element in values. Default to `','`.
+        name (str): Model name. Default to `'meta-llama/Meta-Llama-3.1-8B'`.
+        sep (str): String to separate each element in values. Default to `','`.
     """
 
     def __init__(self, name=DEFAULT_MODEL, sep=","):
@@ -157,7 +35,6 @@ class HF:
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.name, use_fast=False)
 
-        # special tokens
         if name == MISTRAL_MODEL:
             special_tokens_dict = dict()
             if self.tokenizer.eos_token is None:
@@ -173,71 +50,57 @@ class HF:
 
         self.tokenizer.pad_token = (
             self.tokenizer.eos_token
-        )  # indicate the end of the time series
+        )  # Indicate end of the time series
 
-        # invalid tokens
-        valid_tokens = []
-        for number in VALID_NUMBERS:
-            token = self.tokenizer.convert_tokens_to_ids(number)
-            valid_tokens.append(token)
-
-        valid_tokens.append(self.tokenizer.convert_tokens_to_ids(self.sep))
-        self.invalid_tokens = [
-            [i] for i in range(len(self.tokenizer) - 1) if i not in valid_tokens
+        # Define invalid tokens (tokens that are not digits or commas)
+        valid_tokens = [
+            self.tokenizer.convert_tokens_to_ids(str(digit)) for digit in VALID_NUMBERS
         ]
+        valid_tokens.append(self.tokenizer.convert_tokens_to_ids(self.sep))
+        vocab_size = self.tokenizer.vocab_size
 
+        if any(token >= vocab_size for token in valid_tokens):
+            raise ValueError(
+                f"Some valid tokens are outside the model's vocabulary size of {vocab_size}"
+            )
+
+        self.invalid_tokens = [[i] for i in range(vocab_size) if i not in valid_tokens]
+
+        # Load the model
         self.model = AutoModelForCausalLM.from_pretrained(
-            self.name,
-            device_map="auto",
-            torch_dtype=torch.bfloat16,
+            self.name, device_map="auto", torch_dtype=torch.bfloat16
         )
-
         self.model.eval()
 
+    def load_prompt_template(self):
+        """Load the prompt template from a JSON file."""
+        with open(HF_PROMPT_PATH) as f:
+            template = json.load(f)["prompt_template"]
+        return template
+
     def generate_timeseries(
-        self, text, length=96, temp=1, top_p=1, raw=False, samples=1, padding=0
+        self, example_ts, length=96, temp=1, top_p=1, raw=False, samples=1, padding=0
     ):
-        """Use the model to generate a signal.
+        """Generate a time series forecast."""
+        template = self.load_prompt_template()
+        prompt = template.format(length=length, example_ts=example_ts)
 
-        Args:
-            text (str):
-                A string containing an example time series.
-            length (int):
-                Desired length of the generated time series.
-            temp (float):
-                The value used to modulate the next token probabilities. Default to `1`.
-            top_p (float):
-                 If set to float < 1, only the smallest set of most probable tokens with
-                 probabilities that add up to `top_p` or higher are kept for generation.
-                 Default to `1`.
-            raw (bool):
-                Whether to return the raw output or not. Defaults to `False`.
-            samples (int):
-                Number of forecasts to generate for each input message. Default to `1`.
-            padding (int):
-                Additional padding token to forecast to reduce short horizon predictions.
-                Default to `0`.
+        tokenized_input = self.tokenizer([prompt], return_tensors="pt").to("cuda")
+        tokenized_ts = self.tokenizer([example_ts], return_tensors="pt").to("cuda")
 
-        Returns:
-            list, list:
-                * List of forecasted signal values.
-                * Optionally, a list of dictionaries for raw output.
-        """
-        tokenized_input = self.tokenizer([text], return_tensors="pt").to("cuda")
-
-        input_length = tokenized_input["input_ids"].shape[1]
-        average_length = input_length / len(text.split(","))
+        input_length = tokenized_ts["input_ids"].shape[1]
+        average_length = input_length / len(example_ts.split(","))
         max_tokens = (average_length + padding) * length
 
         generate_ids = self.model.generate(
             **tokenized_input,
             do_sample=True,
-            max_new_tokens=max_tokens,
+            max_new_tokens=int(max_tokens),
             temperature=temp,
             top_p=top_p,
-            # bad_words_ids=self.invalid_tokens,
             renormalize_logits=True,
-            num_return_sequences=samples
+            bad_words_ids=self.invalid_tokens,  # Ensure no invalid tokens (only digits and commas)
+            num_return_sequences=samples,
         )
 
         responses = self.tokenizer.batch_decode(
@@ -249,17 +112,45 @@ class HF:
         if raw:
             return responses, generate_ids
 
-        return responses
+        processed_responses = []
+        for response in responses:
+            values = response.split(self.sep)
+            values = [
+                v.strip() for v in values if v.strip().replace(".", "", 1).isdigit()
+            ]  # Remove invalid entries
+            processed_responses.append(self.sep.join(values))
+
+        return processed_responses
 
     def train_model(self, dataset):
+        """Train the model on the given dataset."""
         self.dataset = dataset.data
 
     def generate(self, day_labels, month_labels):
+        """Generate time series based on weekday and month labels."""
         assert (
             day_labels.shape == month_labels.shape
         ), "Number of weekday and month labels must be equal!"
 
+        gen_ts_dataset = []
+
         for day, month in zip(day_labels, month_labels):
-            example_ts = self.dataset[
-                self.dataset["weekday"] == "day" & self.dataset["month"] == "month"
-            ]
+            example_ts = (
+                self.dataset[
+                    (self.dataset["weekday"] == day.item())
+                    & (self.dataset["month"] == month.item())
+                ]
+                .sample(1)
+                .timeseries.values[0][:, 0]
+            )
+
+            converter = Signal2String(decimal=4)
+            example_ts_string = converter.transform(example_ts)
+            gen_ts_string = self.generate_timeseries(example_ts_string)
+            gen_ts = converter.reverse_transform(
+                gen_ts_string[0], trunc=example_ts.shape[0]
+            )
+            gen_ts_dataset.append(gen_ts)
+
+        gen_ts_dataset = torch.tensor(np.array(gen_ts_dataset))
+        return gen_ts_dataset

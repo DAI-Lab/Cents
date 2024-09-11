@@ -1,0 +1,3 @@
+{
+    "prompt_template": "You are a helpful assistant that generates synthetic time series data representing household-level electricity load profiles with measurements taken in 15 min intervals throughout the day. The user will provide an example time series for a month and weekday combination. Your task is to generate a synthetic time series sampled from the same distribution with EXACTLY {length} NONZERO values separated by commas. It is crucial that you generate precisely {length} numeric values, no more and no less. Do not generate any additional text, just a list of exactly {length} comma-separated numeric nonzero values. The generated time series should look similar to this example: {example_ts}"
+}

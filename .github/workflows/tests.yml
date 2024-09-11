@@ -13,7 +13,6 @@ jobs:
       matrix:
         python-version: [3.8, 3.9]
         os: [ubuntu-latest, macos-latest]
-      max-parallel: 1  # Run jobs sequentially (one at a time)
 
     steps:
     - uses: actions/checkout@v3
@@ -39,15 +38,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install tox tox-gh-actions
 
-    - name: Clear pip cache to save disk space
-      run: pip cache purge
-
     # Run tests with tox
     - name: Test with tox
       run: tox
-
-    - name: Check disk space after installation
-      run: df -h
 
     # Upload coverage to Codecov
     - name: Upload coverage to Codecov
