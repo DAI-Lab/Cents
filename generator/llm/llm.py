@@ -56,9 +56,7 @@ class HF:
 
             self.tokenizer.add_special_tokens(special_tokens_dict)
 
-        self.tokenizer.pad_token = (
-            self.tokenizer.eos_token
-        ) 
+        self.tokenizer.pad_token = self.tokenizer.eos_token
 
         valid_tokens = [
             self.tokenizer.convert_tokens_to_ids(str(digit)) for digit in VALID_NUMBERS
@@ -117,7 +115,7 @@ class HF:
             values = response.split(self.sep)
             values = [
                 v.strip() for v in values if v.strip().replace(".", "", 1).isdigit()
-            ] 
+            ]
             processed_responses.append(self.sep.join(values))
 
         return processed_responses

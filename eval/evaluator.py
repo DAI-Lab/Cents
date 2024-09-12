@@ -7,13 +7,19 @@ from torch.utils.tensorboard import SummaryWriter
 
 from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
-    Context_FID, calculate_mmd, calculate_period_bound_mse, dynamic_time_warping_dist,
-    plot_range_with_syn_values, plot_syn_with_closest_real_ts, visualization,)
+    Context_FID,
+    calculate_mmd,
+    calculate_period_bound_mse,
+    dynamic_time_warping_dist,
+    plot_range_with_syn_values,
+    plot_syn_with_closest_real_ts,
+    visualization,
+)
 from eval.predictive_metric import predictive_score_metrics
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
-from generator.llm.llm import HF, GPT
+from generator.llm.llm import GPT, HF
 from generator.options import Options
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -300,7 +306,7 @@ class Evaluator:
             "diffusion_ts": Diffusion_TS,
             "mistral": lambda opt: HF("mistralai/Mistral-7B-Instruct-v0.2"),
             "llama": lambda opt: HF("meta-llama/Meta-Llama-3.1-8B"),
-            "gpt": lambda opt: GPT("gpt-4o")
+            "gpt": lambda opt: GPT("gpt-4o"),
         }
 
         if model_name in model_dict:

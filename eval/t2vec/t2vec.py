@@ -19,7 +19,11 @@ from torch.utils.data import DataLoader, TensorDataset
 from eval.loss import hierarchical_contrastive_loss
 from eval.t2vec.encoder import TSEncoder
 from eval.t2vec.utils import (
-    centerize_vary_length_series, split_with_nan, take_per_row, torch_pad_nan,)
+    centerize_vary_length_series,
+    split_with_nan,
+    take_per_row,
+    torch_pad_nan,
+)
 
 
 class TS2Vec:

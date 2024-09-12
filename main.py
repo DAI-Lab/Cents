@@ -1,7 +1,8 @@
-import torch
-
 from dataclasses.openpower import OpenPowerDataset
 from dataclasses.pecanstreet import PecanStreetDataset
+
+import torch
+
 from eval.evaluator import Evaluator
 
 
