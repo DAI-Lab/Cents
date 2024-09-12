@@ -13,7 +13,7 @@ from eval.predictive_metric import predictive_score_metrics
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
-from generator.llm.llm import HF
+from generator.llm.llm import HF, GPT
 from generator.options import Options
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -301,6 +301,7 @@ class Evaluator:
             "diffusion_ts": Diffusion_TS,
             "mistral": lambda opt: HF("mistralai/Mistral-7B-Instruct-v0.2"),
             "llama": lambda opt: HF("meta-llama/Meta-Llama-3.1-8B"),
+            "gpt": lambda opt: GPT("gpt-4o")
         }
 
         if model_name in model_dict:

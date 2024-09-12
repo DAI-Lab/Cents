@@ -30,7 +30,7 @@ def evaluate_single_dataset_model(
 
 
 def main():
-    evaluate_individual_user_models("mistral", "newyork")
+    evaluate_individual_user_models("gpt", "newyork")
     # evaluate_single_dataset_model("diffusion_ts", "austin")
 
 
