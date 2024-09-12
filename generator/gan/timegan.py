@@ -7,7 +7,7 @@ import torch.optim as optim
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from EnData.data_utils.pecanstreet import prepare_dataloader
+from datasets.utils import prepare_dataloader
 from eval.loss import mmd_loss
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

@@ -160,7 +160,7 @@ class HF:
                 gen_ts = converter.reverse_transform(
                     gen_ts_string[0], trunc=example_ts.shape[0]
                 )
-                gen_ts_dataset.append(gen_ts)
+                gen_ts_dataset.append(np.expand_dims(gen_ts, -1))
                 pbar.update(1)
 
         gen_ts_dataset = torch.tensor(np.array(gen_ts_dataset))
@@ -246,7 +246,7 @@ class GPT:
                 gen_ts = converter.reverse_transform(
                     gen_ts_string, trunc=example_ts.shape[0]
                 )
-                gen_ts_dataset.append(gen_ts)
+                gen_ts_dataset.append(np.expand_dims(gen_ts, -1))
 
                 pbar.update(1)
 

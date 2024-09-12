@@ -137,10 +137,9 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            if user_id == 6377:
-                syn_user_data, real_user_data = self.evaluate_for_user(user_id)
-                syn_data.append(syn_user_data)
-                real_data.append(real_user_data)
+            syn_user_data, real_user_data = self.evaluate_for_user(user_id)
+            syn_data.append(syn_user_data)
+            real_data.append(real_user_data)
 
         syn_data = np.expand_dims(np.concatenate(syn_data, axis=0), axis=-1)
         real_data = np.expand_dims(np.concatenate(real_data, axis=0), axis=-1)
@@ -441,8 +440,12 @@ class Evaluator:
         # Visualization 4: t-SNE visualization of real and synthetic data
         real_data_array = np.stack(real_user_data_inv["timeseries"])
         syn_data_array = np.stack(syn_user_data_inv["timeseries"])
-        tsne_plot = visualization(real_data_array, syn_data_array, "tsne")
-        writer.add_figure("Visualizations/TSNE", tsne_plot)
+        # tsne_plot = visualization(real_data_array, syn_data_array, "tsne")
+        # writer.add_figure("Visualizations/TSNE", tsne_plot)
+
+        # Visualization 5: KDE plots for real and synthetic data
+        kde_plot = visualization(real_data_array, syn_data_array, "kernel")
+        writer.add_figure("Visualizations/KDE", kde_plot)
 
     def _log_final_results(self):
         """

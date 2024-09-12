@@ -3,56 +3,55 @@ input_dim: 2 # or 1 depending on user, but is dynamically set
 noise_dim: 256
 cond_emb_dim: 256
 shuffle: True
-model:
-  diffcharge:
-    batch_size: 4
-    n_epochs: 1000
-    init_lr: 3e-5
-    network: cnn # attention
-    guidance_scale: 1.2
-    hidden_dim: 256
-    cond_emb_dim: 32
-    nhead: 8
-    beta_start: 1e-4
-    beta_end: 0.02
-    n_steps: 1000
-    schedule: linear # quadratic, cosine
-  diffusion_ts:
-    batch_size: 16
-    n_epochs: 1000
-    n_steps: 1000
-    base_lr: 1e-4
-    n_layer_enc: 4
-    n_layer_dec: 5
-    d_model: 256
-    cond_emb_dim: 256
-    sampling_timesteps: null
-    loss_type: l1 #l2
-    beta_schedule: cosine #linear
-    n_heads: 4
-    mlp_hidden_times: 4
-    eta: 0.0
-    attn_pd: 0.0
-    resid_pd: 0.0
-    kernel_size: null
-    padding_size: null
-    use_ff: true
-    reg_weight: null
-    results_folder: ./Checkpoints_syn
-    gradient_accumulate_every: 2
-    save_cycle: 1000
-    ema_decay: 0.99
-    ema_update_interval: 10
-    lr_scheduler_params:
-      factor: 0.5
-      patience: 200
-      min_lr: 1.0e-5
-      threshold: 1.0e-1
-      threshold_mode: rel
-      verbose: false
-  acgan:
-    batch_size: 16
-    n_epochs: 200
-    validate: false # add validation during training
-    lr_gen: 2e-4
-    lr_discr: 1e-4
+diffcharge:
+  batch_size: 4
+  n_epochs: 1000
+  init_lr: 3e-5
+  network: cnn # attention
+  guidance_scale: 1.2
+  hidden_dim: 256
+  cond_emb_dim: 32
+  nhead: 8
+  beta_start: 1e-4
+  beta_end: 0.02
+  n_steps: 1000
+  schedule: linear # quadratic, cosine
+diffusion_ts:
+  batch_size: 16
+  n_epochs: 1000
+  n_steps: 1000
+  base_lr: 1e-4
+  n_layer_enc: 4
+  n_layer_dec: 5
+  d_model: 256
+  cond_emb_dim: 256
+  sampling_timesteps: null
+  loss_type: l1 #l2
+  beta_schedule: cosine #linear
+  n_heads: 4
+  mlp_hidden_times: 4
+  eta: 0.0
+  attn_pd: 0.0
+  resid_pd: 0.0
+  kernel_size: null
+  padding_size: null
+  use_ff: true
+  reg_weight: null
+  results_folder: ./Checkpoints_syn
+  gradient_accumulate_every: 2
+  save_cycle: 1000
+  ema_decay: 0.99
+  ema_update_interval: 10
+  lr_scheduler_params:
+    factor: 0.5
+    patience: 200
+    min_lr: 1.0e-5
+    threshold: 1.0e-1
+    threshold_mode: rel
+    verbose: false
+acgan:
+  batch_size: 16
+  n_epochs: 200
+  validate: false # add validation during training
+  lr_gen: 2e-4
+  lr_discr: 1e-4

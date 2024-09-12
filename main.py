@@ -1,7 +1,7 @@
 import torch
 
-from data_utils.openpower import OpenPowerDataset
-from data_utils.pecanstreet import PecanStreetDataset
+from dataclasses.openpower import OpenPowerDataset
+from dataclasses.pecanstreet import PecanStreetDataset
 from eval.evaluator import Evaluator
 
 
@@ -30,7 +30,8 @@ def evaluate_single_dataset_model(
 
 
 def main():
-    evaluate_individual_user_models("gpt", "newyork")
+    evaluate_individual_user_models("gpt", include_generation=False)
+    evaluate_individual_user_models("llama", include_generation=False)
     # evaluate_single_dataset_model("diffusion_ts", "austin")
 
 

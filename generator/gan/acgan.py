@@ -24,7 +24,7 @@ import torch.optim as optim
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from data_utils.utils import prepare_dataloader, split_dataset
+from datasets.utils import prepare_dataloader, split_dataset
 from eval.loss import mmd_loss
 
 

@@ -4,21 +4,27 @@
 """Tests for `endata` package."""
 
 import unittest
+import torch
+import numpy as np
+from unittest.mock import patch, MagicMock
+import pandas as pd
 
-# from endata import endata
+from eval.evaluator import Evaluator
+from datasets.pecanstreet import PecanStreetDataset
+from generator.gan.acgan import ACGAN
+from generator.options import Options
 
 
-class TestEndata(unittest.TestCase):
-    """Tests for `endata` package."""
+class TestGenerator(unittest.TestCase):
+    """Test ACGAN Generator."""
+    
+    def test_generator_output_shape(self):
+        opt = Options("acgan")
+        model = ACGAN(opt)
+        noise = torch.randn(opt.batch_size, opt.noise_dim).to(opt.device)  # Batch of 32 samples with noise_dim=128
+        month_labels = torch.randint(0, 12, (opt.batch_size,)).to(opt.device)
+        day_labels = torch.randint(0, 7, (opt.batch_size,)).to(opt.device)
+        
+        generated_data = model.generator(noise, month_labels, day_labels).to(opt.device)
+        self.assertEqual(generated_data.shape, (opt.batch_size, opt.seq_len, opt.input_dim))  # Check if output shape is as expected
 
-    def setUp(self):
-        """Set up test fixtures, if any."""
-        pass
-
-    def tearDown(self):
-        """Tear down test fixtures, if any."""
-        pass
-
-    def test_000_something(self):
-        """Test something."""
-        self.assertTrue(True)
