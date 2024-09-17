@@ -10,7 +10,7 @@ def evaluate_individual_user_models(
         normalize=normalize, include_generation=include_generation, threshold=(-10, 10)
     )
     evaluator = Evaluator(full_dataset, model_name)
-    evaluator.evaluate_all_users()
+    evaluator.evaluate_all_user_models()
 
 
 def evaluate_single_dataset_model(
@@ -23,16 +23,16 @@ def evaluate_single_dataset_model(
         threshold=(-10, 10),
     )
     evaluator = Evaluator(full_dataset, model_name)
-    evaluator.evaluate_all_non_pv_users()
-    evaluator.evaluate_all_pv_users()
+    evaluator.evaluate_all_users()
+    #evaluator.evaluate_all_non_pv_users()
+    #evaluator.evaluate_all_pv_users()
 
 
 def main():
     # evaluate_individual_user_models("gpt", include_generation=False)
-    # evaluate_individual_user_models("llama", include_generation=False)
-    # evaluate_single_dataset_model("acgan", "austin")
-    data = PecanStreetDataset(normalize=True, include_generation=False)
-    user_data = data.create_user_dataset(661)
+    # evaluate_individual_user_models("acgan", include_generation=False)
+    evaluate_single_dataset_model("acgan", include_generation=False)
+    
 
 
 if __name__ == "__main__":

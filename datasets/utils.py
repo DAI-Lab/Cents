@@ -76,3 +76,42 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
     val_dataset = torch.utils.data.Subset(dataset, range(train_size, len(dataset)))
 
     return train_dataset, val_dataset
+
+
+def encode_categorical_variables(df):
+    """
+    Encodes categorical variables in a DataFrame to integer codes.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame containing categorical variables.
+
+    Returns:
+        df_encoded (pd.DataFrame): DataFrame with categorical variables encoded as integer codes.
+        mappings (dict): Dictionary mapping column names to their category-to-code mappings.
+    """
+    df_encoded = df.copy()
+    mappings = {}
+    
+    # Select columns with object or category data types
+    categorical_cols = df_encoded.select_dtypes(include=['object', 'category']).columns
+
+    for col in categorical_cols:
+        if col == "timeseries": # skip time series col
+            continue
+        # Convert column to 'category' dtype if not already
+        df_encoded[col] = df_encoded[col].astype('category')
+        
+        # Create a mapping from categories to codes
+        category_to_code = dict(enumerate(df_encoded[col].cat.categories))
+        code_to_category = {v: k for k, v in category_to_code.items()}
+        
+        # Replace categories with codes in the DataFrame
+        df_encoded[col] = df_encoded[col].cat.codes
+        
+        # Save the mapping for the current column
+        mappings[col] = {
+            'category_to_code': {cat: code for code, cat in category_to_code.items()},
+            'code_to_category': code_to_category
+        }
+        
+    return df_encoded, mappings

@@ -8,6 +8,8 @@ import torch
 import yaml
 from torch.utils.data import Dataset
 
+from datasets.utils import encode_categorical_variables
+
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -77,7 +79,7 @@ class PecanStreetDataset(Dataset):
         self,
     ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[int, bool]]:
         """
-        Loads and preprocesses the data, including filtering and normalization.
+        Loads and preprocesses the data, including filtering, normalization and handling of categorical metadata.
 
         Returns:
             Tuple[pd.DataFrame, pd.DataFrame, Dict[int, bool]]: Processed data, metadata, and user flags.
@@ -88,6 +90,8 @@ class PecanStreetDataset(Dataset):
         user_flags = self._set_user_flags(metadata, data)
         data = self._preprocess_data(data)
         data = pd.merge(data, metadata, on="dataid", how="left")
+        data, mappings = encode_categorical_variables(data.fillna("no"))
+        self.mappings = mappings
         return data, metadata, user_flags
 
     def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
@@ -240,6 +244,7 @@ class PecanStreetDataset(Dataset):
             solar_data = self._apply_normalization(solar_data, "solar")
 
         return solar_data
+        
 
     @staticmethod
     def _merge_columns_into_timeseries(df: pd.DataFrame) -> pd.DataFrame:
@@ -363,6 +368,7 @@ class PecanStreetDataset(Dataset):
             int: The number of samples.
         """
         return len(self.data)
+    
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         """
@@ -371,29 +377,25 @@ class PecanStreetDataset(Dataset):
         Returns:
             Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
                 - time_series: The time series data tensor.
-                - categorical_vars: Dictionary of categorical conditioning variables.
-                - numerical_vars: Dictionary of numerical conditioning variables.
+                - conditioning_vars: Dictionary of conditioning variables.
         """
         sample = self.data.iloc[idx]
         time_series = sample["timeseries"]
 
         # Extract conditioning variables
-        categorical_vars = {
+        conditioning_vars = {
             'month': torch.tensor(sample['month'], dtype=torch.long),
             'weekday': torch.tensor(sample['weekday'], dtype=torch.long),
             'building_type': torch.tensor(sample['building_type'], dtype=torch.long),
-            'pv': torch.tensor(sample['pv'], dtype=torch.long),
-            'ev': torch.tensor(sample['ev'], dtype=torch.long),
-        }
-
-        numerical_vars = {
-            'total_square_footage': torch.tensor(sample['total_square_footage'], dtype=torch.long),
+            'car1': torch.tensor(sample['car1'], dtype=torch.long),
+            'city': torch.tensor(sample['city'], dtype=torch.long),
+            'state': torch.tensor(sample['state'], dtype=torch.long),
+            'solar': torch.tensor(sample['solar'], dtype=torch.long)
         }
 
         return (
             torch.tensor(time_series, dtype=torch.float32),
-            categorical_vars,
-            numerical_vars
+            conditioning_vars
         )
 
 
@@ -435,7 +437,7 @@ class PecanStreetUserDataset(Dataset):
         self.is_pv_user = is_pv_user
         self.include_generation = include_generation
         self.metadata = metadata
-        self.include_user_metadata()
+        #self.include_user_metadata()
 
     def include_user_metadata(self):
         """
@@ -443,7 +445,7 @@ class PecanStreetUserDataset(Dataset):
         """
         self.data = pd.merge(
             left=self.data,
-            right=self.metadata[["dataid", "city", "pv", "car1"]],
+            right=self.metadata[["dataid", "city", "solar", "car1"]],
             on="dataid",
         )
 

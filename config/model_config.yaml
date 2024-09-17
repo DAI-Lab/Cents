@@ -4,13 +4,14 @@ noise_dim: 256
 cond_emb_dim: 256
 shuffle: True
 
-categorical_conditioning_vars: # for each desired categorical conditioning variable, add the name and number of categories
+conditioning_vars: # for each desired conditioning variable, add the name and number of categories
   month: 12
-  day: 7
-  #pv: 2
-  #ev: 2
-numerical_conditioning_vars: # for each desired numerical conditioning variable, add the name
-  - square_footage
+  weekday: 7
+  building_type: 3
+  solar: 2
+  car1: 2
+  city: 7
+  state: 3
 
 diffcharge:
   batch_size: 4

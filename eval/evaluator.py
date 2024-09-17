@@ -135,7 +135,7 @@ class Evaluator:
         writer.close()
         return syn_data_array_inv[:, :, 0], real_data_array_inv[:, :, 0]
 
-    def evaluate_all_users(self):
+    def evaluate_all_user_models(self):
         """
         Evaluate the model for all users in the dataset.
         """
@@ -245,6 +245,23 @@ class Evaluator:
 
         self.run_eval(dataset, model, user_writer, None)
 
+    def evaluate_all_users(self):
+        """
+        Evaluate the model for all users in the same dataset.
+        """
+        dataset = self.real_dataset
+        dataset.is_pv_user = False
+        model = self.get_trained_model_for_user(self.model_name, dataset)
+        user_log_dir = f"{self.writer.log_dir}/all_users"
+        user_writer = SummaryWriter(user_log_dir)
+
+        print("----------------------")
+        print("Starting evaluation for all users")
+        print("----------------------")
+
+        self.run_eval(dataset, model, user_writer, None)
+
+    
     def evaluate_all_non_pv_users(self):
         """
         Evaluate the model for all non-PV users in the dataset.

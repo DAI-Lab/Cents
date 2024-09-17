@@ -76,17 +76,18 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, window_length, input_dim, device, base_channels=256):
+    def __init__(self, window_length, input_dim, device, base_channels=256, categorical_dims=None):
         super(Discriminator, self).__init__()
         self.input_dim = input_dim
         self.window_length = window_length
         self.base_channels = base_channels
         self.device = device
+        self.categorical_dims = categorical_dims  # Add this line
 
         self.conv_layers = nn.Sequential(
             nn.Conv1d(
                 input_dim, base_channels // 4, kernel_size=4, stride=2, padding=1
-            ).to(self.device),
+            ),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv1d(
                 base_channels // 4,
@@ -94,38 +95,39 @@ class Discriminator(nn.Module):
                 kernel_size=4,
                 stride=2,
                 padding=1,
-            ).to(self.device),
-            nn.BatchNorm1d(base_channels // 2).to(self.device),
+            ),
+            nn.BatchNorm1d(base_channels // 2),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv1d(
                 base_channels // 2, base_channels, kernel_size=4, stride=2, padding=1
-            ).to(self.device),
-            nn.BatchNorm1d(base_channels).to(self.device),
+            ),
+            nn.BatchNorm1d(base_channels),
             nn.LeakyReLU(0.2, inplace=True),
         ).to(self.device)
 
-        self.fc_discriminator = nn.Linear((window_length // 8) * base_channels, 1).to(
-            self.device
-        )
-        self.fc_aux_day = nn.Linear((window_length // 8) * base_channels, 7).to(
-            self.device
-        )
-        self.fc_aux_month = nn.Linear((window_length // 8) * base_channels, 12).to(
-            self.device
-        )
-        self.softmax = nn.Softmax(dim=1).to(self.device)
+        self.fc_discriminator = nn.Linear((window_length // 8) * base_channels, 1).to(self.device)
+
+        # Auxiliary classifiers for each conditioning variable
+        self.aux_classifiers = nn.ModuleDict()
+        for var_name, num_classes in self.categorical_dims.items():
+            self.aux_classifiers[var_name] = nn.Linear((window_length // 8) * base_channels, num_classes).to(self.device)
+
+        self.sigmoid = nn.Sigmoid()
+        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        x = x.permute(
-            0, 2, 1
-        )
+        x = x.permute(0, 2, 1)
         x = self.conv_layers(x)
         x = x.view(x.size(0), -1)
-        validity = torch.sigmoid(self.fc_discriminator(x))
-        aux_day = self.softmax(self.fc_aux_day(x))
-        aux_month = self.softmax(self.fc_aux_month(x))
+        validity = self.sigmoid(self.fc_discriminator(x))
 
-        return validity, aux_day, aux_month
+        aux_outputs = {}
+        for var_name, classifier in self.aux_classifiers.items():
+            aux_output = classifier(x)
+            aux_outputs[var_name] = self.softmax(aux_output)
+
+        return validity, aux_outputs
+
 
 
 class ACGAN:
@@ -138,10 +140,9 @@ class ACGAN:
         self.seq_len = opt.seq_len
         self.noise_dim = opt.noise_dim
         self.device = opt.device
-        self.embedding_dim = opt.embedding_dim
+        self.embedding_dim = opt.cond_emb_dim
 
         self.categorical_dims = opt.categorical_dims
-        self.numerical_dims = opt.numerical_dims   
         self.conditioning_dim = self.embedding_dim 
 
         assert (
@@ -149,13 +150,13 @@ class ACGAN:
         ), "window_length must be a multiple of 8 in this architecture!"
 
         self.conditioning_module = ConditioningModule(
-            self.categorical_dims, self.numerical_dims, self.embedding_dim, self.device
+            self.categorical_dims, self.embedding_dim, self.device
         ).to(self.device)
         self.generator = Generator(
             self.noise_dim, self.conditioning_dim, self.seq_len, self.input_dim, self.device
         ).to(self.device)
         self.discriminator = Discriminator(
-            self.seq_len, self.input_dim, self.conditioning_dim, self.categorical_dims, self.device
+        self.seq_len, self.input_dim, self.device, categorical_dims=self.categorical_dims
         ).to(self.device)
 
         self.adversarial_loss = nn.BCELoss().to(self.device)
@@ -175,12 +176,13 @@ class ACGAN:
         train_loader = prepare_dataloader(dataset, batch_size)
 
         for epoch in range(num_epoch):
-            for i, (time_series_batch, categorical_vars_batch, numerical_vars_batch) in enumerate(
+            for i, (time_series_batch, categorical_vars_batch) in enumerate(
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
                 current_batch_size = time_series_batch.size(0)
                 time_series_batch = time_series_batch.to(self.device)
-                conditioning_vector = self.conditioning_module(categorical_vars_batch, numerical_vars_batch)
+                # Get the conditioning vector for real data
+                conditioning_vector = self.conditioning_module(categorical_vars_batch)
 
                 # Generate noise
                 noise = torch.randn((current_batch_size, self.code_size)).to(self.device)
@@ -196,7 +198,7 @@ class ACGAN:
                 self.optimizer_D.zero_grad()
 
                 # Real data
-                validity_real, aux_outputs_real = self.discriminator(time_series_batch, conditioning_vector)
+                validity_real, aux_outputs_real = self.discriminator(time_series_batch)
                 d_real_loss = self.adversarial_loss(
                     validity_real, torch.ones_like(validity_real) * soft_one
                 )
@@ -208,9 +210,7 @@ class ACGAN:
                     d_aux_loss_real += self.auxiliary_loss(aux_outputs_real[var_name], labels)
 
                 # Fake data
-                validity_fake, aux_outputs_fake = self.discriminator(
-                    generated_time_series.detach(), conditioning_vector
-                )
+                validity_fake, aux_outputs_fake = self.discriminator(generated_time_series.detach())
                 d_fake_loss = self.adversarial_loss(
                     validity_fake, torch.zeros_like(validity_fake) * soft_zero
                 )
@@ -232,15 +232,15 @@ class ACGAN:
                 self.optimizer_G.zero_grad()
 
                 # Generate new conditioning variables
-                gen_categorical_vars, gen_numerical_vars = self.sample_random_conditioning_vars(current_batch_size)
-                gen_conditioning_vector = self.conditioning_module(gen_categorical_vars, gen_numerical_vars)
+                gen_categorical_vars = self.sample_random_conditioning_vars(current_batch_size)
+                gen_conditioning_vector = self.conditioning_module(gen_categorical_vars)
 
                 # Generate fake data
                 noise = torch.randn((current_batch_size, self.code_size)).to(self.device)
                 generated_time_series = self.generator(noise, gen_conditioning_vector)
 
                 # Discriminator's response
-                validity, aux_outputs = self.discriminator(generated_time_series, gen_conditioning_vector)
+                validity, aux_outputs = self.discriminator(generated_time_series)
 
                 # Generator adversarial loss
                 g_adv_loss = self.adversarial_loss(
@@ -258,15 +258,12 @@ class ACGAN:
                 g_loss.backward()
                 self.optimizer_G.step()
 
+
     def sample_random_conditioning_vars(self, batch_size):
         categorical_vars = {}
         for var_name, num_categories in self.categorical_dims.items():
             categorical_vars[var_name] = torch.randint(0, num_categories, (batch_size,), device=self.device)
-        numerical_vars = {}
-        for var_name in self.numerical_dims:
-            # For numerical variables, define appropriate sampling
-            numerical_vars[var_name] = torch.randn(batch_size, device=self.device)
-        return categorical_vars, numerical_vars
+        return categorical_vars
 
     def generate(self, categorical_vars, numerical_vars):
         num_samples = next(iter(categorical_vars.values())).shape[0]

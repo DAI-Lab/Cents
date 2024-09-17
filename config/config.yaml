@@ -4,18 +4,18 @@ datasets:
     data_columns: ["dataid",
      "local_15min",
      "car1",
-     "car2",
+     #"car2",
      "grid",
      "solar",
-     "solar2",
+     #"solar2",
      ]
     metadata_columns: ["dataid",
       "building_type",
+      #"pv",
       "solar",
-      "pv",
       "car1",
       "city",
-      "state"
+      "state",
     ]
   goinerdata:
     path: "home/fuest/EnData/data/goinerdata/"
