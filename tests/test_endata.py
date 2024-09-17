@@ -31,4 +31,12 @@ class TestGenerator(unittest.TestCase):
         generated_data = model.generator(noise, month_labels, day_labels).to(opt.device)
         self.assertEqual(
             generated_data.shape, (opt.batch_size, opt.seq_len, opt.input_dim)
-        )  # Check if output shape is as expected
+        )
+
+class TestDataset(unittest.TestCase):
+    """Test Dataset Functionality."""
+
+    def test_reverse_transform(self):
+        pass
+
+    

@@ -3,6 +3,15 @@ input_dim: 2 # or 1 depending on user, but is dynamically set
 noise_dim: 256
 cond_emb_dim: 256
 shuffle: True
+
+categorical_conditioning_vars: # for each desired categorical conditioning variable, add the name and number of categories
+  month: 12
+  day: 7
+  #pv: 2
+  #ev: 2
+numerical_conditioning_vars: # for each desired numerical conditioning variable, add the name
+  - square_footage
+
 diffcharge:
   batch_size: 4
   n_epochs: 1000
@@ -16,6 +25,7 @@ diffcharge:
   beta_end: 0.02
   n_steps: 1000
   schedule: linear # quadratic, cosine
+
 diffusion_ts:
   batch_size: 16
   n_epochs: 1000
@@ -49,6 +59,7 @@ diffusion_ts:
     threshold: 1.0e-1
     threshold_mode: rel
     verbose: false
+
 acgan:
   batch_size: 16
   n_epochs: 200

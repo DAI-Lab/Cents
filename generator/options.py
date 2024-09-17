@@ -35,6 +35,8 @@ class Options:
         self.noise_dim = config.noise_dim
         self.cond_emb_dim = config.cond_emb_dim
         self.shuffle = config.shuffle
+        self.categorical_dims = config.get('categorical_dims', {})
+        self.numerical_dims = config.get('numerical_dims', [])
 
         if model_name == "diffcharge":
             self._load_diffcharge_params(config["diffcharge"])

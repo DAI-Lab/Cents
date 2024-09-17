@@ -1,8 +1,5 @@
-from dataclasses.openpower import OpenPowerDataset
-from dataclasses.pecanstreet import PecanStreetDataset
-
-import torch
-
+from datasets.openpower import OpenPowerDataset
+from datasets.pecanstreet import PecanStreetDataset
 from eval.evaluator import Evaluator
 
 
@@ -31,9 +28,11 @@ def evaluate_single_dataset_model(
 
 
 def main():
-    evaluate_individual_user_models("gpt", include_generation=False)
-    evaluate_individual_user_models("llama", include_generation=False)
-    # evaluate_single_dataset_model("diffusion_ts", "austin")
+    # evaluate_individual_user_models("gpt", include_generation=False)
+    # evaluate_individual_user_models("llama", include_generation=False)
+    # evaluate_single_dataset_model("acgan", "austin")
+    data = PecanStreetDataset(normalize=True, include_generation=False)
+    user_data = data.create_user_dataset(661)
 
 
 if __name__ == "__main__":

@@ -60,17 +60,18 @@ class Evaluator:
             "pred": [],
         }
 
-    def evaluate_for_user(self, user_id: int) -> Tuple[np.ndarray, np.ndarray]:
+    def evaluate_for_user(self, user_id: int, differenced=False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Evaluate the model for a specific user.
 
         Args:
             user_id (int): The ID of the user to evaluate.
+            differenced (bool): Whether to use first-differenced data.
 
         Returns:
             Tuple[np.ndarray, np.ndarray]: Synthetic and real data for the user.
         """
-        user_dataset = self.real_dataset.create_user_dataset(user_id)
+        user_dataset = self.real_dataset.create_user_dataset(user_id, differenced)
         model = self.get_trained_model_for_user(self.model_name, user_dataset)
         user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
         user_writer = SummaryWriter(user_log_dir)

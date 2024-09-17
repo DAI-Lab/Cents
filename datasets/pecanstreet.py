@@ -71,7 +71,7 @@ class PecanStreetDataset(Dataset):
         dataset_info = config["datasets"].get(self.name)
         if not dataset_info:
             raise ValueError(f"No dataset configuration found for {self.name}")
-        return dataset_info["path"], dataset_info["columns"]
+        return dataset_info["path"], dataset_info["data_columns"], dataset_info["metadata_columns"]
 
     def load_and_preprocess_data(
         self,
@@ -82,11 +82,12 @@ class PecanStreetDataset(Dataset):
         Returns:
             Tuple[pd.DataFrame, pd.DataFrame, Dict[int, bool]]: Processed data, metadata, and user flags.
         """
-        path, columns = self._get_dataset_info()
-        metadata = pd.read_csv(f"/{path}metadata.csv")
-        data = self._load_full_data(path, columns)
+        path, data_columns, metadata_columns = self._get_dataset_info()
+        metadata = pd.read_csv(f"/{path}metadata.csv", usecols=metadata_columns)
+        data = self._load_full_data(path, data_columns)
         user_flags = self._set_user_flags(metadata, data)
         data = self._preprocess_data(data)
+        data = pd.merge(data, metadata, on="dataid", how="left")
         return data, metadata, user_flags
 
     def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
@@ -363,24 +364,36 @@ class PecanStreetDataset(Dataset):
         """
         return len(self.data)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         """
         Retrieves a single sample from the dataset.
 
-        Args:
-            idx (int): Index of the sample to retrieve.
-
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing the time series, month, and weekday tensors.
+            Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+                - time_series: The time series data tensor.
+                - categorical_vars: Dictionary of categorical conditioning variables.
+                - numerical_vars: Dictionary of numerical conditioning variables.
         """
         sample = self.data.iloc[idx]
         time_series = sample["timeseries"]
-        month = sample["month"]
-        day = sample["weekday"]
+
+        # Extract conditioning variables
+        categorical_vars = {
+            'month': torch.tensor(sample['month'], dtype=torch.long),
+            'weekday': torch.tensor(sample['weekday'], dtype=torch.long),
+            'building_type': torch.tensor(sample['building_type'], dtype=torch.long),
+            'pv': torch.tensor(sample['pv'], dtype=torch.long),
+            'ev': torch.tensor(sample['ev'], dtype=torch.long),
+        }
+
+        numerical_vars = {
+            'total_square_footage': torch.tensor(sample['total_square_footage'], dtype=torch.long),
+        }
+
         return (
-            torch.tensor(time_series, dtype=torch.float32).to(device),
-            torch.tensor(month, dtype=torch.long).to(device),
-            torch.tensor(day, dtype=torch.long).to(device),
+            torch.tensor(time_series, dtype=torch.float32),
+            categorical_vars,
+            numerical_vars
         )
 
 
@@ -576,3 +589,76 @@ class PecanStreetUserDataset(Dataset):
             torch.tensor(month, dtype=torch.long).to(device),
             torch.tensor(day, dtype=torch.long).to(device),
         )
+    
+def generate_first_differenced_dataset(dataset):
+    """
+    Generate the first differenced dataset from a PecanStreetUserDataset.
+    
+    Args:
+        dataset (PecanStreetUserDataset): The original dataset.
+    
+    Returns:
+        PecanStreetUserDataset: A new dataset with differenced time series.
+    """
+    differenced_data = dataset.data.copy()
+    
+    def difference_timeseries(series):
+        diff = np.diff(series, axis=0)
+        return np.pad(diff, ((1, 0), (0, 0)), mode='constant')
+    
+    differenced_data['timeseries'] = differenced_data['timeseries'].apply(difference_timeseries)
+    
+    # Create a new dataset with the differenced data
+    differenced_dataset = PecanStreetUserDataset(
+        data=differenced_data,
+        stats=dataset.stats, 
+        is_pv_user=dataset.is_pv_user,
+        include_generation=dataset.include_generation,
+        metadata=dataset.metadata
+    )
+    
+    return differenced_dataset
+
+
+def inverse_transform_differenced_dataset(differenced_dataset, original_dataset):
+    """
+    Transform the differenced dataset back to original values.
+    
+    Args:
+        differenced_dataset (PecanStreetUserDataset): The differenced dataset.
+        original_dataset (PecanStreetUserDataset): The original dataset to get the first value.
+    
+    Returns:
+        PecanStreetUserDataset: A new dataset with the original time series reconstructed.
+    """
+    reconstructed_data = differenced_dataset.data.copy()
+    
+    def reconstruct_timeseries(row):
+        diff_series = row['timeseries']
+        original_first_value = original_dataset.data[
+            (original_dataset.data['dataid'] == row['dataid']) &
+            (original_dataset.data['month'] == row['month']) &
+            (original_dataset.data['weekday'] == row['weekday'])
+        ]['timeseries'].iloc[0][0]
+        
+        reconstructed = np.zeros_like(diff_series)
+        reconstructed[0] = original_first_value
+        np.cumsum(diff_series[1:], axis=0, out=reconstructed[1:])
+        reconstructed[1:] += reconstructed[0]
+        
+        return reconstructed
+    
+    reconstructed_data['timeseries'] = reconstructed_data.apply(reconstruct_timeseries, axis=1)
+    
+    reconstructed_dataset = PecanStreetUserDataset(
+        data=reconstructed_data,
+        stats=original_dataset.stats,
+        is_pv_user=original_dataset.is_pv_user,
+        include_generation=original_dataset.include_generation,
+        metadata=original_dataset.metadata
+    )
+    
+    return reconstructed_dataset
+    
+
+    

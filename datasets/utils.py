@@ -25,12 +25,10 @@ def check_inverse_transform(
 
     mse_list: List[float] = []
 
-    # Iterate through the rows and calculate the MSE for each transformed time series
     for idx in range(len(unnormalized_df)):
         unnormalized_timeseries = unnormalized_df.iloc[idx]["timeseries"]
         transformed_timeseries = transformed.iloc[idx]["timeseries"]
 
-        # Ensure the shapes match before calculating MSE
         assert (
             unnormalized_timeseries.shape == transformed_timeseries.shape
         ), "Shape mismatch between transformed and unnormalized timeseries"
@@ -74,7 +72,6 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
     val_size = int(len(dataset) * val_split)
     train_size = len(dataset) - val_size
 
-    # Split the dataset into training and validation sets
     train_dataset = torch.utils.data.Subset(dataset, range(train_size))
     val_dataset = torch.utils.data.Subset(dataset, range(train_size, len(dataset)))
 
