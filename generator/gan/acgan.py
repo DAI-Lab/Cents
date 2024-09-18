@@ -12,6 +12,7 @@ Modifications:
 
 Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
 """
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -76,7 +77,9 @@ class Generator(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, window_length, input_dim, device, base_channels=256, categorical_dims=None):
+    def __init__(
+        self, window_length, input_dim, device, base_channels=256, categorical_dims=None
+    ):
         super(Discriminator, self).__init__()
         self.input_dim = input_dim
         self.window_length = window_length
@@ -105,12 +108,16 @@ class Discriminator(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
         ).to(self.device)
 
-        self.fc_discriminator = nn.Linear((window_length // 8) * base_channels, 1).to(self.device)
+        self.fc_discriminator = nn.Linear((window_length // 8) * base_channels, 1).to(
+            self.device
+        )
 
         # Auxiliary classifiers for each conditioning variable
         self.aux_classifiers = nn.ModuleDict()
         for var_name, num_classes in self.categorical_dims.items():
-            self.aux_classifiers[var_name] = nn.Linear((window_length // 8) * base_channels, num_classes).to(self.device)
+            self.aux_classifiers[var_name] = nn.Linear(
+                (window_length // 8) * base_channels, num_classes
+            ).to(self.device)
 
         self.sigmoid = nn.Sigmoid()
         self.softmax = nn.Softmax(dim=1)
@@ -129,7 +136,6 @@ class Discriminator(nn.Module):
         return validity, aux_outputs
 
 
-
 class ACGAN:
     def __init__(self, opt):
         self.opt = opt
@@ -143,7 +149,7 @@ class ACGAN:
         self.embedding_dim = opt.cond_emb_dim
 
         self.categorical_dims = opt.categorical_dims
-        self.conditioning_dim = self.embedding_dim 
+        self.conditioning_dim = self.embedding_dim
 
         assert (
             self.seq_len % 8 == 0
@@ -153,10 +159,17 @@ class ACGAN:
             self.categorical_dims, self.embedding_dim, self.device
         ).to(self.device)
         self.generator = Generator(
-            self.noise_dim, self.conditioning_dim, self.seq_len, self.input_dim, self.device
+            self.noise_dim,
+            self.conditioning_dim,
+            self.seq_len,
+            self.input_dim,
+            self.device,
         ).to(self.device)
         self.discriminator = Discriminator(
-        self.seq_len, self.input_dim, self.device, categorical_dims=self.categorical_dims
+            self.seq_len,
+            self.input_dim,
+            self.device,
+            categorical_dims=self.categorical_dims,
         ).to(self.device)
 
         self.adversarial_loss = nn.BCELoss().to(self.device)
@@ -170,7 +183,7 @@ class ACGAN:
         )
 
     def train_model(self, dataset):
-        
+
         batch_size = self.opt.batch_size
         num_epoch = self.opt.n_epochs
         train_loader = prepare_dataloader(dataset, batch_size)
@@ -185,7 +198,9 @@ class ACGAN:
                 conditioning_vector = self.conditioning_module(categorical_vars_batch)
 
                 # Generate noise
-                noise = torch.randn((current_batch_size, self.code_size)).to(self.device)
+                noise = torch.randn((current_batch_size, self.code_size)).to(
+                    self.device
+                )
 
                 # Generate fake data
                 generated_time_series = self.generator(noise, conditioning_vector)
@@ -207,10 +222,14 @@ class ACGAN:
                 d_aux_loss_real = 0
                 for var_name in self.categorical_dims.keys():
                     labels = categorical_vars_batch[var_name].to(self.device)
-                    d_aux_loss_real += self.auxiliary_loss(aux_outputs_real[var_name], labels)
+                    d_aux_loss_real += self.auxiliary_loss(
+                        aux_outputs_real[var_name], labels
+                    )
 
                 # Fake data
-                validity_fake, aux_outputs_fake = self.discriminator(generated_time_series.detach())
+                validity_fake, aux_outputs_fake = self.discriminator(
+                    generated_time_series.detach()
+                )
                 d_fake_loss = self.adversarial_loss(
                     validity_fake, torch.zeros_like(validity_fake) * soft_zero
                 )
@@ -219,10 +238,14 @@ class ACGAN:
                 d_aux_loss_fake = 0
                 for var_name in self.categorical_dims.keys():
                     labels = categorical_vars_batch[var_name].to(self.device)
-                    d_aux_loss_fake += self.auxiliary_loss(aux_outputs_fake[var_name], labels)
+                    d_aux_loss_fake += self.auxiliary_loss(
+                        aux_outputs_fake[var_name], labels
+                    )
 
                 # Total discriminator loss
-                d_loss = 0.5 * (d_real_loss + d_fake_loss) + 0.5 * (d_aux_loss_real + d_aux_loss_fake)
+                d_loss = 0.5 * (d_real_loss + d_fake_loss) + 0.5 * (
+                    d_aux_loss_real + d_aux_loss_fake
+                )
                 d_loss.backward()
                 self.optimizer_D.step()
 
@@ -232,11 +255,15 @@ class ACGAN:
                 self.optimizer_G.zero_grad()
 
                 # Generate new conditioning variables
-                gen_categorical_vars = self.sample_random_conditioning_vars(current_batch_size)
+                gen_categorical_vars = self.sample_random_conditioning_vars(
+                    current_batch_size
+                )
                 gen_conditioning_vector = self.conditioning_module(gen_categorical_vars)
 
                 # Generate fake data
-                noise = torch.randn((current_batch_size, self.code_size)).to(self.device)
+                noise = torch.randn((current_batch_size, self.code_size)).to(
+                    self.device
+                )
                 generated_time_series = self.generator(noise, gen_conditioning_vector)
 
                 # Discriminator's response
@@ -258,11 +285,12 @@ class ACGAN:
                 g_loss.backward()
                 self.optimizer_G.step()
 
-
     def sample_random_conditioning_vars(self, batch_size):
         categorical_vars = {}
         for var_name, num_categories in self.categorical_dims.items():
-            categorical_vars[var_name] = torch.randint(0, num_categories, (batch_size,), device=self.device)
+            categorical_vars[var_name] = torch.randint(
+                0, num_categories, (batch_size,), device=self.device
+            )
         return categorical_vars
 
     def generate(self, categorical_vars):

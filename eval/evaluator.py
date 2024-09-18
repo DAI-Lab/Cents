@@ -7,14 +7,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
-    Context_FID,
-    calculate_mmd,
-    calculate_period_bound_mse,
-    dynamic_time_warping_dist,
-    plot_range_with_syn_values,
-    plot_syn_with_closest_real_ts,
-    visualization,
-)
+    Context_FID, calculate_mmd, calculate_period_bound_mse, dynamic_time_warping_dist,
+    plot_range_with_syn_values, plot_syn_with_closest_real_ts, visualization,)
 from eval.predictive_metric import predictive_score_metrics
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
@@ -60,7 +54,9 @@ class Evaluator:
             "pred": [],
         }
 
-    def evaluate_for_user(self, user_id: int, differenced=False) -> Tuple[np.ndarray, np.ndarray]:
+    def evaluate_for_user(
+        self, user_id: int, differenced=False
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Evaluate the model for a specific user.
 
@@ -171,21 +167,19 @@ class Evaluator:
             pd.DataFrame: A DataFrame containing the generated samples.
         """
         random_conditioning_vars = model.sample_random_conditioning_vars(1)
-        
-        for keys, tensor in random_conditioning_vars.items():
-            random_conditioning_vars[keys] = tensor.repeat(num_samples) # repeat tensors according to specified num_samples
 
-        generated_ts = (
-            model.generate(random_conditioning_vars)
-            .cpu()
-            .numpy()
-        )
+        for keys, tensor in random_conditioning_vars.items():
+            random_conditioning_vars[keys] = tensor.repeat(
+                num_samples
+            )  # repeat tensors according to specified num_samples
+
+        generated_ts = model.generate(random_conditioning_vars).cpu().numpy()
 
         if len(generated_ts.shape) == 2:
             generated_ts = generated_ts.reshape(
                 generated_ts.shape[0], -1, generated_ts.shape[1]
             )
-        
+
         syn_ts_df = pd.DataFrame()
 
         for key, tensor in random_conditioning_vars.items():
@@ -208,14 +202,11 @@ class Evaluator:
             pd.DataFrame: A DataFrame containing the generated dataset.
         """
         real_conditioning_vars = {
-            name: torch.tensor(real_user_df[name], dtype=torch.long) for name in model.opt.categorical_dims.keys()
+            name: torch.tensor(real_user_df[name], dtype=torch.long)
+            for name in model.opt.categorical_dims.keys()
         }
-        
-        generated_ts = (
-            model.generate(real_conditioning_vars)
-            .cpu()
-            .numpy()
-        )
+
+        generated_ts = model.generate(real_conditioning_vars).cpu().numpy()
 
         if len(generated_ts.shape) == 2:
             generated_ts = generated_ts.reshape(
@@ -241,7 +232,6 @@ class Evaluator:
 
         self.run_eval(dataset, model, user_writer, None)
 
-
     def evaluate_all_users(self):
         """
         Evaluate the model for all users in the same dataset.
@@ -258,7 +248,6 @@ class Evaluator:
 
         self.run_eval(dataset, model, user_writer, None)
 
-    
     def evaluate_all_non_pv_users(self):
         """
         Evaluate the model for all non-PV users in the dataset.
