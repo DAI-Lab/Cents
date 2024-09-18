@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 class PecanStreetDataManager:
     def __init__(
         self,
@@ -30,7 +31,10 @@ class PecanStreetDataManager:
         self.threshold = threshold
         self.include_generation = include_generation
         self.normalization_method = normalization_method.lower()
-        assert self.normalization_method in ['group', 'global'], "normalization_method must be 'group' or 'global'"
+        assert self.normalization_method in [
+            "group",
+            "global",
+        ], "normalization_method must be 'group' or 'global'"
         self.name = "pecanstreet"
         self.stats = {}
         self.data, self.metadata, self.user_flags = self.load_and_preprocess_data()
@@ -55,7 +59,11 @@ class PecanStreetDataManager:
         config_dir = os.path.dirname(self.config_path)
         dataset_path = os.path.join(config_dir, dataset_info["path"])
 
-        return dataset_path, dataset_info["data_columns"], dataset_info["metadata_columns"]
+        return (
+            dataset_path,
+            dataset_info["data_columns"],
+            dataset_info["metadata_columns"],
+        )
 
     def load_and_preprocess_data(
         self,
@@ -137,12 +145,12 @@ class PecanStreetDataManager:
         )
 
         if self.normalize:
-            if self.normalization_method == 'group':
+            if self.normalization_method == "group":
                 self.stats["grid"] = self._calculate_and_store_statistics_group(
                     filtered_data, "grid"
                 )
                 filtered_data = self._apply_normalization_group(filtered_data, "grid")
-            elif self.normalization_method == 'global':
+            elif self.normalization_method == "global":
                 self.stats["grid"] = self._calculate_and_store_statistics_global(
                     filtered_data, "grid"
                 )
@@ -161,7 +169,9 @@ class PecanStreetDataManager:
             by=["dataid", "month", "weekday"]
         )
 
-    def _calculate_and_store_statistics_group(self, data: pd.DataFrame, column: str) -> Dict:
+    def _calculate_and_store_statistics_group(
+        self, data: pd.DataFrame, column: str
+    ) -> Dict:
         """
         Calculates and stores statistical data for group normalization, such as mean and standard deviation.
 
@@ -184,7 +194,9 @@ class PecanStreetDataManager:
         )
         return grouped_stats.to_dict(orient="index")
 
-    def _apply_normalization_group(self, data: pd.DataFrame, column: str) -> pd.DataFrame:
+    def _apply_normalization_group(
+        self, data: pd.DataFrame, column: str
+    ) -> pd.DataFrame:
         """
         Applies group normalization to the data.
 
@@ -208,7 +220,9 @@ class PecanStreetDataManager:
         data[column] = data.apply(normalize, axis=1)
         return data
 
-    def _calculate_and_store_statistics_global(self, data: pd.DataFrame, column: str) -> Dict:
+    def _calculate_and_store_statistics_global(
+        self, data: pd.DataFrame, column: str
+    ) -> Dict:
         """
         Calculates and stores statistical data for global normalization.
 
@@ -224,7 +238,9 @@ class PecanStreetDataManager:
         std = np.std(all_values)
         return {"mean": mean, "std": std}
 
-    def _apply_normalization_global(self, data: pd.DataFrame, column: str) -> pd.DataFrame:
+    def _apply_normalization_global(
+        self, data: pd.DataFrame, column: str
+    ) -> pd.DataFrame:
         """
         Applies global normalization to the data.
 
@@ -267,12 +283,16 @@ class PecanStreetDataManager:
         solar_data = solar_data[solar_data["solar"].apply(len) == 96]
 
         if self.normalize:
-            if self.normalization_method == 'group':
-                valid_stats = self._calculate_and_store_statistics_group(solar_data, "solar")
+            if self.normalization_method == "group":
+                valid_stats = self._calculate_and_store_statistics_group(
+                    solar_data, "solar"
+                )
                 self.stats["solar"] = valid_stats
                 solar_data = self._apply_normalization_group(solar_data, "solar")
-            elif self.normalization_method == 'global':
-                valid_stats = self._calculate_and_store_statistics_global(solar_data, "solar")
+            elif self.normalization_method == "global":
+                valid_stats = self._calculate_and_store_statistics_global(
+                    solar_data, "solar"
+                )
                 self.stats["solar"] = valid_stats
                 solar_data = self._apply_normalization_global(solar_data, "solar")
 
@@ -349,13 +369,13 @@ class PecanStreetDataManager:
             raise ValueError(f"User ID {user_id} not found in the dataset.")
         user_data = self.data[self.data["dataid"] == user_id].copy()
         return PecanStreetDataset(
-            user_data,
-            self.stats,
-            self.user_flags[user_id],
-            self.include_generation,
-            self.metadata,
+            data=user_data,
+            stats=self.stats,
+            is_pv_user=self.user_flags[user_id],
+            include_generation=False,
+            metadata=self.metadata,
+            normalization_method=self.normalization_method,
         )
-    
 
     def create_non_pv_user_dataset(self) -> "PecanStreetDataset":
         """
@@ -373,9 +393,9 @@ class PecanStreetDataManager:
             is_pv_user=False,
             include_generation=False,
             metadata=self.metadata,
+            normalization_method=self.normalization_method,
         )
-    
-    
+
     def create_all_pv_user_dataset(self) -> "PecanStreetDataset":
         """
         Creates a dataset for all users with solar generation data (PV users).
@@ -392,6 +412,7 @@ class PecanStreetDataManager:
             is_pv_user=True,
             include_generation=True,
             metadata=self.metadata,
+            normalization_method=self.normalization_method,
         )
 
     def create_all_user_dataset(self) -> "PecanStreetDataset":
@@ -401,7 +422,9 @@ class PecanStreetDataManager:
         Returns:
             PecanStreetDataset: The dataset containing all non-PV users.
         """
-        assert self.include_generation == False, "Include_generation must be set to False when working with the entire dataset!"
+        assert (
+            self.include_generation == False
+        ), "Include_generation must be set to False when working with the entire dataset!"
 
         return PecanStreetDataset(
             data=self.data,
@@ -409,6 +432,7 @@ class PecanStreetDataManager:
             is_pv_user=False,
             include_generation=False,
             metadata=self.metadata,
+            normalization_method=self.normalization_method,
         )
 
 
@@ -443,7 +467,10 @@ class PecanStreetDataset(Dataset):
         self.include_generation = include_generation
         self.metadata = metadata
         self.normalization_method = normalization_method.lower()
-        assert self.normalization_method in ['group', 'global'], "normalization_method must be 'group' or 'global'"
+        assert self.normalization_method in [
+            "group",
+            "global",
+        ], "normalization_method must be 'group' or 'global'"
 
     def validate_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -480,15 +507,17 @@ class PecanStreetDataset(Dataset):
         Returns:
             np.ndarray: The original (un-normalized) time series data.
         """
-        if self.normalization_method == 'group':
-            stats = self.stats[colname].get((row["dataid"], row["month"], row["weekday"]))
+        if self.normalization_method == "group":
+            stats = self.stats[colname].get(
+                (row["dataid"], row["month"], row["weekday"])
+            )
             if not stats:
                 raise ValueError(
                     f"No stats found for {colname} with dataid={row['dataid']}, month={row['month']}, weekday={row['weekday']}"
                 )
             mean = stats["mean"]
             std = stats["std"]
-        elif self.normalization_method == 'global':
+        elif self.normalization_method == "global":
             stats = self.stats[colname]
             mean = stats["mean"]
             std = stats["std"]
@@ -568,9 +597,11 @@ class PecanStreetDataset(Dataset):
         Returns:
             int: Number of samples in the dataset.
         """
-        return len(self.data)   
+        return len(self.data)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+    def __getitem__(
+        self, idx: int
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
         """
         Retrieves a single sample from the dataset.
 
@@ -584,89 +615,88 @@ class PecanStreetDataset(Dataset):
 
         # Extract conditioning variables
         conditioning_vars = {
-            'month': torch.tensor(sample['month'], dtype=torch.long),
-            'weekday': torch.tensor(sample['weekday'], dtype=torch.long),
-            'building_type': torch.tensor(sample['building_type'], dtype=torch.long),
-            'car1': torch.tensor(sample['car1'], dtype=torch.long),
-            'city': torch.tensor(sample['city'], dtype=torch.long),
-            'state': torch.tensor(sample['state'], dtype=torch.long),
-            'solar': torch.tensor(sample['solar'], dtype=torch.long)
+            "month": torch.tensor(sample["month"], dtype=torch.long),
+            "weekday": torch.tensor(sample["weekday"], dtype=torch.long),
+            "building_type": torch.tensor(sample["building_type"], dtype=torch.long),
+            "car1": torch.tensor(sample["car1"], dtype=torch.long),
+            "city": torch.tensor(sample["city"], dtype=torch.long),
+            "state": torch.tensor(sample["state"], dtype=torch.long),
+            "solar": torch.tensor(sample["solar"], dtype=torch.long),
         }
 
-        return (
-            torch.tensor(time_series, dtype=torch.float32),
-            conditioning_vars
-        )
-    
+        return (torch.tensor(time_series, dtype=torch.float32), conditioning_vars)
+
+
 def generate_first_differenced_dataset(dataset):
     """
     Generate the first differenced dataset from a PecanStreetDataset.
-    
+
     Args:
         dataset (PecanStreetDataset): The original dataset.
-    
+
     Returns:
         PecanStreetDataset: A new dataset with differenced time series.
     """
     differenced_data = dataset.data.copy()
-    
+
     def difference_timeseries(series):
         diff = np.diff(series, axis=0)
-        return np.pad(diff, ((1, 0), (0, 0)), mode='constant')
-    
-    differenced_data['timeseries'] = differenced_data['timeseries'].apply(difference_timeseries)
-    
+        return np.pad(diff, ((1, 0), (0, 0)), mode="constant")
+
+    differenced_data["timeseries"] = differenced_data["timeseries"].apply(
+        difference_timeseries
+    )
+
     # Create a new dataset with the differenced data
     differenced_dataset = PecanStreetDataset(
         data=differenced_data,
-        stats=dataset.stats, 
+        stats=dataset.stats,
         is_pv_user=dataset.is_pv_user,
         include_generation=dataset.include_generation,
-        metadata=dataset.metadata
+        metadata=dataset.metadata,
     )
-    
+
     return differenced_dataset
 
 
 def inverse_transform_differenced_dataset(differenced_dataset, original_dataset):
     """
     Transform the differenced dataset back to original values.
-    
+
     Args:
         differenced_dataset (PecanStreetDataset): The differenced dataset.
         original_dataset (PecanStreetDataset): The original dataset to get the first value.
-    
+
     Returns:
         PecanStreetDataset: A new dataset with the original time series reconstructed.
     """
     reconstructed_data = differenced_dataset.data.copy()
-    
+
     def reconstruct_timeseries(row):
-        diff_series = row['timeseries']
+        diff_series = row["timeseries"]
         original_first_value = original_dataset.data[
-            (original_dataset.data['dataid'] == row['dataid']) &
-            (original_dataset.data['month'] == row['month']) &
-            (original_dataset.data['weekday'] == row['weekday'])
-        ]['timeseries'].iloc[0][0]
-        
+            (original_dataset.data["dataid"] == row["dataid"])
+            & (original_dataset.data["month"] == row["month"])
+            & (original_dataset.data["weekday"] == row["weekday"])
+        ]["timeseries"].iloc[0][0]
+
         reconstructed = np.zeros_like(diff_series)
         reconstructed[0] = original_first_value
         np.cumsum(diff_series[1:], axis=0, out=reconstructed[1:])
         reconstructed[1:] += reconstructed[0]
-        
+
         return reconstructed
-    
-    reconstructed_data['timeseries'] = reconstructed_data.apply(reconstruct_timeseries, axis=1)
-    
+
+    reconstructed_data["timeseries"] = reconstructed_data.apply(
+        reconstruct_timeseries, axis=1
+    )
+
     reconstructed_dataset = PecanStreetDataset(
         data=reconstructed_data,
         stats=original_dataset.stats,
         is_pv_user=original_dataset.is_pv_user,
         include_generation=original_dataset.include_generation,
-        metadata=original_dataset.metadata
+        metadata=original_dataset.metadata,
     )
-    
-    return reconstructed_dataset
-    
 
-    
+    return reconstructed_dataset

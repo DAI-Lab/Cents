@@ -30,7 +30,6 @@ from generator.conditioning import ConditioningModule
 from generator.diffusion_ts.model_utils import default, extract, identity
 from generator.diffusion_ts.transformer import Transformer
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -68,7 +67,9 @@ class Diffusion_TS(nn.Module):
         self.embedding_dim = opt.cond_emb_dim
         self.categorical_dims = opt.categorical_dims
 
-        self.conditioning_module = ConditioningModule(self.categorical_dims, self.embedding_dim, self.device)
+        self.conditioning_module = ConditioningModule(
+            self.categorical_dims, self.embedding_dim, self.device
+        )
         self.fc = nn.Linear(self.input_dim + self.embedding_dim, self.input_dim)
 
         # Update model to accept the new input dimension
@@ -190,7 +191,9 @@ class Diffusion_TS(nn.Module):
         if conditioning_vars is not None:
             # Obtain conditioning vector from the conditioning module
             conditioning_vector = self.conditioning_module(conditioning_vars)
-            conditioning_vector = conditioning_vector.unsqueeze(1).repeat(1, self.seq_len, 1)
+            conditioning_vector = conditioning_vector.unsqueeze(1).repeat(
+                1, self.seq_len, 1
+            )
             x = torch.cat([x, conditioning_vector], dim=-1)
         trend, season = self.model(x, t, padding_masks=padding_masks)
         model_output = trend + season
@@ -208,14 +211,19 @@ class Diffusion_TS(nn.Module):
     def p_sample(self, x, t: int, conditioning_vars, clip_denoised=True):
         batched_times = torch.full((x.shape[0],), t, device=x.device, dtype=torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
-            x=x, t=batched_times, conditioning_vars=conditioning_vars, clip_denoised=clip_denoised
+            x=x,
+            t=batched_times,
+            conditioning_vars=conditioning_vars,
+            clip_denoised=clip_denoised,
         )
         noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img, x_start
 
     def p_mean_variance(self, x, t, conditioning_vars, clip_denoised=True):
-        _, x_start = self.model_predictions(x, t, conditioning_vars, clip_x_start=clip_denoised)
+        _, x_start = self.model_predictions(
+            x, t, conditioning_vars, clip_x_start=clip_denoised
+        )
         if clip_denoised:
             x_start.clamp_(-1.0, 1.0)
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
@@ -316,7 +324,9 @@ class Diffusion_TS(nn.Module):
             target = x_start
 
         x = self.q_sample(x_start=x_start, t=t, noise=noise)
-        model_out = self.output(x, t, padding_masks, conditioning_vars=conditioning_vars)
+        model_out = self.output(
+            x, t, padding_masks, conditioning_vars=conditioning_vars
+        )
 
         train_loss = self.loss_fn(model_out, target, reduction="none")
 
@@ -336,17 +346,26 @@ class Diffusion_TS(nn.Module):
 
     def forward(self, x, conditioning_vars=None, **kwargs):
         b, seq_len, input_dim = x.shape
-        assert seq_len == self.seq_len, f"Expected sequence length {self.seq_len}, got {seq_len}"
-        assert input_dim == self.input_dim, f"Expected input dimension {self.input_dim}, got {input_dim}"
+        assert (
+            seq_len == self.seq_len
+        ), f"Expected sequence length {self.seq_len}, got {seq_len}"
+        assert (
+            input_dim == self.input_dim
+        ), f"Expected input dimension {self.input_dim}, got {input_dim}"
         t = torch.randint(0, self.num_timesteps, (b,), device=self.device).long()
-        return self._train_loss(x_start=x, t=t, conditioning_vars=conditioning_vars, **kwargs)
+        return self._train_loss(
+            x_start=x, t=t, conditioning_vars=conditioning_vars, **kwargs
+        )
 
     def train_model(self, train_dataset):
         self.to(device)
 
         # Create DataLoader
         train_loader = DataLoader(
-            train_dataset, batch_size=self.opt.batch_size, shuffle=self.opt.shuffle, drop_last=True
+            train_dataset,
+            batch_size=self.opt.batch_size,
+            shuffle=self.opt.shuffle,
+            drop_last=True,
         )
 
         # Create necessary directories
@@ -368,11 +387,15 @@ class Diffusion_TS(nn.Module):
         # Training loop
         for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
             total_loss = 0.0
-            for i, (time_series_batch, conditioning_vars_batch) in enumerate(train_loader):
+            for i, (time_series_batch, conditioning_vars_batch) in enumerate(
+                train_loader
+            ):
                 time_series_batch = time_series_batch.to(device)
                 # Move conditioning_vars to device
                 for key in conditioning_vars_batch:
-                    conditioning_vars_batch[key] = conditioning_vars_batch[key].to(device)
+                    conditioning_vars_batch[key] = conditioning_vars_batch[key].to(
+                        device
+                    )
 
                 loss = self(
                     time_series_batch, conditioning_vars=conditioning_vars_batch
