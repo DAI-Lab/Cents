@@ -62,9 +62,7 @@ class Evaluator:
             "pred": [],
         }
 
-    def evaluate_for_user(
-        self, user_id: int, differenced=False
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def evaluate_for_user(self, user_id: int) -> Tuple[np.ndarray, np.ndarray]:
         """
         Evaluate the model for a specific user.
 
@@ -75,7 +73,7 @@ class Evaluator:
         Returns:
             Tuple[np.ndarray, np.ndarray]: Synthetic and real data for the user.
         """
-        user_dataset = self.real_dataset.create_user_dataset(user_id, differenced)
+        user_dataset = self.real_dataset.create_user_dataset(user_id)
         model = self.get_trained_model_for_user(self.model_name, user_dataset)
         user_log_dir = f"{self.writer.log_dir}/user_{user_id}"
         user_writer = SummaryWriter(user_log_dir)
@@ -148,9 +146,10 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            syn_user_data, real_user_data = self.evaluate_for_user(user_id)
-            syn_data.append(syn_user_data)
-            real_data.append(real_user_data)
+            if user_id == 3687:
+                syn_user_data, real_user_data = self.evaluate_for_user(user_id)
+                syn_data.append(syn_user_data)
+                real_data.append(real_user_data)
 
         syn_data = np.expand_dims(np.concatenate(syn_data, axis=0), axis=-1)
         real_data = np.expand_dims(np.concatenate(real_data, axis=0), axis=-1)

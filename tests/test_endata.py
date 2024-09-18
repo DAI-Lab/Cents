@@ -8,9 +8,12 @@ import unittest
 from typing import List
 
 import numpy as np
+import torch
 from sklearn.metrics import mean_squared_error
 
 from datasets.pecanstreet import PecanStreetDataManager
+from generator.gan import ACGAN
+from generator.options import Options
 
 TEST_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "test_data_config.yaml"
@@ -18,10 +21,24 @@ TEST_CONFIG_PATH = os.path.join(
 
 
 class TestGenerator(unittest.TestCase):
-    """Test ACGAN Generator."""
+    """Test Generators."""
 
-    def test_generator_output_shape(self):
-        pass
+    def test_acgan_output_shape(self):
+
+        opt = Options(model_name="acgan")
+        opt.device = "cpu"  # Use CPU for testing purposes
+        generator = ACGAN(opt)
+
+        batch_size = 16
+        noise_dim = opt.noise_dim
+        noise = torch.randn(batch_size, noise_dim).to(opt.device)
+
+        generator.eval()
+        with torch.no_grad():
+            samples = generator(noise, labels)
+
+        expected_shape = (batch_size, opt.seq_len, opt.input_dim)
+        self.assertEqual(samples.shape, expected_shape)
 
 
 class TestDataset(unittest.TestCase):
@@ -31,6 +48,11 @@ class TestDataset(unittest.TestCase):
         data_manager = PecanStreetDataManager(
             config_path=TEST_CONFIG_PATH, include_generation=False
         )
+
+        data_manager = PecanStreetDataManager(
+            config_path=TEST_CONFIG_PATH, include_generation=True
+        )
+
         assert data_manager.data.shape[0] > 0, "Dataframe not loaded correctly"
         assert "timeseries" in data_manager.data.columns
 
