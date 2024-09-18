@@ -265,10 +265,10 @@ class ACGAN:
             categorical_vars[var_name] = torch.randint(0, num_categories, (batch_size,), device=self.device)
         return categorical_vars
 
-    def generate(self, categorical_vars, numerical_vars):
+    def generate(self, categorical_vars):
         num_samples = next(iter(categorical_vars.values())).shape[0]
         noise = torch.randn((num_samples, self.code_size)).to(self.device)
-        conditioning_vector = self.conditioning_module(categorical_vars, numerical_vars)
+        conditioning_vector = self.conditioning_module(categorical_vars)
         with torch.no_grad():
             generated_data = self.generator(noise, conditioning_vector)
         return generated_data

@@ -157,7 +157,7 @@ class Evaluator:
         self._log_final_results()
 
     def generate_samples_for_eval(
-        self, dataid: int, model: Any, month: int, weekday: int, num_samples: int
+        self, dataid: int, model: Any, num_samples: int
     ) -> pd.DataFrame:
         """
         Generate synthetic samples for evaluation.
@@ -165,18 +165,18 @@ class Evaluator:
         Args:
             dataid (int): The ID of the data point.
             model: The trained model to generate samples.
-            month (int): The month for which to generate samples.
-            weekday (int): The weekday for which to generate samples.
             num_samples (int): The number of samples to generate.
 
         Returns:
             pd.DataFrame: A DataFrame containing the generated samples.
         """
-        month_labels = torch.tensor([month] * num_samples).to(device)
-        day_labels = torch.tensor([weekday] * num_samples).to(device)
+        random_conditioning_vars = model.sample_random_conditioning_vars(1)
+        
+        for keys, tensor in random_conditioning_vars.items():
+            random_conditioning_vars[keys] = tensor.repeat(num_samples) # repeat tensors according to specified num_samples
 
         generated_ts = (
-            model.generate(month_labels=month_labels, day_labels=day_labels)
+            model.generate(random_conditioning_vars)
             .cpu()
             .numpy()
         )
@@ -185,13 +185,12 @@ class Evaluator:
             generated_ts = generated_ts.reshape(
                 generated_ts.shape[0], -1, generated_ts.shape[1]
             )
+        
+        syn_ts_df = pd.DataFrame()
 
-        syn_ts = [
-            (month, weekday, None, generated_ts[idx]) for idx in range(num_samples)
-        ]
-
-        columns = ["month", "weekday", "date_day", "timeseries"]
-        syn_ts_df = pd.DataFrame(syn_ts, columns=columns)
+        for key, tensor in random_conditioning_vars.items():
+            syn_ts_df[key] = tensor.cpu().numpy().flatten()
+        syn_ts_df["timeseries"] = list(generated_ts)
         syn_ts_df["dataid"] = dataid
         return syn_ts_df
 
@@ -208,11 +207,12 @@ class Evaluator:
         Returns:
             pd.DataFrame: A DataFrame containing the generated dataset.
         """
-        month_labels = torch.tensor(real_user_df["month"].values).to(device)
-        day_labels = torch.tensor(real_user_df["weekday"].values).to(device)
-
+        real_conditioning_vars = {
+            name: torch.tensor(real_user_df[name], dtype=torch.long) for name in model.opt.categorical_dims.keys()
+        }
+        
         generated_ts = (
-            model.generate(month_labels=month_labels, day_labels=day_labels)
+            model.generate(real_conditioning_vars)
             .cpu()
             .numpy()
         )
@@ -222,13 +222,9 @@ class Evaluator:
                 generated_ts.shape[0], -1, generated_ts.shape[1]
             )
 
-        syn_ts = [
-            (row["month"], row["weekday"], row["date_day"], generated_ts[idx])
-            for idx, (_, row) in enumerate(real_user_df.iterrows())
-        ]
-
-        columns = ["month", "weekday", "date_day", "timeseries"]
-        return pd.DataFrame(syn_ts, columns=columns)
+        syn_ts = real_user_df.copy().reset_index()
+        syn_ts["timeseries"] = list(generated_ts)
+        return syn_ts
 
     def evaluate_all_pv_users(self):
         """
@@ -245,11 +241,12 @@ class Evaluator:
 
         self.run_eval(dataset, model, user_writer, None)
 
+
     def evaluate_all_users(self):
         """
         Evaluate the model for all users in the same dataset.
         """
-        dataset = self.real_dataset
+        dataset = self.real_dataset.create_all_user_dataset()
         dataset.is_pv_user = False
         model = self.get_trained_model_for_user(self.model_name, dataset)
         user_log_dir = f"{self.writer.log_dir}/all_users"
@@ -437,27 +434,24 @@ class Evaluator:
             model (Any): The trained model.
             writer (SummaryWriter): TensorBoard writer for logging visualizations.
         """
-        sample_month = real_user_data.month.sample(1).values[0]
-        sample_weekday = real_user_data.weekday.sample(1).values[0]
-
         samples = self.generate_samples_for_eval(
             real_user_data["dataid"].iloc[0],
             model,
-            sample_month,
-            sample_weekday,
             num_samples=100,
         )
         samples = dataset.inverse_transform(samples)
+        month = samples.iloc[0]["month"]
+        weekday = samples.iloc[0]["weekday"]
 
         # Visualization 1: Plot range with synthetic values
         range_plot = plot_range_with_syn_values(
-            real_user_data_inv, samples, sample_month, sample_weekday
+            real_user_data_inv, samples, month, weekday
         )
         writer.add_figure("Visualizations/Range_Plot", range_plot)
 
         # Visualization 2: Plot closest real signals with synthetic values
         closest_plot = plot_syn_with_closest_real_ts(
-            real_user_data_inv, samples, sample_month, sample_weekday
+            real_user_data_inv, samples, month, weekday
         )
         writer.add_figure("Visualizations/Closest_Real_TS", closest_plot)
 
