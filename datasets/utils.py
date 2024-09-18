@@ -1,9 +1,11 @@
-from typing import List, Tuple
+from typing import List
+from typing import Tuple
 
 import numpy as np
 import torch
 from sklearn.metrics import mean_squared_error
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
 
 
 def check_inverse_transform(

@@ -1,6 +1,7 @@
 import os
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
+from omegaconf import OmegaConf
 
 
 def get_config(cfg: DictConfig) -> DictConfig:

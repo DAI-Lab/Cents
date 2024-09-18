@@ -27,7 +27,9 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from generator.conditioning import ConditioningModule
-from generator.diffusion_ts.model_utils import default, extract, identity
+from generator.diffusion_ts.model_utils import default
+from generator.diffusion_ts.model_utils import extract
+from generator.diffusion_ts.model_utils import identity
 from generator.diffusion_ts.transformer import Transformer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

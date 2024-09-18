@@ -7,7 +7,8 @@ import numpy as np
 import torch
 from openai import OpenAI
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM
+from transformers import AutoTokenizer
 
 from generator.llm.preprocessing import Signal2String
 
