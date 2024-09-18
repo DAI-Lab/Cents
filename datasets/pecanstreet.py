@@ -22,7 +22,7 @@ class PecanStreetDataManager:
     def __init__(
         self,
         geography: str = None,
-        config_path: str = "config/config.yaml",
+        config_path: str = "config/data_config.yaml",
         normalize: bool = False,
         threshold: Union[Tuple[float, float], None] = None,
         include_generation: bool = False,

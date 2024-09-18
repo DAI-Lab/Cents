@@ -64,10 +64,10 @@ coverage: ## check code coverage quickly with the default Python
 	coverage html
 	$(BROWSER) htmlcov/index.html
 
-.PHONY: docs
-docs: clean-docs ## generate Sphinx HTML documentation, including API docs
-	sphinx-apidoc --separate --no-toc -o docs/api/ endata
-	$(MAKE) -C docs html
+# .PHONY: docs
+# docs: clean-docs ## generate Sphinx HTML documentation, including API docs
+# 	sphinx-apidoc --separate --no-toc -o docs/api/ endata
+# 	$(MAKE) -C docs html
 
 .PHONY: view-docs
 view-docs: docs ## view docs in browser
