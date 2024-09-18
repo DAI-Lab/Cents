@@ -26,8 +26,10 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
+from generator.conditioning import ConditioningModule
 from generator.diffusion_ts.model_utils import default, extract, identity
 from generator.diffusion_ts.transformer import Transformer
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -62,15 +64,16 @@ class Diffusion_TS(nn.Module):
         self.seq_len = opt.seq_len
         self.input_dim = opt.input_dim
         self.ff_weight = default(opt.reg_weight, math.sqrt(opt.seq_len) / 5)
+        self.device = opt.device
+        self.embedding_dim = opt.cond_emb_dim
+        self.categorical_dims = opt.categorical_dims
 
-        # Embedding layers for month and weekday
-        self.month_embed = nn.Embedding(12, opt.cond_emb_dim)
-        self.weekday_embed = nn.Embedding(7, opt.cond_emb_dim)
+        self.conditioning_module = ConditioningModule(self.categorical_dims, self.embedding_dim, self.device)
+        self.fc = nn.Linear(self.input_dim + self.embedding_dim, self.input_dim)
 
-        self.fc = nn.Linear(opt.input_dim + opt.d_model * 2, opt.input_dim)
-
+        # Update model to accept the new input dimension
         self.model = Transformer(
-            n_feat=opt.input_dim + opt.d_model * 2,
+            n_feat=self.input_dim + self.embedding_dim,
             n_channel=opt.seq_len,
             n_layer_enc=opt.n_layer_enc,
             n_layer_dec=opt.n_layer_dec,
@@ -183,27 +186,45 @@ class Diffusion_TS(nn.Module):
         )
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def output(self, x, t, padding_masks=None, weekday=None, month=None):
-        if month is not None and weekday is not None:
-            month_emb = (
-                self.month_embed(month)
-                .unsqueeze(1)
-                .repeat(1, self.seq_len, 1)
-                .to(device)
-            )
-            weekday_emb = (
-                self.weekday_embed(weekday)
-                .unsqueeze(1)
-                .repeat(1, self.seq_len, 1)
-                .to(device)
-            )
-            x = torch.cat([x, month_emb, weekday_emb], dim=-1)
+    def output(self, x, t, padding_masks=None, conditioning_vars=None):
+        if conditioning_vars is not None:
+            # Obtain conditioning vector from the conditioning module
+            conditioning_vector = self.conditioning_module(conditioning_vars)
+            conditioning_vector = conditioning_vector.unsqueeze(1).repeat(1, self.seq_len, 1)
+            x = torch.cat([x, conditioning_vector], dim=-1)
         trend, season = self.model(x, t, padding_masks=padding_masks)
         model_output = trend + season
         return self.fc(model_output)
 
+    def model_predictions(self, x, t, conditioning_vars, clip_x_start=False):
+        maybe_clip = (
+            partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
+        )
+        x_start = self.output(x, t, conditioning_vars=conditioning_vars)
+        x_start = maybe_clip(x_start)
+        pred_noise = self.predict_noise_from_start(x, t, x_start)
+        return pred_noise, x_start
+
+    def p_sample(self, x, t: int, conditioning_vars, clip_denoised=True):
+        batched_times = torch.full((x.shape[0],), t, device=x.device, dtype=torch.long)
+        model_mean, _, model_log_variance, x_start = self.p_mean_variance(
+            x=x, t=batched_times, conditioning_vars=conditioning_vars, clip_denoised=clip_denoised
+        )
+        noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
+        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
+        return pred_img, x_start
+
+    def p_mean_variance(self, x, t, conditioning_vars, clip_denoised=True):
+        _, x_start = self.model_predictions(x, t, conditioning_vars, clip_x_start=clip_denoised)
+        if clip_denoised:
+            x_start.clamp_(-1.0, 1.0)
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
+            x_start=x_start, x_t=x, t=t
+        )
+        return model_mean, posterior_variance, posterior_log_variance, x_start
+
     @torch.no_grad()
-    def sample(self, shape, labels):
+    def sample(self, shape, conditioning_vars):
         device = self.betas.device
         img = torch.randn(shape, device=device)
         for t in tqdm(
@@ -211,11 +232,11 @@ class Diffusion_TS(nn.Module):
             desc="sampling loop time step",
             total=self.num_timesteps,
         ):
-            img, _ = self.p_sample(img, t, labels)
+            img, _ = self.p_sample(img, t, conditioning_vars)
         return img
 
     @torch.no_grad()
-    def fast_sample(self, shape, labels, clip_denoised=True):
+    def fast_sample(self, shape, conditioning_vars, clip_denoised=True):
         batch, device, total_timesteps, sampling_timesteps, eta = (
             shape[0],
             self.betas.device,
@@ -224,19 +245,15 @@ class Diffusion_TS(nn.Module):
             self.eta,
         )
 
-        # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)
-
         times = list(reversed(times.int().tolist()))
-        time_pairs = list(
-            zip(times[:-1], times[1:])
-        )  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
+        time_pairs = list(zip(times[:-1], times[1:]))
         img = torch.randn(shape, device=device)
 
         for time, time_next in tqdm(time_pairs, desc="sampling loop time step"):
             time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
-            pred_noise, x_start, *_ = self.model_predictions(
-                img, time_cond, labels, clip_x_start=clip_denoised
+            pred_noise, x_start = self.model_predictions(
+                img, time_cond, conditioning_vars, clip_x_start=clip_denoised
             )
 
             if time_next < 0:
@@ -254,46 +271,20 @@ class Diffusion_TS(nn.Module):
 
         return img
 
-    def add_conditioning(self, x, month, weekday):
-        month_emb = self.month_embed(month).unsqueeze(1).repeat(1, self.seq_len, 1)
-        weekday_emb = (
-            self.weekday_embed(weekday).unsqueeze(1).repeat(1, self.seq_len, 1)
-        )
-        return torch.cat([x, month_emb, weekday_emb], dim=-1)
+    def generate(self, conditioning_vars):
+        num_samples = len(conditioning_vars[list(conditioning_vars.keys())[0]])
+        shape = (num_samples, self.seq_len, self.input_dim)
+        return self._generate(shape, conditioning_vars)
 
-    def model_predictions(self, x, t, labels, clip_x_start=False):
-        weekday_labels, month_labels = labels
-        conditioned_x = self.add_conditioning(x, month_labels, weekday_labels)
-        maybe_clip = (
-            partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
-        )
-        x_start = self.output(conditioned_x, t)
-        x_start = maybe_clip(x_start)
-        pred_noise = self.predict_noise_from_start(x, t, x_start)
-        return pred_noise, x_start
-
-    def p_sample(self, x, t: int, labels, clip_denoised=True):
-        batched_times = torch.full((x.shape[0],), t, device=x.device, dtype=torch.long)
-        model_mean, _, model_log_variance, x_start = self.p_mean_variance(
-            x=x, t=batched_times, labels=labels, clip_denoised=clip_denoised
-        )
-        noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
-        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
-        return pred_img, x_start
-
-    def p_mean_variance(self, x, t, labels, clip_denoised=True):
-        _, x_start = self.model_predictions(x, t, labels)
-        if clip_denoised:
-            x_start.clamp_(-1.0, 1.0)
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
-            x_start=x_start, x_t=x, t=t
-        )
-        return model_mean, posterior_variance, posterior_log_variance, x_start
-
-    def generate_mts(self, batch_size=16):
-        input_dim, seq_len = self.self.input_dim, self.seq_len
-        sample_fn = self.fast_sample if self.fast_sampling else self.sample
-        return sample_fn((batch_size, seq_len, input_dim))
+    def _generate(self, shape, conditioning_vars):
+        self.eval()
+        with torch.no_grad():
+            samples = (
+                self.fast_sample(shape, conditioning_vars)
+                if self.fast_sampling
+                else self.sample(shape, conditioning_vars)
+            )
+            return samples
 
     @property
     def loss_fn(self):
@@ -318,15 +309,14 @@ class Diffusion_TS(nn.Module):
         target=None,
         noise=None,
         padding_masks=None,
-        weekday=None,
-        month=None,
+        conditioning_vars=None,
     ):
         noise = default(noise, lambda: torch.randn_like(x_start))
         if target is None:
             target = x_start
 
-        x = self.q_sample(x_start=x_start, t=t, noise=noise)  # noise sample
-        model_out = self.output(x, t, padding_masks, weekday=weekday, month=month)
+        x = self.q_sample(x_start=x_start, t=t, noise=noise)
+        model_out = self.output(x, t, padding_masks, conditioning_vars=conditioning_vars)
 
         train_loss = self.loss_fn(model_out, target, reduction="none")
 
@@ -344,48 +334,19 @@ class Diffusion_TS(nn.Module):
         train_loss = train_loss * extract(self.loss_weight, t, train_loss.shape)
         return train_loss.mean()
 
-    def forward(self, x, weekday=None, month=None, **kwargs):
-        (
-            b,
-            c,
-            n,
-            device,
-            input_dim,
-        ) = (
-            *x.shape,
-            x.device,
-            self.input_dim,
-        )
-        assert n == input_dim, f"number of variable must be {input_dim}"
-        t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
-        return self._train_loss(x_start=x, t=t, month=month, weekday=weekday, **kwargs)
-
-    def return_components(self, x, t: int):
-        (
-            b,
-            c,
-            n,
-            device,
-            input_dim,
-        ) = (
-            *x.shape,
-            x.device,
-            self.input_dim,
-        )
-        assert n == input_dim, f"number of variable must be {input_dim}"
-        t = torch.tensor([t]).to(device)
-        t = t.repeat(b)
-        x = self.q_sample(x, t)
-        trend, season, residual = self.model(x, t, return_res=True)
-        return trend, season, residual, x
+    def forward(self, x, conditioning_vars=None, **kwargs):
+        b, seq_len, input_dim = x.shape
+        assert seq_len == self.seq_len, f"Expected sequence length {self.seq_len}, got {seq_len}"
+        assert input_dim == self.input_dim, f"Expected input dimension {self.input_dim}, got {input_dim}"
+        t = torch.randint(0, self.num_timesteps, (b,), device=self.device).long()
+        return self._train_loss(x_start=x, t=t, conditioning_vars=conditioning_vars, **kwargs)
 
     def train_model(self, train_dataset):
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.to(device)
 
         # Create DataLoader
         train_loader = DataLoader(
-            train_dataset, batch_size=self.opt.batch_size, shuffle=self.opt.shuffle
+            train_dataset, batch_size=self.opt.batch_size, shuffle=self.opt.shuffle, drop_last=True
         )
 
         # Create necessary directories
@@ -407,16 +368,14 @@ class Diffusion_TS(nn.Module):
         # Training loop
         for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
             total_loss = 0.0
-            for i, (time_series_batch, month_label_batch, day_label_batch) in enumerate(
-                train_loader
-            ):
-                time_series_batch, month_label_batch, day_label_batch = (
-                    time_series_batch.to(device),
-                    month_label_batch.to(device),
-                    day_label_batch.to(device),
-                )
+            for i, (time_series_batch, conditioning_vars_batch) in enumerate(train_loader):
+                time_series_batch = time_series_batch.to(device)
+                # Move conditioning_vars to device
+                for key in conditioning_vars_batch:
+                    conditioning_vars_batch[key] = conditioning_vars_batch[key].to(device)
+
                 loss = self(
-                    time_series_batch, weekday=day_label_batch, month=month_label_batch
+                    time_series_batch, conditioning_vars=conditioning_vars_batch
                 )
                 loss = loss / self.opt.gradient_accumulate_every
                 loss.backward()
@@ -448,21 +407,6 @@ class Diffusion_TS(nn.Module):
 
         print("Training complete")
 
-    def generate(self, day_labels, month_labels):
-        num_samples = day_labels.shape[0]
-        shape = (num_samples, self.seq_len, self.input_dim)
-        return self._generate(shape, [day_labels, month_labels])
-
-    def _generate(self, shape, labels):
-        self.eval()
-        with torch.no_grad():
-            samples = (
-                self.fast_sample(shape, labels)
-                if self.fast_sampling
-                else self.sample(shape, labels)
-            )
-            return samples
-
 
 class EMA(nn.Module):
     def __init__(self, model, beta, update_every):
@@ -488,7 +432,3 @@ class EMA(nn.Module):
 
     def forward(self, x):
         return self.ema_model(x)
-
-
-if __name__ == "__main__":
-    pass

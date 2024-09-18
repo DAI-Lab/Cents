@@ -63,7 +63,7 @@ diffusion_ts:
 
 acgan:
   batch_size: 16
-  n_epochs: 200
+  n_epochs: 1
   validate: false # add validation during training
   lr_gen: 2e-4
   lr_discr: 1e-4
