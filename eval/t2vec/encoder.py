@@ -13,7 +13,6 @@ Note: Please ensure compliance with the repository's license and credit the orig
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from eval.t2vec.dilated_conv import DilatedConvEncoder

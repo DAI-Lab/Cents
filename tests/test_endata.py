@@ -6,17 +6,11 @@
 import os
 import unittest
 from typing import List
-from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pandas as pd
-import torch
 from sklearn.metrics import mean_squared_error
 
 from datasets.pecanstreet import PecanStreetDataManager
-from eval.evaluator import Evaluator
-from generator.gan.acgan import ACGAN
-from generator.options import Options
 
 TEST_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "test_data_config.yaml"
