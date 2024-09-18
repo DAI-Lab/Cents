@@ -22,8 +22,8 @@ def evaluate_single_dataset_model(
         threshold=(-10, 10),
     )
     evaluator = Evaluator(full_dataset, model_name)
-    evaluator.evaluate_all_users()
-    # evaluator.evaluate_all_non_pv_users()
+    # evaluator.evaluate_all_users()
+    evaluator.evaluate_all_non_pv_users()
     # evaluator.evaluate_all_pv_users()
 
 
