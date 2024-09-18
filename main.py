@@ -1,4 +1,3 @@
-from datasets.openpower import OpenPowerDataset
 from datasets.pecanstreet import PecanStreetDataManager
 from eval.evaluator import Evaluator
 

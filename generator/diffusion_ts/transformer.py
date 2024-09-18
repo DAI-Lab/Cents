@@ -16,11 +16,17 @@ import math
 import numpy as np
 import torch
 import torch.nn.functional as F
-from einops import rearrange, reduce, repeat
+from einops import rearrange
+from einops import reduce
+from einops import repeat
 from torch import nn
 
-from generator.diffusion_ts.model_utils import (
-    GELU2, AdaLayerNorm, Conv_MLP, LearnablePositionalEncoding, Transpose, series_decomp,)
+from generator.diffusion_ts.model_utils import GELU2
+from generator.diffusion_ts.model_utils import AdaLayerNorm
+from generator.diffusion_ts.model_utils import Conv_MLP
+from generator.diffusion_ts.model_utils import LearnablePositionalEncoding
+from generator.diffusion_ts.model_utils import Transpose
+from generator.diffusion_ts.model_utils import series_decomp
 
 
 class TrendBlock(nn.Module):

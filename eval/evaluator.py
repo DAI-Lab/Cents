@@ -1,4 +1,7 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -6,14 +9,19 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from eval.discriminative_metric import discriminative_score_metrics
-from eval.metrics import (
-    Context_FID, calculate_mmd, calculate_period_bound_mse, dynamic_time_warping_dist,
-    plot_range_with_syn_values, plot_syn_with_closest_real_ts, visualization,)
+from eval.metrics import Context_FID
+from eval.metrics import calculate_mmd
+from eval.metrics import calculate_period_bound_mse
+from eval.metrics import dynamic_time_warping_dist
+from eval.metrics import plot_range_with_syn_values
+from eval.metrics import plot_syn_with_closest_real_ts
+from eval.metrics import visualization
 from eval.predictive_metric import predictive_score_metrics
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
-from generator.llm.llm import GPT, HF
+from generator.llm.llm import GPT
+from generator.llm.llm import HF
 from generator.options import Options
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -458,9 +466,14 @@ class Evaluator:
         """
         Log the final evaluation results.
         """
-        dtw_mean, mmd_mean, mse_mean, fid_mean, discr_mean, pred_mean = (
-            self.get_summary_metrics()
-        )
+        (
+            dtw_mean,
+            mmd_mean,
+            mse_mean,
+            fid_mean,
+            discr_mean,
+            pred_mean,
+        ) = self.get_summary_metrics()
 
         self.writer.add_scalar("Final_Results/DTW", dtw_mean)
         self.writer.add_scalar("Final_Results/MMD", mmd_mean)

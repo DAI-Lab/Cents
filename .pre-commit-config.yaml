@@ -1,18 +1,10 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+    rev: v4.6.0
     hooks:
       - id: check-yaml
       - id: end-of-file-fixer
       - id: trailing-whitespace
-
-  - repo: https://github.com/pycqa/flake8
-    rev: 7.1.1
-    hooks:
-      - id: flake8
-        additional_dependencies:
-          - flake8-isort
-        args: [--max-line-length=88]
 
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
@@ -25,12 +17,5 @@ repos:
     rev: 24.8.0
     hooks:
       - id: black
+        args: [--line-length=88]
         language_version: python3.8
-
-  - repo: https://github.com/pycqa/autoflake
-    rev: v1.6.0
-    hooks:
-      - id: autoflake
-        name: autoflake (remove unused imports and variables)
-        args: ['--in-place', '--remove-all-unused-imports', '--remove-unused-variables']
-        types: [python]

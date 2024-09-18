@@ -18,7 +18,8 @@ Note: Use post-hoc RNN to classify original data and synthetic data
 Output: discriminative score (np.abs(classification accuracy - 0.5))
 """
 
-from typing import List, Tuple
+from typing import List
+from typing import Tuple
 
 import numpy as np
 import torch
@@ -109,7 +110,7 @@ def discriminative_score_metrics(
     # Extract time information
     ori_time, ori_max_seq_len = extract_time(ori_data)
     generated_time, generated_max_seq_len = extract_time(generated_data)
-    max_seq_len = max(ori_max_seq_len, generated_max_seq_len)
+    max(ori_max_seq_len, generated_max_seq_len)
 
     # Network parameters
     hidden_dim = int(dim * 2)

@@ -3,7 +3,6 @@ from functools import partial
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import nn
 
 
 def compute_pairwise_distances(x, y):

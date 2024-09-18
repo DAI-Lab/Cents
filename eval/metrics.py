@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, List, Tuple
+from typing import Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,7 +10,8 @@ from dtaidistance import dtw
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-from eval.loss import gaussian_kernel_matrix, maximum_mean_discrepancy
+from eval.loss import gaussian_kernel_matrix
+from eval.loss import maximum_mean_discrepancy
 from eval.t2vec.t2vec import TS2Vec
 
 

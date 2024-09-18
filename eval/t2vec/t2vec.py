@@ -14,12 +14,15 @@ Note: Please ensure compliance with the repository's license and credit the orig
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
+from torch.utils.data import TensorDataset
 
 from eval.loss import hierarchical_contrastive_loss
 from eval.t2vec.encoder import TSEncoder
-from eval.t2vec.utils import (
-    centerize_vary_length_series, split_with_nan, take_per_row, torch_pad_nan,)
+from eval.t2vec.utils import centerize_vary_length_series
+from eval.t2vec.utils import split_with_nan
+from eval.t2vec.utils import take_per_row
+from eval.t2vec.utils import torch_pad_nan
 
 
 class TS2Vec:
