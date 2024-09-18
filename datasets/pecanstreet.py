@@ -29,7 +29,16 @@ class PecanStreetDataManager:
         normalization_method: str = "group",
     ):
         self.geography = geography
-        self.config_path = os.path.abspath(config_path)
+
+        if config_path is None:
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            self.config_path = os.path.join(
+                module_dir, "..", "config", "data_config.yaml"
+            )
+            self.config_path = os.path.normpath(self.config_path)
+        else:
+            self.config_path = os.path.abspath(config_path)
+
         self.normalize = normalize
         self.threshold = threshold
         self.include_generation = include_generation
@@ -42,25 +51,16 @@ class PecanStreetDataManager:
         self.stats = {}
         self.data, self.metadata, self.user_flags = self.load_and_preprocess_data()
 
-    def _get_dataset_info(self) -> Tuple[str, List[str]]:
-        """
-        Retrieves dataset path and column information from the config file.
-
-        Returns:
-            Tuple[str, List[str]]: The dataset path and a list of relevant columns.
-
-        Raises:
-            ValueError: If dataset configuration is not found for the given dataset name.
-        """
+    def _get_dataset_info(self) -> Tuple[str, List[str], List[str]]:
         with open(self.config_path, "r") as file:
             config = yaml.safe_load(file)
         dataset_info = config["datasets"].get(self.name)
         if not dataset_info:
             raise ValueError(f"No dataset configuration found for {self.name}")
 
-        # Resolve the dataset path relative to the config file location
         config_dir = os.path.dirname(self.config_path)
         dataset_path = os.path.join(config_dir, dataset_info["path"])
+        dataset_path = os.path.normpath(dataset_path)
 
         return (
             dataset_path,
