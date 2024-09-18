@@ -29,8 +29,8 @@ def evaluate_single_dataset_model(
 
 def main():
     # evaluate_individual_user_models("gpt", include_generation=False)
-    # evaluate_individual_user_models("acgan", include_generation=False)
-    evaluate_single_dataset_model("diffusion_ts", include_generation=False)
+    evaluate_individual_user_models("diffusion_ts", include_generation=False)
+    # evaluate_single_dataset_model("diffusion_ts", include_generation=False)
 
 
 if __name__ == "__main__":
