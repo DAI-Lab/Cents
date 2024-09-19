@@ -281,6 +281,14 @@ class Diffusion_TS(nn.Module):
 
         return img
 
+    def sample_random_conditioning_vars(self, batch_size):
+        categorical_vars = {}
+        for var_name, num_categories in self.categorical_dims.items():
+            categorical_vars[var_name] = torch.randint(
+                0, num_categories, (batch_size,), device=self.device
+            )
+        return categorical_vars
+
     def generate(self, conditioning_vars):
         num_samples = len(conditioning_vars[list(conditioning_vars.keys())[0]])
         shape = (num_samples, self.seq_len, self.input_dim)

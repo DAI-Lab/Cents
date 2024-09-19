@@ -26,7 +26,7 @@ class PecanStreetDataManager:
         normalize: bool = False,
         threshold: Union[Tuple[float, float], None] = None,
         include_generation: bool = False,
-        normalization_method: str = "group",
+        normalization_method: str = "global",
     ):
         self.geography = geography
 
