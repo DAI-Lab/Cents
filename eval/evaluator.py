@@ -6,6 +6,7 @@ from typing import Tuple
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.tensorboard import SummaryWriter
 
 from eval.discriminative_metric import discriminative_score_metrics
@@ -100,7 +101,9 @@ class Evaluator:
             Tuple[np.ndarray, np.ndarray]: Synthetic and real data arrays.
         """
         real_user_data = dataset.data
-        syn_user_data = self.generate_dataset_for_eval(model, dataset.data)
+        syn_user_data, real_user_data = self.generate_dataset_for_eval(
+            model, dataset.data
+        )
         syn_user_data["dataid"] = real_user_data.reset_index()["dataid"]
 
         real_user_data_inv = dataset.inverse_transform(real_user_data)
@@ -196,20 +199,33 @@ class Evaluator:
         return syn_ts_df
 
     def generate_dataset_for_eval(
-        self, model: Any, real_user_df: pd.DataFrame
+        self, model: Any, real_user_df: pd.DataFrame, num_samples: int = 100
     ) -> pd.DataFrame:
         """
-        Generate a synthetic dataset for evaluation.
+        Generate a synthetic dataset for evaluation, using a stratified subset.
 
         Args:
             model: The trained model to generate samples.
             real_user_df (pd.DataFrame): The real user data.
+            num_samples (int): The number of samples to generate (default: 1000).
 
         Returns:
             pd.DataFrame: A DataFrame containing the generated dataset.
+            pd.DataFrame: Chosen subset of the real dataset
         """
+        y = real_user_df["dataid"]
+
+        strat_split = StratifiedShuffleSplit(
+            n_splits=1, test_size=num_samples, random_state=42
+        )
+
+        for _, subset_index in strat_split.split(real_user_df, y):
+            subset_real_data = real_user_df.iloc[subset_index]
+
+        subset_real_data = subset_real_data.reset_index(drop=True)
+
         real_conditioning_vars = {
-            name: torch.tensor(real_user_df[name].values, dtype=torch.long)
+            name: torch.tensor(subset_real_data[name].values, dtype=torch.long)
             for name in model.opt.categorical_dims.keys()
         }
 
@@ -220,9 +236,10 @@ class Evaluator:
                 generated_ts.shape[0], -1, generated_ts.shape[1]
             )
 
-        syn_ts = real_user_df.copy().reset_index()
+        syn_ts = subset_real_data.copy()
         syn_ts["timeseries"] = list(generated_ts)
-        return syn_ts
+
+        return syn_ts, subset_real_data
 
     def evaluate_all_pv_users(self):
         """

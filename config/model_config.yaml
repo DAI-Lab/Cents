@@ -29,7 +29,7 @@ diffcharge:
 
 diffusion_ts:
   batch_size: 64
-  n_epochs: 1000
+  n_epochs: 1
   n_steps: 1000
   base_lr: 1e-4
   n_layer_enc: 4
