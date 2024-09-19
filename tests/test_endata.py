@@ -12,7 +12,7 @@ import torch
 from sklearn.metrics import mean_squared_error
 
 from datasets.pecanstreet import PecanStreetDataManager
-from generator.gan import ACGAN
+from generator.gan.acgan import ACGAN
 from generator.options import Options
 
 TEST_CONFIG_PATH = os.path.join(
@@ -27,18 +27,13 @@ class TestGenerator(unittest.TestCase):
 
         opt = Options(model_name="acgan")
         opt.device = "cpu"  # Use CPU for testing purposes
-        generator = ACGAN(opt)
-
-        batch_size = 16
-        noise_dim = opt.noise_dim
-        noise = torch.randn(batch_size, noise_dim).to(opt.device)
-
-        generator.eval()
-        with torch.no_grad():
-            samples = generator(noise, labels)
-
-        expected_shape = (batch_size, opt.seq_len, opt.input_dim)
-        self.assertEqual(samples.shape, expected_shape)
+        model = ACGAN(opt)
+        noise = torch.randn(opt.batch_size, opt.noise_dim).to(opt.device)
+        conditional_embedding = model.conditioning_module(
+            model.sample_random_conditioning_vars(opt.batch_size)
+        )
+        gen_ts = model.generator(noise, conditional_embedding)
+        assert gen_ts.shape == (opt.batch_size, opt.seq_len, opt.input_dim)
 
 
 class TestDataset(unittest.TestCase):
@@ -57,7 +52,7 @@ class TestDataset(unittest.TestCase):
         assert "timeseries" in data_manager.data.columns
 
         ts_shape = data_manager.data.timeseries.iloc[0].shape
-        assert ts_shape == (96, 1)
+        assert ts_shape == (96, 2)
 
     def test_reverse_transform(self):
         data_manager = PecanStreetDataManager(

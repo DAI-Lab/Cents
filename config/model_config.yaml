@@ -15,7 +15,7 @@ conditioning_vars: # for each desired conditioning variable, add the name and nu
 
 diffcharge:
   batch_size: 64
-  n_epochs: 10
+  n_epochs: 1
   init_lr: 3e-5
   network: cnn # attention
   guidance_scale: 1.2
@@ -28,14 +28,14 @@ diffcharge:
   schedule: linear # quadratic, cosine
 
 diffusion_ts:
-  batch_size: 16
+  batch_size: 64
   n_epochs: 1000
   n_steps: 1000
   base_lr: 1e-4
   n_layer_enc: 4
   n_layer_dec: 5
-  d_model: 256
-  cond_emb_dim: 256
+  d_model: 128
+  cond_emb_dim: 128
   sampling_timesteps: null
   loss_type: l1 #l2
   beta_schedule: cosine #linear

@@ -22,7 +22,7 @@ class PecanStreetDataManager:
     def __init__(
         self,
         geography: str = None,
-        config_path: str = "EnData/config/data_config.yaml",
+        config_path: str = "config/data_config.yaml",
         normalize: bool = False,
         threshold: Union[Tuple[float, float], None] = None,
         include_generation: bool = False,
@@ -37,7 +37,9 @@ class PecanStreetDataManager:
             )
             self.config_path = os.path.normpath(self.config_path)
         else:
-            self.config_path = os.path.abspath(config_path)
+            module_dir = os.path.dirname(os.path.abspath(__file__))
+            self.config_path = os.path.join(module_dir, "..", config_path)
+            self.config_path = os.path.normpath(self.config_path)
 
         self.normalize = normalize
         self.threshold = threshold
@@ -58,8 +60,8 @@ class PecanStreetDataManager:
         if not dataset_info:
             raise ValueError(f"No dataset configuration found for {self.name}")
 
-        config_dir = os.path.dirname(self.config_path)
-        dataset_path = os.path.join(config_dir, dataset_info["path"])
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        dataset_path = os.path.join(module_dir, "..", dataset_info["path"])
         dataset_path = os.path.normpath(dataset_path)
 
         return (
