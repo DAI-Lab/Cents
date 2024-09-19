@@ -1,6 +1,6 @@
 datasets:
   pecanstreet:
-    path: './test_data/'
+    path: 'tests/test_data/'
     data_columns: ["dataid",
      "local_15min",
      "car1",

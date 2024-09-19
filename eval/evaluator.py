@@ -209,7 +209,7 @@ class Evaluator:
             pd.DataFrame: A DataFrame containing the generated dataset.
         """
         real_conditioning_vars = {
-            name: torch.tensor(real_user_df[name], dtype=torch.long)
+            name: torch.tensor(real_user_df[name].values, dtype=torch.long)
             for name in model.opt.categorical_dims.keys()
         }
 
