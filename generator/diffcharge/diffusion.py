@@ -156,6 +156,17 @@ class DDPM:
                     x[i] = torch.tensor(filtered_x, dtype=torch.float32).to(self.device)
             return x
 
+    def sample_random_conditioning_vars(self, dataset, batch_size):
+        sampled_rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
+
+        categorical_vars = {}
+        for var_name in self.categorical_dims.keys():
+            categorical_vars[var_name] = torch.tensor(
+                sampled_rows[var_name].values, device=self.device
+            )
+
+        return categorical_vars
+
     def generate(self, categorical_vars):
         num_samples = categorical_vars[next(iter(categorical_vars))].shape[0]
         return self.sample(

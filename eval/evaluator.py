@@ -104,7 +104,7 @@ class Evaluator:
         syn_user_data, real_user_data = self.generate_dataset_for_eval(
             model, dataset.data
         )
-        syn_user_data["dataid"] = real_user_data.reset_index()["dataid"]
+        syn_user_data.reset_index()["dataid"] = real_user_data.reset_index()["dataid"]
 
         real_user_data_inv = dataset.inverse_transform(real_user_data)
         syn_user_data_inv = dataset.inverse_transform(syn_user_data)
@@ -149,7 +149,7 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            if user_id == 3687:
+            if user_id == 2318:
                 syn_user_data, real_user_data = self.evaluate_for_user(user_id)
                 syn_data.append(syn_user_data)
                 real_data.append(real_user_data)
@@ -163,7 +163,7 @@ class Evaluator:
         self._log_final_results()
 
     def generate_samples_for_eval(
-        self, dataid: int, model: Any, num_samples: int
+        self, dataid: int, model: Any, dataset: Any, num_samples: int
     ) -> pd.DataFrame:
         """
         Generate synthetic samples for evaluation.
@@ -171,12 +171,13 @@ class Evaluator:
         Args:
             dataid (int): The ID of the data point.
             model: The trained model to generate samples.
+            dataset: The original dataset to ensure that only contained conditional variables are generated.
             num_samples (int): The number of samples to generate.
 
         Returns:
             pd.DataFrame: A DataFrame containing the generated samples.
         """
-        random_conditioning_vars = model.sample_random_conditioning_vars(1)
+        random_conditioning_vars = model.sample_random_conditioning_vars(dataset, 1)
 
         for keys, tensor in random_conditioning_vars.items():
             random_conditioning_vars[keys] = tensor.repeat(
@@ -199,7 +200,9 @@ class Evaluator:
         return syn_ts_df
 
     def generate_dataset_for_eval(
-        self, model: Any, real_user_df: pd.DataFrame, num_samples: int = 100
+        self,
+        model: Any,
+        real_user_df: pd.DataFrame,
     ) -> pd.DataFrame:
         """
         Generate a synthetic dataset for evaluation, using a stratified subset.
@@ -207,7 +210,6 @@ class Evaluator:
         Args:
             model: The trained model to generate samples.
             real_user_df (pd.DataFrame): The real user data.
-            num_samples (int): The number of samples to generate (default: 1000).
 
         Returns:
             pd.DataFrame: A DataFrame containing the generated dataset.
@@ -215,17 +217,19 @@ class Evaluator:
         """
         y = real_user_df["dataid"]
 
-        strat_split = StratifiedShuffleSplit(
-            n_splits=1, test_size=num_samples, random_state=42
-        )
+        if y.nunique() > 1:  # if there are multiple users, use a stratified subset
+            num_samples = real_user_df.shape[0] // 10
+            strat_split = StratifiedShuffleSplit(
+                n_splits=1, test_size=num_samples, random_state=42
+            )
 
-        for _, subset_index in strat_split.split(real_user_df, y):
-            subset_real_data = real_user_df.iloc[subset_index]
+            for _, subset_index in strat_split.split(real_user_df, y):
+                subset_real_data = real_user_df.iloc[subset_index]
 
-        subset_real_data = subset_real_data.reset_index(drop=True)
+            real_user_df = subset_real_data.reset_index(drop=True)
 
         real_conditioning_vars = {
-            name: torch.tensor(subset_real_data[name].values, dtype=torch.long)
+            name: torch.tensor(real_user_df[name].values, dtype=torch.long)
             for name in model.opt.categorical_dims.keys()
         }
 
@@ -236,10 +240,10 @@ class Evaluator:
                 generated_ts.shape[0], -1, generated_ts.shape[1]
             )
 
-        syn_ts = subset_real_data.copy()
+        syn_ts = real_user_df.copy()
         syn_ts["timeseries"] = list(generated_ts)
 
-        return syn_ts, subset_real_data
+        return syn_ts, real_user_df
 
     def evaluate_all_pv_users(self):
         """
@@ -450,6 +454,7 @@ class Evaluator:
         samples = self.generate_samples_for_eval(
             real_user_data["dataid"].iloc[0],
             model,
+            dataset,
             num_samples=100,
         )
         samples = dataset.inverse_transform(samples)

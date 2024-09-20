@@ -281,12 +281,15 @@ class Diffusion_TS(nn.Module):
 
         return img
 
-    def sample_random_conditioning_vars(self, batch_size):
+    def sample_random_conditioning_vars(self, dataset, batch_size):
+        sampled_rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
+
         categorical_vars = {}
-        for var_name, num_categories in self.categorical_dims.items():
-            categorical_vars[var_name] = torch.randint(
-                0, num_categories, (batch_size,), device=self.device
+        for var_name in self.categorical_dims.keys():
+            categorical_vars[var_name] = torch.tensor(
+                sampled_rows[var_name].values, device=self.device
             )
+
         return categorical_vars
 
     def generate(self, conditioning_vars):

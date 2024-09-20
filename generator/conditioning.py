@@ -16,7 +16,8 @@ class ConditioningModule(nn.Module):
         )
         total_dim = len(categorical_dims) * embedding_dim
         self.mlp = nn.Sequential(
-            nn.Linear(total_dim, 128), nn.ReLU(), nn.Linear(128, embedding_dim)
+            # nn.Linear(total_dim, 128), nn.ReLU(), nn.Linear(128, embedding_dim)
+            nn.Linear(total_dim, embedding_dim)
         ).to(device)
 
     def forward(self, categorical_vars):
@@ -24,6 +25,6 @@ class ConditioningModule(nn.Module):
         for name, embedding in self.category_embeddings.items():
             var = categorical_vars[name].to(self.device)
             embeddings.append(embedding(var))
-        conditioning_vector = torch.cat(embeddings, dim=1)
-        conditioning_vector = self.mlp(conditioning_vector)
-        return conditioning_vector
+        conditioning_matrix = torch.cat(embeddings, dim=1)
+        conditioning_matrix = self.mlp(conditioning_matrix)
+        return conditioning_matrix
