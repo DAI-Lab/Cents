@@ -1,21 +1,21 @@
 seq_len: 96 # should not be changed for the current datasets
 input_dim: 2 # or 1 depending on user, but is dynamically set
 noise_dim: 256
-cond_emb_dim: 256
+cond_emb_dim: 64
 shuffle: True
 
 conditioning_vars: # for each desired conditioning variable, add the name and number of categories
   month: 12
   weekday: 7
-  building_type: 3
-  solar: 2
-  car1: 2
-  city: 7
-  state: 3
+  # building_type: 3
+  # solar: 2
+  # car1: 2
+  # city: 7
+  # state: 3
 
 diffcharge:
   batch_size: 64
-  n_epochs: 1
+  n_epochs: 1000
   init_lr: 3e-5
   network: cnn # attention
   guidance_scale: 1.2
@@ -29,13 +29,13 @@ diffcharge:
 
 diffusion_ts:
   batch_size: 64
-  n_epochs: 1
+  n_epochs: 1000
   n_steps: 1000
   base_lr: 1e-4
   n_layer_enc: 4
   n_layer_dec: 5
-  d_model: 128
-  cond_emb_dim: 128
+  d_model: 256
+  cond_emb_dim: 256
   sampling_timesteps: null
   loss_type: l1 #l2
   beta_schedule: cosine #linear
@@ -63,7 +63,7 @@ diffusion_ts:
 
 acgan:
   batch_size: 16
-  n_epochs: 1
+  n_epochs: 200
   validate: false # add validation during training
   lr_gen: 2e-4
   lr_discr: 1e-4

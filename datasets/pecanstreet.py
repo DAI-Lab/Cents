@@ -150,16 +150,10 @@ class PecanStreetDataManager:
         )
 
         if self.normalize:
-            if self.normalization_method == "group":
-                self.stats["grid"] = self._calculate_and_store_statistics_group(
-                    filtered_data, "grid"
-                )
-                filtered_data = self._apply_normalization_group(filtered_data, "grid")
-            elif self.normalization_method == "global":
-                self.stats["grid"] = self._calculate_and_store_statistics_global(
-                    filtered_data, "grid"
-                )
-                filtered_data = self._apply_normalization_global(filtered_data, "grid")
+            self.stats["grid"] = self._calculate_and_store_statistics(
+                filtered_data, "grid"
+            )
+            filtered_data = self._normalize_and_scale(filtered_data, "grid")
 
         if self.include_generation:
             solar_data = self._preprocess_solar(data)
@@ -174,11 +168,9 @@ class PecanStreetDataManager:
             by=["dataid", "month", "weekday"]
         )
 
-    def _calculate_and_store_statistics_group(
-        self, data: pd.DataFrame, column: str
-    ) -> Dict:
+    def _calculate_and_store_statistics(self, data: pd.DataFrame, column: str) -> Dict:
         """
-        Calculates and stores statistical data for group normalization, such as mean and standard deviation.
+        Calculates and stores statistical data for group normalization, such as min, max, mean and standard deviation.
 
         Args:
             data (pd.DataFrame): The data on which to calculate statistics.
@@ -192,16 +184,19 @@ class PecanStreetDataManager:
             all_values = np.concatenate(group[column].values)
             mean = np.mean(all_values)
             std = np.std(all_values)
-            return pd.Series({"mean": mean, "std": std})
+            min = np.min(all_values)
+            max = np.max(all_values)
+            return pd.Series({"mean": mean, "std": std, "min": min, "max": max})
 
-        grouped_stats = data.groupby(["dataid", "month", "weekday"]).apply(
-            calculate_stats
-        )
-        return grouped_stats.to_dict(orient="index")
+        if self.normalization_method == "group":
+            grouped_stats = data.groupby(["dataid", "month", "weekday"]).apply(
+                calculate_stats
+            )
+            return grouped_stats.to_dict(orient="index")
+        else:
+            return calculate_stats(data).to_dict()
 
-    def _apply_normalization_group(
-        self, data: pd.DataFrame, column: str
-    ) -> pd.DataFrame:
+    def _normalize_and_scale(self, data: pd.DataFrame, column: str) -> pd.DataFrame:
         """
         Applies group normalization to the data.
 
@@ -213,60 +208,28 @@ class PecanStreetDataManager:
             pd.DataFrame: The normalized data.
         """
 
-        def normalize(row):
-            stats = self.stats[column][(row["dataid"], row["month"], row["weekday"])]
-            mean, std = stats["mean"], stats["std"]
+        def normalize_and_scale_row(row):
+            if self.normalization_method == "group":
+                stats = self.stats[column][
+                    (row["dataid"], row["month"], row["weekday"])
+                ]
+            else:
+                stats = self.stats[column]
+
+            mean, std, min, max = (
+                stats["mean"],
+                stats["std"],
+                stats["min"],
+                stats["max"],
+            )
             values = np.array(row[column])
             normalized = (values - mean) / (std + 1e-8)
             if self.threshold:
                 normalized = np.clip(normalized, *self.threshold)
-            return normalized
+            scaled = (normalized - min) / (max - min)
+            return scaled
 
-        data[column] = data.apply(normalize, axis=1)
-        return data
-
-    def _calculate_and_store_statistics_global(
-        self, data: pd.DataFrame, column: str
-    ) -> Dict:
-        """
-        Calculates and stores statistical data for global normalization.
-
-        Args:
-            data (pd.DataFrame): The data on which to calculate statistics.
-            column (str): The column for which to calculate statistics.
-
-        Returns:
-            Dict: A dictionary containing the global mean and standard deviation.
-        """
-        all_values = np.concatenate(data[column].values)
-        mean = np.mean(all_values)
-        std = np.std(all_values)
-        return {"mean": mean, "std": std}
-
-    def _apply_normalization_global(
-        self, data: pd.DataFrame, column: str
-    ) -> pd.DataFrame:
-        """
-        Applies global normalization to the data.
-
-        Args:
-            data (pd.DataFrame): The data to normalize.
-            column (str): The column on which normalization is applied.
-
-        Returns:
-            pd.DataFrame: The normalized data.
-        """
-
-        mean = self.stats[column]["mean"]
-        std = self.stats[column]["std"]
-
-        def normalize(values):
-            normalized = (values - mean) / (std + 1e-8)
-            if self.threshold:
-                normalized = np.clip(normalized, *self.threshold)
-            return normalized
-
-        data[column] = data[column].apply(normalize)
+        data[column] = data.apply(normalize_and_scale_row, axis=1)
         return data
 
     def _preprocess_solar(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -288,18 +251,10 @@ class PecanStreetDataManager:
         solar_data = solar_data[solar_data["solar"].apply(len) == 96]
 
         if self.normalize:
-            if self.normalization_method == "group":
-                valid_stats = self._calculate_and_store_statistics_group(
-                    solar_data, "solar"
-                )
-                self.stats["solar"] = valid_stats
-                solar_data = self._apply_normalization_group(solar_data, "solar")
-            elif self.normalization_method == "global":
-                valid_stats = self._calculate_and_store_statistics_global(
-                    solar_data, "solar"
-                )
-                self.stats["solar"] = valid_stats
-                solar_data = self._apply_normalization_global(solar_data, "solar")
+            self.stats["solar"] = self._calculate_and_store_statistics(
+                solar_data, "solar"
+            )
+            solar_data = self._normalize_and_scale(solar_data, "solar")
 
         return solar_data
 
@@ -520,18 +475,18 @@ class PecanStreetDataset(Dataset):
                 raise ValueError(
                     f"No stats found for {colname} with dataid={row['dataid']}, month={row['month']}, weekday={row['weekday']}"
                 )
-            mean = stats["mean"]
-            std = stats["std"]
         elif self.normalization_method == "global":
             stats = self.stats[colname]
-            mean = stats["mean"]
-            std = stats["std"]
         else:
             raise ValueError("Invalid normalization_method")
 
-        scaled = row[colname]
-        unscaled = scaled * (std + 1e-8) + mean
-        return unscaled
+        mean = stats["mean"]
+        std = stats["std"]
+        min = stats["min"]
+        max = stats["max"]
+        unscaled = row[colname] * (max - min) + min
+        unnormalized = unscaled * (std + 1e-8) + mean
+        return unnormalized
 
     def inverse_transform(self, df: pd.DataFrame) -> pd.DataFrame:
         """

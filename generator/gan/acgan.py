@@ -1,5 +1,5 @@
 """
-This class is adapted/taken from the synthetic-timeseries-smart-grid GitHub repository:
+This class is adapted from the synthetic-timeseries-smart-grid GitHub repository:
 
 Repository: https://github.com/vermouth1992/synthetic-time-series-smart-grid
 Author: Chi Zhang
@@ -256,7 +256,7 @@ class ACGAN:
 
                 # Generate new conditioning variables
                 gen_categorical_vars = self.sample_random_conditioning_vars(
-                    current_batch_size
+                    dataset, current_batch_size
                 )
                 gen_conditioning_vector = self.conditioning_module(gen_categorical_vars)
 
@@ -285,18 +285,21 @@ class ACGAN:
                 g_loss.backward()
                 self.optimizer_G.step()
 
-    def sample_random_conditioning_vars(self, batch_size):
+    def sample_random_conditioning_vars(self, dataset, batch_size):
+        sampled_rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
+
         categorical_vars = {}
-        for var_name, num_categories in self.categorical_dims.items():
-            categorical_vars[var_name] = torch.randint(
-                0, num_categories, (batch_size,), device=self.device
+        for var_name in self.categorical_dims.keys():
+            categorical_vars[var_name] = torch.tensor(
+                sampled_rows[var_name].values, device=self.device
             )
+
         return categorical_vars
 
     def generate(self, categorical_vars):
         num_samples = next(iter(categorical_vars.values())).shape[0]
         noise = torch.randn((num_samples, self.code_size)).to(self.device)
-        conditioning_vector = self.conditioning_module(categorical_vars)
+        conditioning_matrix = self.conditioning_module(categorical_vars)
         with torch.no_grad():
-            generated_data = self.generator(noise, conditioning_vector)
+            generated_data = self.generator(noise, conditioning_matrix)
         return generated_data
