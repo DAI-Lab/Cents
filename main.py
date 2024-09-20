@@ -8,7 +8,7 @@ def evaluate_individual_user_models(
     full_dataset = PecanStreetDataManager(
         normalize=normalize,
         include_generation=include_generation,
-        threshold=(-5, 5),
+        threshold=(-10, 10),
         normalization_method="group",
     )
     evaluator = Evaluator(full_dataset, model_name)

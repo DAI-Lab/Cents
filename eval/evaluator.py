@@ -149,7 +149,7 @@ class Evaluator:
         real_data = []
 
         for user_id in user_ids:
-            if user_id == 2318:
+            if user_id == 3687:
                 syn_user_data, real_user_data = self.evaluate_for_user(user_id)
                 syn_data.append(syn_user_data)
                 real_data.append(real_user_data)
@@ -177,7 +177,9 @@ class Evaluator:
         Returns:
             pd.DataFrame: A DataFrame containing the generated samples.
         """
-        random_conditioning_vars = model.sample_random_conditioning_vars(dataset, 1)
+        random_conditioning_vars = model.sample_conditioning_vars(
+            dataset, 1, random=False
+        )
 
         for keys, tensor in random_conditioning_vars.items():
             random_conditioning_vars[keys] = tensor.repeat(
