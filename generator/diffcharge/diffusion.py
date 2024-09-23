@@ -162,7 +162,7 @@ class DDPM:
         categorical_vars = {}
         for var_name in self.categorical_dims.keys():
             categorical_vars[var_name] = torch.tensor(
-                sampled_rows[var_name].values, device=self.device
+                sampled_rows[var_name].values, device=self.device, dtype=torch.long
             )
 
         return categorical_vars

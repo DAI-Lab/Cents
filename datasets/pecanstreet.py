@@ -45,10 +45,13 @@ class PecanStreetDataManager:
         self.threshold = threshold
         self.include_generation = include_generation
         self.normalization_method = normalization_method.lower()
+
         assert self.normalization_method in [
             "group",
             "global",
-        ], "normalization_method must be 'group' or 'global'"
+            "date",
+        ], "normalization_method must be 'group', 'global', or 'date'"
+
         self.name = "pecanstreet"
         self.stats = {}
         self.data, self.metadata, self.user_flags = self.load_and_preprocess_data()
@@ -81,9 +84,14 @@ class PecanStreetDataManager:
         """
         path, data_columns, metadata_columns = self._get_dataset_info()
         metadata_csv_path = os.path.join(path, "metadata.csv")
+
         if not os.path.exists(metadata_csv_path):
             raise FileNotFoundError(f"Metadata file not found at {metadata_csv_path}")
+
         metadata = pd.read_csv(metadata_csv_path, usecols=metadata_columns)
+        if "solar" in metadata.columns:
+            metadata.rename(columns={"solar": "has_solar"}, inplace=True)
+
         data = self._load_full_data(path, data_columns)
         user_flags = self._set_user_flags(metadata, data)
         data = self._preprocess_data(data)
@@ -170,42 +178,58 @@ class PecanStreetDataManager:
 
     def _calculate_and_store_statistics(self, data: pd.DataFrame, column: str) -> Dict:
         """
-        Calculates and stores statistical data for group normalization, such as min, max, mean and standard deviation.
+        Calculates and stores statistical data for both standardization and min-max scaling.
 
         Args:
             data (pd.DataFrame): The data on which to calculate statistics.
             column (str): The column for which to calculate statistics.
 
         Returns:
-            Dict: A dictionary containing the statistics.
+            Dict: A dictionary containing the statistics for both transformations.
         """
 
         def calculate_stats(group):
+            # Concatenate all time series arrays in the group
             all_values = np.concatenate(group[column].values)
+
+            # Standardization statistics
             mean = np.mean(all_values)
             std = np.std(all_values)
-            min = np.min(all_values)
-            max = np.max(all_values)
-            return pd.Series({"mean": mean, "std": std, "min": min, "max": max})
+
+            # Perform standardization on all_values
+            standardized = (all_values - mean) / (std + 1e-8)
+
+            # Min-Max scaling statistics on standardized data
+            z_min = np.min(standardized)
+            z_max = np.max(standardized)
+
+            return pd.Series({"mean": mean, "std": std, "z_min": z_min, "z_max": z_max})
 
         if self.normalization_method == "group":
+            # Group by dataid, month, and weekday
             grouped_stats = data.groupby(["dataid", "month", "weekday"]).apply(
                 calculate_stats
             )
             return grouped_stats.to_dict(orient="index")
-        else:
+
+        elif self.normalization_method == "date":
+            # Group by month and weekday
+            grouped_stats = data.groupby(["month", "weekday"]).apply(calculate_stats)
+            return grouped_stats.to_dict(orient="index")
+
+        else:  # 'global'
             return calculate_stats(data).to_dict()
 
     def _normalize_and_scale(self, data: pd.DataFrame, column: str) -> pd.DataFrame:
         """
-        Applies group normalization to the data.
+        Applies standardization followed by min-max scaling to the data.
 
         Args:
-            data (pd.DataFrame): The data to normalize.
-            column (str): The column on which normalization is applied.
+            data (pd.DataFrame): The data to normalize and scale.
+            column (str): The column on which normalization and scaling are applied.
 
         Returns:
-            pd.DataFrame: The normalized data.
+            pd.DataFrame: The normalized and scaled data.
         """
 
         def normalize_and_scale_row(row):
@@ -213,20 +237,27 @@ class PecanStreetDataManager:
                 stats = self.stats[column][
                     (row["dataid"], row["month"], row["weekday"])
                 ]
-            else:
+            elif self.normalization_method == "date":
+                stats = self.stats[column][(row["month"], row["weekday"])]
+            else:  # 'global'
                 stats = self.stats[column]
 
-            mean, std, min, max = (
-                stats["mean"],
-                stats["std"],
-                stats["min"],
-                stats["max"],
-            )
+            mean = stats["mean"]
+            std = stats["std"]
+            z_min = stats["z_min"]
+            z_max = stats["z_max"]
+
+            # Standardization
             values = np.array(row[column])
-            normalized = (values - mean) / (std + 1e-8)
+            standardized = (values - mean) / (std + 1e-8)
+
+            # Optional Clipping after Standardization
             if self.threshold:
-                normalized = np.clip(normalized, *self.threshold)
-            scaled = (normalized - min) / (max - min)
+                standardized = np.clip(standardized, *self.threshold)
+
+            # Min-Max Scaling on standardized data
+            scaled = (standardized - z_min) / (z_max - z_min + 1e-8)
+
             return scaled
 
         data[column] = data.apply(normalize_and_scale_row, axis=1)
@@ -271,6 +302,8 @@ class PecanStreetDataManager:
         """
 
         def ensure_two_dimensional(arr):
+            if isinstance(arr, list):
+                arr = np.array(arr)
             if arr.ndim == 1:
                 return np.expand_dims(arr, axis=-1)
             return arr
@@ -308,7 +341,9 @@ class PecanStreetDataManager:
             Dict[int, bool]: A dictionary mapping user IDs to a boolean indicating if they have solar data.
         """
         return {
-            user_id: metadata.loc[metadata["dataid"] == user_id]["solar"].notna().any()
+            user_id: metadata.loc[metadata["dataid"] == user_id]["has_solar"]
+            .notna()
+            .any()
             for user_id in data["dataid"].unique()
         }
 
@@ -328,6 +363,8 @@ class PecanStreetDataManager:
         if user_id not in self.user_flags:
             raise ValueError(f"User ID {user_id} not found in the dataset.")
         user_data = self.data[self.data["dataid"] == user_id].copy()
+        if not self.include_generation:
+            self.user_flags[user_id] = False
         return PecanStreetDataset(
             data=user_data,
             stats=self.stats,
@@ -419,7 +456,7 @@ class PecanStreetDataset(Dataset):
             is_pv_user (bool): Whether the user has solar PV data.
             include_generation (bool): Whether to include solar generation data.
             metadata (pd.DataFrame): Metadata for the dataset (e.g., user locations, PV info).
-            normalization_method (str, optional): Normalization method used ('group' or 'global'). Defaults to 'global'.
+            normalization_method (str, optional): Normalization method used ('group', 'global', or 'date'). Defaults to 'global'.
         """
         self.data = self.validate_data(data)
         self.stats = stats
@@ -427,10 +464,12 @@ class PecanStreetDataset(Dataset):
         self.include_generation = include_generation
         self.metadata = metadata
         self.normalization_method = normalization_method.lower()
+
         assert self.normalization_method in [
             "group",
             "global",
-        ], "normalization_method must be 'group' or 'global'"
+            "date",
+        ], "normalization_method must be 'group', 'global', or 'date'"
 
     def validate_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -458,14 +497,14 @@ class PecanStreetDataset(Dataset):
 
     def inverse_transform_column(self, row: pd.Series, colname: str) -> np.ndarray:
         """
-        Performs inverse transformation on a normalized column to retrieve original values.
+        Performs inverse transformation on a normalized and scaled column to retrieve original values.
 
         Args:
-            row (pd.Series): A row from the DataFrame that contains the normalized data.
-            colname (str): The column name of the normalized data (e.g., "grid" or "solar").
+            row (pd.Series): A row from the DataFrame that contains the normalized and scaled data.
+            colname (str): The column name of the normalized and scaled data (e.g., "grid" or "solar").
 
         Returns:
-            np.ndarray: The original (un-normalized) time series data.
+            np.ndarray: The original (un-normalized and un-scaled) time series data.
         """
         if self.normalization_method == "group":
             stats = self.stats[colname].get(
@@ -475,6 +514,12 @@ class PecanStreetDataset(Dataset):
                 raise ValueError(
                     f"No stats found for {colname} with dataid={row['dataid']}, month={row['month']}, weekday={row['weekday']}"
                 )
+        elif self.normalization_method == "date":
+            stats = self.stats[colname].get((row["month"], row["weekday"]))
+            if not stats:
+                raise ValueError(
+                    f"No stats found for {colname} with month={row['month']}, weekday={row['weekday']}"
+                )
         elif self.normalization_method == "global":
             stats = self.stats[colname]
         else:
@@ -482,10 +527,14 @@ class PecanStreetDataset(Dataset):
 
         mean = stats["mean"]
         std = stats["std"]
-        min = stats["min"]
-        max = stats["max"]
-        unscaled = row[colname] * (max - min) + min
-        unnormalized = unscaled * (std + 1e-8) + mean
+        z_min = stats["z_min"]
+        z_max = stats["z_max"]
+
+        # Inverse Min-Max Scaling
+        scaled = row[colname] * (z_max - z_min) + z_min
+
+        # Inverse Standardization
+        unnormalized = scaled * std + mean
         return unnormalized
 
     def inverse_transform(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -493,10 +542,10 @@ class PecanStreetDataset(Dataset):
         Applies inverse transformation on the entire dataset to recover original time series values.
 
         Args:
-            df (pd.DataFrame): The DataFrame containing normalized time series data.
+            df (pd.DataFrame): The DataFrame containing normalized and scaled time series data.
 
         Returns:
-            pd.DataFrame: The DataFrame with the original (un-normalized) time series.
+            pd.DataFrame: The DataFrame with the original (un-normalized and un-scaled) time series.
         """
 
         def split_timeseries(row: np.ndarray) -> pd.Series:
@@ -559,14 +608,12 @@ class PecanStreetDataset(Dataset):
         """
         return len(self.data)
 
-    def __getitem__(
-        self, idx: int
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Retrieves a single sample from the dataset.
 
         Returns:
-            Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+            Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
                 - time_series: The time series data tensor.
                 - conditioning_vars: Dictionary of conditioning variables.
         """
@@ -581,82 +628,7 @@ class PecanStreetDataset(Dataset):
             "car1": torch.tensor(sample["car1"], dtype=torch.long),
             "city": torch.tensor(sample["city"], dtype=torch.long),
             "state": torch.tensor(sample["state"], dtype=torch.long),
-            "solar": torch.tensor(sample["solar"], dtype=torch.long),
+            "has_solar": torch.tensor(sample["has_solar"], dtype=torch.long),  # Updated
         }
 
         return (torch.tensor(time_series, dtype=torch.float32), conditioning_vars)
-
-
-def generate_first_differenced_dataset(dataset):
-    """
-    Generate the first differenced dataset from a PecanStreetDataset.
-
-    Args:
-        dataset (PecanStreetDataset): The original dataset.
-
-    Returns:
-        PecanStreetDataset: A new dataset with differenced time series.
-    """
-    differenced_data = dataset.data.copy()
-
-    def difference_timeseries(series):
-        diff = np.diff(series, axis=0)
-        return np.pad(diff, ((1, 0), (0, 0)), mode="constant")
-
-    differenced_data["timeseries"] = differenced_data["timeseries"].apply(
-        difference_timeseries
-    )
-
-    # Create a new dataset with the differenced data
-    differenced_dataset = PecanStreetDataset(
-        data=differenced_data,
-        stats=dataset.stats,
-        is_pv_user=dataset.is_pv_user,
-        include_generation=dataset.include_generation,
-        metadata=dataset.metadata,
-    )
-
-    return differenced_dataset
-
-
-def inverse_transform_differenced_dataset(differenced_dataset, original_dataset):
-    """
-    Transform the differenced dataset back to original values.
-
-    Args:
-        differenced_dataset (PecanStreetDataset): The differenced dataset.
-        original_dataset (PecanStreetDataset): The original dataset to get the first value.
-
-    Returns:
-        PecanStreetDataset: A new dataset with the original time series reconstructed.
-    """
-    reconstructed_data = differenced_dataset.data.copy()
-
-    def reconstruct_timeseries(row):
-        diff_series = row["timeseries"]
-        original_first_value = original_dataset.data[
-            (original_dataset.data["dataid"] == row["dataid"])
-            & (original_dataset.data["month"] == row["month"])
-            & (original_dataset.data["weekday"] == row["weekday"])
-        ]["timeseries"].iloc[0][0]
-
-        reconstructed = np.zeros_like(diff_series)
-        reconstructed[0] = original_first_value
-        np.cumsum(diff_series[1:], axis=0, out=reconstructed[1:])
-        reconstructed[1:] += reconstructed[0]
-
-        return reconstructed
-
-    reconstructed_data["timeseries"] = reconstructed_data.apply(
-        reconstruct_timeseries, axis=1
-    )
-
-    reconstructed_dataset = PecanStreetDataset(
-        data=reconstructed_data,
-        stats=original_dataset.stats,
-        is_pv_user=original_dataset.is_pv_user,
-        include_generation=original_dataset.include_generation,
-        metadata=original_dataset.metadata,
-    )
-
-    return reconstructed_dataset

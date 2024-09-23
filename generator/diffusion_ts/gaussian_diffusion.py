@@ -286,13 +286,17 @@ class Diffusion_TS(nn.Module):
         if random:
             for var_name, num_categories in self.categorical_dims.items():
                 conditioning_vars[var_name] = torch.randint(
-                    0, num_categories, (batch_size,), device=self.device
+                    0,
+                    num_categories,
+                    (batch_size,),
+                    dtype=torch.long,
+                    device=self.device,
                 )
         else:
             sampled_rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
             for var_name in self.categorical_dims.keys():
                 conditioning_vars[var_name] = torch.tensor(
-                    sampled_rows[var_name].values, device=self.device
+                    sampled_rows[var_name].values, dtype=torch.long, device=self.device
                 )
 
         return conditioning_vars
