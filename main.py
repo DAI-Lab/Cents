@@ -8,8 +8,8 @@ def evaluate_individual_user_models(
     full_dataset = PecanStreetDataManager(
         normalize=normalize,
         include_generation=include_generation,
-        threshold=(-10, 10),
-        normalization_method="group",
+        threshold=(-8, 8),
+        normalization_method="date",
     )
     evaluator = Evaluator(full_dataset, model_name)
     evaluator.evaluate_all_user_models()
@@ -22,6 +22,7 @@ def evaluate_single_dataset_model(
         geography=geography,
         normalize=normalize,
         include_generation=include_generation,
+        normalization_method="date",
         threshold=(-10, 10),
     )
     evaluator = Evaluator(full_dataset, model_name)
@@ -32,9 +33,11 @@ def evaluate_single_dataset_model(
 
 def main():
     # evaluate_individual_user_models("gpt", include_generation=False)
-    # evaluate_individual_user_models("diffusion_ts", include_generation=False)
-    evaluate_individual_user_models("acgan", include_generation=False)
-    # evaluate_single_dataset_model("acgan", include_generation=False)
+    # evaluate_individual_user_models("acgan", include_generation=True)
+    # evaluate_individual_user_models("acgan", include_generation=False)
+    evaluate_single_dataset_model(
+        "diffusion_ts", geography="austin", include_generation=True, normalize="group"
+    )
 
 
 if __name__ == "__main__":

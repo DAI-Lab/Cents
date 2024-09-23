@@ -28,5 +28,5 @@ class ConditioningModule(nn.Module):
             var = categorical_vars[name].to(self.device)
             embeddings.append(embedding(var))
         conditioning_matrix = torch.cat(embeddings, dim=1)
-        # conditioning_matrix = self.mlp(conditioning_matrix)
+        conditioning_matrix = self.mlp(conditioning_matrix)
         return conditioning_matrix
