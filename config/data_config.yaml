@@ -11,14 +11,13 @@ datasets:
      ]
     metadata_columns: ["dataid",
       "building_type",
-      "pv",
+      #"pv",
       "solar",
       "car1",
       "city",
       "state",
       "total_square_footage",
-      "house_construction_year",
-      "total_amount_of_pv"
+      "house_construction_year"
     ]
   goinerdata:
     path: "home/fuest/EnData/data/goinerdata/"

@@ -11,8 +11,7 @@ import torch
 import yaml
 from torch.utils.data import Dataset
 
-from datasets.utils import encode_categorical_variables
-from datasets.utils import encode_numerical_variables
+from datasets.utils import encode_conditioning_variables
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -90,6 +89,7 @@ class PecanStreetDataManager:
             raise FileNotFoundError(f"Metadata file not found at {metadata_csv_path}")
 
         metadata = pd.read_csv(metadata_csv_path, usecols=metadata_columns)
+
         if "solar" in metadata.columns:
             metadata.rename(columns={"solar": "has_solar"}, inplace=True)
 
@@ -97,11 +97,8 @@ class PecanStreetDataManager:
         user_flags = self._set_user_flags(metadata, data)
         data = self._preprocess_data(data)
         data = pd.merge(data, metadata, on="dataid", how="left")
-        data = encode_categorical_variables(data)
-        data = encode_numerical_variables(
-            data,
-            ["total_square_footage", "house_construction_year", "total_amount_of_pv"],
-        )
+        data = self._handle_missing_data(data)
+        data = encode_conditioning_variables(data)
         return data, metadata, user_flags
 
     def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
@@ -193,31 +190,24 @@ class PecanStreetDataManager:
         """
 
         def calculate_stats(group):
-            # Concatenate all time series arrays in the group
             all_values = np.concatenate(group[column].values)
-
-            # Standardization statistics
             mean = np.mean(all_values)
             std = np.std(all_values)
 
-            # Perform standardization on all_values
             standardized = (all_values - mean) / (std + 1e-8)
 
-            # Min-Max scaling statistics on standardized data
             z_min = np.min(standardized)
             z_max = np.max(standardized)
 
             return pd.Series({"mean": mean, "std": std, "z_min": z_min, "z_max": z_max})
 
         if self.normalization_method == "group":
-            # Group by dataid, month, and weekday
             grouped_stats = data.groupby(["dataid", "month", "weekday"]).apply(
                 calculate_stats
             )
             return grouped_stats.to_dict(orient="index")
 
         elif self.normalization_method == "date":
-            # Group by month and weekday
             grouped_stats = data.groupby(["month", "weekday"]).apply(calculate_stats)
             return grouped_stats.to_dict(orient="index")
 
@@ -251,15 +241,12 @@ class PecanStreetDataManager:
             z_min = stats["z_min"]
             z_max = stats["z_max"]
 
-            # Standardization
             values = np.array(row[column])
             standardized = (values - mean) / (std + 1e-8)
 
-            # Optional Clipping after Standardization
             if self.threshold:
                 standardized = np.clip(standardized, *self.threshold)
 
-            # Min-Max Scaling on standardized data
             scaled = (standardized - z_min) / (z_max - z_min + 1e-8)
 
             return scaled
@@ -292,6 +279,13 @@ class PecanStreetDataManager:
             solar_data = self._normalize_and_scale(solar_data, "solar")
 
         return solar_data
+
+    def _handle_missing_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        data["car1"] = data["car1"].fillna("no")
+        data["has_solar"] = data["has_solar"].fillna("no")
+
+        assert data.isna().sum().sum() == 0, "Missing data remaining!"
+        return data
 
     @staticmethod
     def _merge_columns_into_timeseries(df: pd.DataFrame) -> pd.DataFrame:
@@ -632,7 +626,13 @@ class PecanStreetDataset(Dataset):
             "car1": torch.tensor(sample["car1"], dtype=torch.long),
             "city": torch.tensor(sample["city"], dtype=torch.long),
             "state": torch.tensor(sample["state"], dtype=torch.long),
-            "has_solar": torch.tensor(sample["has_solar"], dtype=torch.long),  # Updated
+            "has_solar": torch.tensor(sample["has_solar"], dtype=torch.long),
+            "total_square_footage": torch.tensor(
+                sample["total_square_footage"], dtype=torch.long
+            ),
+            "house_construction_year": torch.tensor(
+                sample["house_construction_year"], dtype=torch.long
+            ),
         }
 
         return (torch.tensor(time_series, dtype=torch.float32), conditioning_vars)
