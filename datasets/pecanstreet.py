@@ -12,6 +12,7 @@ import yaml
 from torch.utils.data import Dataset
 
 from datasets.utils import encode_categorical_variables
+from datasets.utils import encode_numerical_variables
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -96,8 +97,11 @@ class PecanStreetDataManager:
         user_flags = self._set_user_flags(metadata, data)
         data = self._preprocess_data(data)
         data = pd.merge(data, metadata, on="dataid", how="left")
-        data, mappings = encode_categorical_variables(data.fillna("no"))
-        self.mappings = mappings
+        data = encode_categorical_variables(data)
+        data = encode_numerical_variables(
+            data,
+            ["total_square_footage", "house_construction_year", "total_amount_of_pv"],
+        )
         return data, metadata, user_flags
 
     def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
@@ -406,7 +410,7 @@ class PecanStreetDataManager:
         return PecanStreetDataset(
             data=pv_data,
             stats=self.stats,
-            is_pv_user=True,
+            is_pv_user=self.include_generation,
             include_generation=True,
             metadata=self.metadata,
             normalization_method=self.normalization_method,
