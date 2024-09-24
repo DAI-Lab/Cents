@@ -2,6 +2,7 @@ from typing import List
 from typing import Tuple
 
 import numpy as np
+import pandas as pd
 import torch
 from sklearn.metrics import mean_squared_error
 from torch.utils.data import DataLoader
@@ -80,40 +81,57 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
     return train_dataset, val_dataset
 
 
-def encode_categorical_variables(df):
+def encode_categorical_variables(data: pd.DataFrame, columns: List[str]):
     """
     Encodes categorical variables in a DataFrame to integer codes.
 
     Args:
-        df (pd.DataFrame): Input DataFrame containing categorical variables.
+        data (pd.DataFrame): Input DataFrame containing categorical variables.
+        columns (List[str]): List of column names to transform.
 
     Returns:
         df_encoded (pd.DataFrame): DataFrame with categorical variables encoded as integer codes.
         mappings (dict): Dictionary mapping column names to their category-to-code mappings.
     """
-    df_encoded = df.copy()
+    df_encoded = data.copy()
     mappings = {}
 
-    # Select columns with object or category data types
-    categorical_cols = df_encoded.select_dtypes(include=["object", "category"]).columns
-
-    for col in categorical_cols:
-        if col == "timeseries":  # skip time series col
-            continue
-        # Convert column to 'category' dtype if not already
+    for col in columns:
         df_encoded[col] = df_encoded[col].astype("category")
 
-        # Create a mapping from categories to codes
         category_to_code = dict(enumerate(df_encoded[col].cat.categories))
         code_to_category = {v: k for k, v in category_to_code.items()}
-
-        # Replace categories with codes in the DataFrame
         df_encoded[col] = df_encoded[col].cat.codes
 
-        # Save the mapping for the current column
         mappings[col] = {
             "category_to_code": {cat: code for code, cat in category_to_code.items()},
             "code_to_category": code_to_category,
         }
 
-    return df_encoded, mappings
+    return df_encoded
+
+
+def encode_numerical_variables(data: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
+    """
+    Takes numerical conditioning columns (e.g. total square footage), and converts it into integer encoded mappings.
+
+    Args:
+        data (pd.DataFrame): The data whose numerical cols are being encoded.
+        columns (List[str]): The column names of numerical columns that need to be encoded.
+
+    Returns:
+        data (pd.DataFrame): The data frame that now has integer codes where numerical values used to be.
+    """
+    for col in columns:
+
+        data[col] = pd.to_numeric(data[col], errors="coerce")
+        data[col]
+
+        if data[col].isnull().all():
+            raise ValueError(f"Column '{col}' contains no valid numeric values.")
+
+        data[col] = pd.cut(
+            data[col], bins=5, labels=[0, 1, 2, 3, 4], include_lowest=True
+        ).astype(int)
+
+    return data

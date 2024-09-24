@@ -255,7 +255,7 @@ class ACGAN:
                 )
                 for var_name in self.categorical_dims.keys():
                     labels = gen_categorical_vars[var_name]
-                    g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
+                    g_loss += 0.1 * self.auxiliary_loss(aux_outputs[var_name], labels)
 
                 g_loss.backward()
                 self.optimizer_G.step()

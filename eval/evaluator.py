@@ -182,9 +182,7 @@ class Evaluator:
         )
 
         for keys, tensor in random_conditioning_vars.items():
-            random_conditioning_vars[keys] = tensor.repeat(
-                num_samples
-            )  # repeat tensors according to specified num_samples
+            random_conditioning_vars[keys] = tensor.repeat(num_samples)
 
         generated_ts = model.generate(random_conditioning_vars).cpu().numpy()
 
@@ -441,6 +439,7 @@ class Evaluator:
         dataset: Any,
         model: Any,
         writer: SummaryWriter,
+        num_runs=3,
     ):
         """
         Create various visualizations for the evaluation results.
@@ -452,28 +451,30 @@ class Evaluator:
             dataset (Any): The dataset object.
             model (Any): The trained model.
             writer (SummaryWriter): TensorBoard writer for logging visualizations.
+            num_plots (int): The number of visualization runs you want to make.
         """
-        samples = self.generate_samples_for_eval(
-            real_user_data["dataid"].iloc[0],
-            model,
-            dataset,
-            num_samples=100,
-        )
-        samples = dataset.inverse_transform(samples)
-        month = samples.iloc[0]["month"]
-        weekday = samples.iloc[0]["weekday"]
+        for i in range(num_runs):
+            samples = self.generate_samples_for_eval(
+                real_user_data["dataid"].iloc[0],
+                model,
+                dataset,
+                num_samples=100,
+            )
+            samples = dataset.inverse_transform(samples)
+            month = samples.iloc[0]["month"]
+            weekday = samples.iloc[0]["weekday"]
 
-        # Visualization 1: Plot range with synthetic values
-        range_plot = plot_range_with_syn_values(
-            real_user_data_inv, samples, month, weekday
-        )
-        writer.add_figure("Visualizations/Range_Plot", range_plot)
+            # Visualization 1: Plot range with synthetic values
+            range_plot = plot_range_with_syn_values(
+                real_user_data_inv, samples, month, weekday
+            )
+            writer.add_figure(f"Visualizations/Range_Plot_{i}", range_plot)
 
-        # Visualization 2: Plot closest real signals with synthetic values
-        closest_plot = plot_syn_with_closest_real_ts(
-            real_user_data_inv, samples, month, weekday
-        )
-        writer.add_figure("Visualizations/Closest_Real_TS", closest_plot)
+            # Visualization 2: Plot closest real signals with synthetic values
+            closest_plot = plot_syn_with_closest_real_ts(
+                real_user_data_inv, samples, month, weekday
+            )
+            writer.add_figure(f"Visualizations/Closest_Real_TS_{i}", closest_plot)
 
         # Visualization 4: t-SNE visualization of real and synthetic data
         real_data_array = np.stack(real_user_data_inv["timeseries"])
