@@ -12,6 +12,8 @@ conditioning_vars: # for each desired conditioning variable, add the name and nu
   car1: 2
   city: 7
   state: 3
+  total_square_footage: 5
+  house_construction_year: 5
 
 diffcharge:
   batch_size: 64

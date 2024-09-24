@@ -81,57 +81,26 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
     return train_dataset, val_dataset
 
 
-def encode_categorical_variables(data: pd.DataFrame, columns: List[str]):
+def encode_conditioning_variables(data: pd.DataFrame) -> pd.DataFrame:
     """
-    Encodes categorical variables in a DataFrame to integer codes.
+    Takes conditioning columns (e.g. city, total square footage), and converts it into integer encoded mappings. Discretizes numerical conditioning
+    variables into categorical bins.
 
     Args:
-        data (pd.DataFrame): Input DataFrame containing categorical variables.
-        columns (List[str]): List of column names to transform.
+        data (pd.DataFrame): The data whose cols are being encoded.
 
     Returns:
-        df_encoded (pd.DataFrame): DataFrame with categorical variables encoded as integer codes.
-        mappings (dict): Dictionary mapping column names to their category-to-code mappings.
+        data (pd.DataFrame): The data frame that now has integer codes where numerical and categorical values used to be.
     """
-    df_encoded = data.copy()
-    mappings = {}
+    for col in data.columns:
 
-    for col in columns:
-        df_encoded[col] = df_encoded[col].astype("category")
+        if col in ["dataid", "timeseries", "month", "weekday", "date_day"]:
+            continue
 
-        category_to_code = dict(enumerate(df_encoded[col].cat.categories))
-        code_to_category = {v: k for k, v in category_to_code.items()}
-        df_encoded[col] = df_encoded[col].cat.codes
-
-        mappings[col] = {
-            "category_to_code": {cat: code for code, cat in category_to_code.items()},
-            "code_to_category": code_to_category,
-        }
-
-    return df_encoded
-
-
-def encode_numerical_variables(data: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
-    """
-    Takes numerical conditioning columns (e.g. total square footage), and converts it into integer encoded mappings.
-
-    Args:
-        data (pd.DataFrame): The data whose numerical cols are being encoded.
-        columns (List[str]): The column names of numerical columns that need to be encoded.
-
-    Returns:
-        data (pd.DataFrame): The data frame that now has integer codes where numerical values used to be.
-    """
-    for col in columns:
-
-        data[col] = pd.to_numeric(data[col], errors="coerce")
-        data[col]
-
-        if data[col].isnull().all():
-            raise ValueError(f"Column '{col}' contains no valid numeric values.")
-
-        data[col] = pd.cut(
-            data[col], bins=5, labels=[0, 1, 2, 3, 4], include_lowest=True
-        ).astype(int)
-
+        if pd.api.types.is_numeric_dtype(data[col]):
+            data[col] = pd.cut(
+                data[col], bins=5, labels=[0, 1, 2, 3, 4], include_lowest=True
+            ).astype(int)
+        else:
+            data[col] = data[col].astype("category").cat.codes
     return data
