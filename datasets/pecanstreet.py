@@ -283,7 +283,12 @@ class PecanStreetDataManager:
     def _handle_missing_data(self, data: pd.DataFrame) -> pd.DataFrame:
         data["car1"] = data["car1"].fillna("no")
         data["has_solar"] = data["has_solar"].fillna("no")
-
+        data["house_construction_year"] = data["house_construction_year"].fillna(
+            data["house_construction_year"].mean(skipna=True)
+        )
+        data["total_square_footage"] = data["total_square_footage"].fillna(
+            data["total_square_footage"].mean(skipna=True)
+        )
         assert data.isna().sum().sum() == 0, "Missing data remaining!"
         return data
 
@@ -405,7 +410,7 @@ class PecanStreetDataManager:
             data=pv_data,
             stats=self.stats,
             is_pv_user=self.include_generation,
-            include_generation=True,
+            include_generation=self.include_generation,
             metadata=self.metadata,
             normalization_method=self.normalization_method,
         )

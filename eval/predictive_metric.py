@@ -57,7 +57,9 @@ def predictive_score_metrics(ori_data, generated_data):
     criterion = nn.L1Loss()
     optimizer = optim.Adam(model.parameters())
 
-    for itt in tqdm(range(iterations), desc="training", total=iterations):
+    for itt in tqdm(
+        range(iterations), desc="Training Predictive Score Model", total=iterations
+    ):
         idx = np.random.permutation(len(generated_data))
         train_idx = idx[:batch_size]
 

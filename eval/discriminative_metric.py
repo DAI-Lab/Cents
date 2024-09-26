@@ -134,7 +134,9 @@ def discriminative_score_metrics(
     ) = train_test_divide(ori_data, generated_data, ori_time, generated_time)
 
     # Training loop
-    for _ in tqdm(range(iterations), desc="Training", total=iterations):
+    for _ in tqdm(
+        range(iterations), desc="Training Discriminative Score Model", total=iterations
+    ):
         # Batch generation
         X_mb, T_mb = batch_generator(train_x, train_t, batch_size)
         X_hat_mb, T_hat_mb = batch_generator(train_x_hat, train_t_hat, batch_size)

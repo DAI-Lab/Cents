@@ -157,6 +157,7 @@ class ACGAN:
         self.cond_emb_dim = opt.cond_emb_dim
         self.categorical_dims = opt.categorical_dims
         self.device = opt.device
+        self.warm_up_epochs = opt.warm_up_epochs
         self.writer = SummaryWriter()
 
         assert (
@@ -191,7 +192,7 @@ class ACGAN:
         train_loader = prepare_dataloader(dataset, batch_size)
 
         for epoch in range(num_epoch):
-            for i, (time_series_batch, conditioning_vars_batch) in enumerate(
+            for batch_index, (time_series_batch, conditioning_vars_batch) in enumerate(
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
                 time_series_batch = time_series_batch.to(self.device)
@@ -199,6 +200,7 @@ class ACGAN:
                     name: conditioning_vars_batch[name]
                     for name in self.categorical_dims.keys()
                 }
+
                 current_batch_size = time_series_batch.size(0)
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
@@ -208,6 +210,22 @@ class ACGAN:
                 ).to(self.device)
 
                 soft_zero, soft_one = 0, 0.95
+
+                rare_mask = torch.ones((current_batch_size,)).to(self.device)
+
+                if epoch < self.warm_up_epochs:
+                    self.generator.conditioning_module.collect_embeddings(
+                        conditioning_vars_batch
+                    )
+                elif epoch == self.warm_up_epochs and batch_index == 0:
+                    self.generator.conditioning_module.compute_gaussian_parameters()
+                else:
+                    embeddings = self.generator.conditioning_module(
+                        conditioning_vars_batch
+                    )
+                    rare_mask = self.generator.conditioning_module.is_rare(
+                        embeddings
+                    ).to(self.device)
 
                 # ---------------------
                 #  Train Discriminator
@@ -250,9 +268,19 @@ class ACGAN:
 
                 validity, aux_outputs = self.discriminator(generated_time_series)
 
-                g_loss = self.adversarial_loss(
-                    validity, torch.ones_like(validity) * soft_one
+                g_loss_rare = self.adversarial_loss(
+                    validity.squeeze() * rare_mask,
+                    torch.ones_like(validity.squeeze()) * rare_mask * soft_one,
                 )
+
+                g_loss_non_rare = self.adversarial_loss(
+                    validity.squeeze() * (torch.logical_not(rare_mask)),
+                    torch.ones_like(validity.squeeze())
+                    * torch.logical_not(rare_mask)
+                    * soft_one,
+                )
+
+                g_loss = 0.8 * g_loss_rare + 0.2 * g_loss_non_rare
                 for var_name in self.categorical_dims.keys():
                     labels = gen_categorical_vars[var_name]
                     g_loss += 0.1 * self.auxiliary_loss(aux_outputs[var_name], labels)
