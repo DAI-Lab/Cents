@@ -45,10 +45,6 @@ def linear_beta_schedule(timesteps):
 
 
 def cosine_beta_schedule(timesteps, s=0.004):
-    """
-    cosine schedule
-    as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
-    """
     steps = timesteps + 1
     x = torch.linspace(0, timesteps, steps, dtype=torch.float32).to(device)
     alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
@@ -68,6 +64,10 @@ class Diffusion_TS(nn.Module):
         self.device = opt.device
         self.embedding_dim = opt.cond_emb_dim
         self.categorical_dims = opt.categorical_dims
+        self.warm_up_epochs = opt.warm_up_epochs  # Number of warm-up epochs
+        self.sparse_conditioning_loss_weight = (
+            opt.sparse_conditioning_loss_weight
+        )  # Weight for rare samples
 
         self.conditioning_module = ConditioningModule(
             self.categorical_dims, self.embedding_dim, self.device
@@ -382,7 +382,6 @@ class Diffusion_TS(nn.Module):
     def train_model(self, train_dataset):
         self.to(device)
 
-        # Create DataLoader
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.opt.batch_size,
@@ -390,10 +389,8 @@ class Diffusion_TS(nn.Module):
             drop_last=True,
         )
 
-        # Create necessary directories
         os.makedirs(self.opt.results_folder, exist_ok=True)
 
-        # Optimizer and EMA setup
         self.optimizer = Adam(
             filter(lambda p: p.requires_grad, self.parameters()),
             lr=self.opt.base_lr,
@@ -406,6 +403,8 @@ class Diffusion_TS(nn.Module):
             self.optimizer, **self.opt.lr_scheduler_params
         )
 
+        self.conditioning_module.to(self.device)
+
         # Training loop
         for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
             total_loss = 0.0
@@ -413,15 +412,65 @@ class Diffusion_TS(nn.Module):
                 train_loader
             ):
                 time_series_batch = time_series_batch.to(device)
-                # Move conditioning_vars to device
+
                 for key in conditioning_vars_batch:
                     conditioning_vars_batch[key] = conditioning_vars_batch[key].to(
                         device
                     )
 
-                loss = self(
-                    time_series_batch, conditioning_vars=conditioning_vars_batch
-                )
+                current_batch_size = time_series_batch.size(0)
+
+                if epoch < self.warm_up_epochs:
+                    self.conditioning_module.collect_embeddings(conditioning_vars_batch)
+                elif epoch == self.warm_up_epochs and i == 0:
+                    self.conditioning_module.compute_gaussian_parameters()
+                else:
+                    with torch.no_grad():
+                        embeddings = self.conditioning_module(conditioning_vars_batch)
+                        rare_mask = (
+                            self.conditioning_module.is_rare(embeddings)
+                            .to(device)
+                            .float()
+                        )
+
+                self.optimizer.zero_grad()
+
+                if epoch <= self.warm_up_epochs:
+                    loss = self(
+                        time_series_batch, conditioning_vars=conditioning_vars_batch
+                    )
+                else:
+                    rare_indices = (rare_mask == 1.0).nonzero(as_tuple=True)[0]
+                    non_rare_indices = (rare_mask == 0.0).nonzero(as_tuple=True)[0]
+
+                    loss_rare = torch.tensor(0.0).to(device)
+                    loss_non_rare = torch.tensor(0.0).to(device)
+
+                    if len(rare_indices) > 0:
+                        time_series_batch_rare = time_series_batch[rare_indices]
+                        conditioning_vars_rare = {
+                            key: val[rare_indices]
+                            for key, val in conditioning_vars_batch.items()
+                        }
+                        loss_rare = self(
+                            time_series_batch_rare,
+                            conditioning_vars=conditioning_vars_rare,
+                        )
+
+                    if len(non_rare_indices) > 0:
+                        time_series_batch_non_rare = time_series_batch[non_rare_indices]
+                        conditioning_vars_non_rare = {
+                            key: val[non_rare_indices]
+                            for key, val in conditioning_vars_batch.items()
+                        }
+                        loss_non_rare = self(
+                            time_series_batch_non_rare,
+                            conditioning_vars=conditioning_vars_non_rare,
+                        )
+
+                    _lambda = self.sparse_conditioning_loss_weight
+                    loss = _lambda * loss_rare + (1 - _lambda) * loss_non_rare
+
                 loss = loss / self.opt.gradient_accumulate_every
                 loss.backward()
                 total_loss += loss.item()
@@ -434,7 +483,6 @@ class Diffusion_TS(nn.Module):
 
             self.scheduler.step(total_loss)
 
-            # Save model checkpoint
             if (epoch + 1) % self.opt.save_cycle == 0:
                 checkpoint_path = os.path.join(
                     self.opt.results_folder, f"checkpoint-{epoch + 1}.pt"

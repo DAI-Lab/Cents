@@ -321,6 +321,10 @@ def plot_range_with_syn_values(
     filtered_df = df[(df["month"] == month) & (df["weekday"] == weekday)]
     array_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
 
+    if array_data.size == 0:
+        print(f"No real data for month={month}, weekday={weekday}")
+        return
+
     min_values = np.min(array_data, axis=0)
     max_values = np.max(array_data, axis=0)
 
@@ -341,19 +345,30 @@ def plot_range_with_syn_values(
         max_values,
         color="gray",
         alpha=0.5,
-        label="Range of values",
+        label="Range of Real Data",
     )
 
+    # Plot all synthetic time series without adding multiple labels
     for index in range(syn_values.shape[0]):
-        plt.plot(
-            timestamps,
-            syn_values[index],
-            color="blue",
-            marker="o",
-            markersize=2,
-            linestyle="-",
-            label=f"Synthetic values {index}",
-        )
+        if index == 0:
+            plt.plot(
+                timestamps,
+                syn_values[index],
+                color="blue",
+                marker="o",
+                markersize=2,
+                linestyle="-",
+                label="Synthetic Data",
+            )
+        else:
+            plt.plot(
+                timestamps,
+                syn_values[index],
+                color="blue",
+                marker="o",
+                markersize=2,
+                linestyle="-",
+            )
 
     plt.title(
         f"Range of Values and Synthetic Data Comparison for Month={month}, Weekday={weekday}"
@@ -383,6 +398,10 @@ def plot_syn_with_closest_real_ts(
     filtered_df = df[(df["month"] == month) & (df["weekday"] == weekday)]
     real_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
 
+    if real_data.size == 0:
+        print(f"No real data for month={month}, weekday={weekday}")
+        return
+
     syn_filtered_df = syn_df[
         (syn_df["month"] == month) & (syn_df["weekday"] == weekday)
     ]
@@ -394,6 +413,9 @@ def plot_syn_with_closest_real_ts(
     timestamps = pd.date_range(start="00:00", end="23:45", freq="15T").strftime("%H:%M")
 
     f = plt.figure(figsize=(15, 7))
+    synthetic_plotted = False
+    real_plotted = False
+
     for index in range(syn_values.shape[0]):
         syn_ts = syn_values[index]
 
@@ -408,26 +430,48 @@ def plot_syn_with_closest_real_ts(
                 closest_real_ts = real_ts
 
         # Plot synthetic time series
-        plt.plot(
-            timestamps,
-            syn_ts,
-            color="blue",
-            marker="o",
-            markersize=2,
-            linestyle="-",
-            label=f"Synthetic TS {index}",
-        )
+        if not synthetic_plotted:
+            plt.plot(
+                timestamps,
+                syn_ts,
+                color="blue",
+                marker="o",
+                markersize=2,
+                linestyle="-",
+                label="Synthetic Time Series",
+            )
+            synthetic_plotted = True
+        else:
+            plt.plot(
+                timestamps,
+                syn_ts,
+                color="blue",
+                marker="o",
+                markersize=2,
+                linestyle="-",
+            )
 
         # Plot closest real time series
-        plt.plot(
-            timestamps,
-            closest_real_ts,
-            color="red",
-            marker="x",
-            markersize=2,
-            linestyle="--",
-            label=f"Closest Real TS {index}",
-        )
+        if not real_plotted:
+            plt.plot(
+                timestamps,
+                closest_real_ts,
+                color="red",
+                marker="x",
+                markersize=2,
+                linestyle="--",
+                label="Closest Real Time Series",
+            )
+            real_plotted = True
+        else:
+            plt.plot(
+                timestamps,
+                closest_real_ts,
+                color="red",
+                marker="x",
+                markersize=2,
+                linestyle="--",
+            )
 
     plt.title(
         f"Synthetic vs Closest Real Time Series (DTW) for Month={month}, Weekday={weekday}"
