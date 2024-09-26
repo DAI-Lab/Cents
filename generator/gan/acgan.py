@@ -158,7 +158,8 @@ class ACGAN:
         self.categorical_dims = opt.categorical_dims
         self.device = opt.device
         self.warm_up_epochs = opt.warm_up_epochs
-        self.writer = SummaryWriter()
+        self.sparse_conditioning_loss_weight = opt.sparse_conditioning_loss_weight
+        # self.writer = SummaryWriter()
 
         assert (
             self.seq_len % 8 == 0
@@ -279,11 +280,11 @@ class ACGAN:
                     * torch.logical_not(rare_mask)
                     * soft_one,
                 )
-
-                g_loss = 0.8 * g_loss_rare + 0.2 * g_loss_non_rare
+                _lambda = self.sparse_conditioning_loss_weight
+                g_loss = _lambda * g_loss_rare + (1 - _lambda) * g_loss_non_rare
                 for var_name in self.categorical_dims.keys():
                     labels = gen_categorical_vars[var_name]
-                    g_loss += 0.1 * self.auxiliary_loss(aux_outputs[var_name], labels)
+                    g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
 
                 g_loss.backward()
                 self.optimizer_G.step()
@@ -295,7 +296,7 @@ class ACGAN:
                 # Log overall losses for both generator and discriminator on the same chart
                 # self.writer.add_scalars('GAN Losses', {'Discriminator': d_loss.item(), 'Generator': g_loss.item()}, epoch * len(train_loader) + i)
 
-        self.writer.close()
+        # self.writer.close()
 
     def sample_conditioning_vars(self, dataset, batch_size, random=False):
         conditioning_vars = {}

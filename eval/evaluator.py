@@ -66,10 +66,18 @@ class Evaluator:
             log_dir = f"{self.log_dir}/{self.model_name}/user_{user_id}"
         else:
             dataset = self.real_dataset
-            log_dir = f"{self.log_dir}/{self.model_name}/all_users"
+            if dataset.include_generation:
+                dataset_type = "pv_users"
+            else:
+                dataset_type = "non_pv_users"
+
+        log_dir = f"{self.log_dir}/{self.model_name}/{dataset_type}"
+        model = self.get_trained_model(dataset)
+
+        if model.sparse_conditioning_loss_weight != 0.5:
+            log_dir += "/rare_upweight"
 
         writer = SummaryWriter(log_dir)
-        model = self.get_trained_model(dataset)
 
         print("----------------------")
         if user_id is not None:
