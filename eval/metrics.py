@@ -66,14 +66,14 @@ def get_period_bounds(
 
 
 def calculate_period_bound_mse(
-    synthetic_timeseries: np.ndarray, real_dataframe: pd.DataFrame
+    real_dataframe: pd.DataFrame, synthetic_timeseries: np.ndarray
 ) -> Tuple[float, float]:
     """
     Calculate the Mean Squared Error (MSE) between synthetic and real time series data, considering period bounds.
 
     Args:
-        synthetic_timeseries: The synthetic time series data.
         real_dataframe: DataFrame containing real time series data.
+        synthetic_timeseries: The synthetic time series data.
 
     Returns:
         Tuple[float, float]: The mean and standard deviation of the period-bound MSE.
@@ -120,7 +120,7 @@ def calculate_mmd(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float]:
 
     n_timeseries, _, n_dimensions = X.shape
     discrepancies = []
-    sigmas = [1]  # Hyperparameter for Gaussian kernel
+    sigmas = [1]
     gaussian_kernel = partial(gaussian_kernel_matrix, sigmas=np.array(sigmas))
 
     for i in range(n_timeseries):

@@ -1,7 +1,7 @@
 seq_len: 96 # should not be changed for the current datasets
 input_dim: 2 # or 1 depending on user, but is dynamically set
 noise_dim: 256
-cond_emb_dim: 256
+cond_emb_dim: 64
 shuffle: True
 
 conditioning_vars: # for each desired conditioning variable, add the name and number of categories
@@ -22,12 +22,12 @@ diffcharge:
   network: cnn # attention
   guidance_scale: 1.2
   hidden_dim: 256
-  cond_emb_dim: 32
   nhead: 8
   beta_start: 1e-4
   beta_end: 0.02
   n_steps: 1000
   schedule: linear # quadratic, cosine
+  warm_up_epochs: 100
 
 diffusion_ts:
   batch_size: 64
@@ -37,7 +37,6 @@ diffusion_ts:
   n_layer_enc: 4
   n_layer_dec: 5
   d_model: 256
-  cond_emb_dim: 256
   sampling_timesteps: null
   loss_type: l1 #l2
   beta_schedule: cosine #linear
@@ -62,10 +61,11 @@ diffusion_ts:
     threshold: 1.0e-1
     threshold_mode: rel
     verbose: false
+  warm_up_epochs: 100
 
 acgan:
-  batch_size: 16
+  batch_size: 32
   n_epochs: 200
-  validate: false # add validation during training
-  lr_gen: 2e-4
+  lr_gen: 3e-4
   lr_discr: 1e-4
+  warm_up_epochs: 10

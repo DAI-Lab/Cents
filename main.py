@@ -22,17 +22,20 @@ def evaluate_single_dataset_model(
     include_generation=True,
     normalization_method="group",
 ):
-    full_dataset = PecanStreetDataManager(
+    dataset_manager = PecanStreetDataManager(
         geography=geography,
         normalize=normalize,
         include_generation=include_generation,
         normalization_method=normalization_method,
-        threshold=(-6, 6),
+        threshold=(-5, 5),
     )
-    evaluator = Evaluator(full_dataset, model_name)
+    pv_user_dataset = dataset_manager.create_all_pv_user_dataset()
+    non_pv_user_dataset = dataset_manager.create_non_pv_user_dataset()
+    pv_user_evaluator = Evaluator(pv_user_dataset, model_name)
+    non_pv_user_evaluator = Evaluator(non_pv_user_dataset, model_name)
     # evaluator.evaluate_all_users()
     # evaluator.evaluate_all_non_pv_users()
-    evaluator.evaluate_all_pv_users()
+    pv_user_evaluator.evaluate_model(None, distinguish_rare=True)
 
 
 def main():
@@ -40,10 +43,10 @@ def main():
     # evaluate_individual_user_models("acgan", include_generation=True)
     # evaluate_individual_user_models("acgan", include_generation=False, normalization_method="date")
     evaluate_single_dataset_model(
-        "diffusion_ts",
+        "acgan",
         geography="austin",
-        include_generation=True,
-        normalization_method="date",
+        include_generation=False,
+        normalization_method="group",
     )
 
 

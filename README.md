@@ -13,10 +13,9 @@
 
 # EnData
 
-A package for generative modeling and evaluation of synthetic household-level electricity load timeseries.
+A package for generative modeling and evaluation of synthetic household-level electricity load timeseries. This package is still under active development.
 
-- Documentation: https://michael-fuest.github.io/EnData
-- Homepage: https://github.com/michael-fuest/EnData
+- Documentation: (tbd)
 
 # Overview
 

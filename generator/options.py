@@ -62,6 +62,7 @@ class Options:
         self.beta_end = model_params.beta_end
         self.n_steps = model_params.n_steps
         self.schedule = model_params.schedule
+        self.warm_up_epochs = model_params.warm_up_epochs
 
     def _load_diffusion_ts_params(self, model_params):
         """
@@ -77,7 +78,6 @@ class Options:
         self.n_layer_enc = model_params.n_layer_enc
         self.n_layer_dec = model_params.n_layer_dec
         self.d_model = model_params.d_model
-        self.cond_emb_dim = model_params.cond_emb_dim
         self.sampling_timesteps = model_params.sampling_timesteps
         self.loss_type = model_params.loss_type
         self.beta_schedule = model_params.beta_schedule
@@ -96,6 +96,7 @@ class Options:
         self.ema_decay = model_params.ema_decay
         self.ema_update_interval = model_params.ema_update_interval
         self.lr_scheduler_params = model_params.lr_scheduler_params
+        self.warm_up_epochs = model_params.warm_up_epochs
 
     def _load_acgan_params(self, model_params):
         """
@@ -106,6 +107,6 @@ class Options:
         """
         self.batch_size = model_params.batch_size
         self.n_epochs = model_params.n_epochs
-        self.validate = model_params.validate
         self.lr_gen = model_params.lr_gen
         self.lr_discr = model_params.lr_discr
+        self.warm_up_epochs = model_params.warm_up_epochs
