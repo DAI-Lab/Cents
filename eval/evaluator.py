@@ -136,7 +136,7 @@ class Evaluator:
         }
 
         with torch.no_grad():
-            embeddings = model.generator.conditioning_module(conditioning_vars)
+            embeddings = model.conditioning_module(conditioning_vars)
             mahalanobis_distances = (
                 model.generator.conditioning_module.compute_mahalanobis_distance(
                     embeddings

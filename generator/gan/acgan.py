@@ -30,6 +30,7 @@ class Generator(nn.Module):
         embedding_dim,
         final_window_length,
         input_dim,
+        conditioning_module,
         device,
         categorical_dims=None,
         base_channels=256,
@@ -44,9 +45,7 @@ class Generator(nn.Module):
 
         self.categorical_dims = categorical_dims
 
-        self.conditioning_module = ConditioningModule(
-            self.categorical_dims, self.embedding_dim, self.device
-        ).to(self.device)
+        self.conditioning_module = conditioning_module
 
         self.fc = nn.Linear(
             noise_dim + embedding_dim, self.final_window_length * base_channels
@@ -159,17 +158,23 @@ class ACGAN:
         self.device = opt.device
         self.warm_up_epochs = opt.warm_up_epochs
         self.sparse_conditioning_loss_weight = opt.sparse_conditioning_loss_weight
+
         # self.writer = SummaryWriter()
 
         assert (
             self.seq_len % 8 == 0
         ), "window_length must be a multiple of 8 in this architecture!"
 
+        self.conditioning_module = ConditioningModule(
+            self.categorical_dims, self.cond_emb_dim, self.device
+        ).to(self.device)
+
         self.generator = Generator(
             self.noise_dim,
             self.cond_emb_dim,
             self.seq_len,
             self.input_dim,
+            self.conditioning_module,
             self.device,
             self.categorical_dims,
         ).to(self.device)
