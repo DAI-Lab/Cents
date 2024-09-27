@@ -51,15 +51,15 @@ development_requires = [
     "pip>=9.0.1",
     "watchdog>=0.8.3",
     # docs
-    # "m2r2>=0.2.0",
-    # "Sphinx>=4.0.2,<6.0.0",
-    # "sphinx_rtd_theme>=0.2.4,<0.5",
-    # "autodocsumm>=0.1.10",
+    "m2r2>=0.2.0",
+    "Sphinx>=4.0.2,<6.0.0",
+    "sphinx_rtd_theme>=0.2.4,<0.5",
+    "autodocsumm>=0.1.10",
     # style check
     "flake8>=3.7.7",
-    # "isort>=4.3.4",
+    "isort>=4.3.4",
     # fix style issues
-    # "autoflake>=1.2",
+    "autoflake>=1.2",
     "autopep8>=1.4.3",
     # distribute on PyPI
     "twine>=1.10.0",
@@ -84,6 +84,12 @@ setup(
     extras_require={
         "test": tests_require,
         "dev": development_requires + tests_require,
+        "docs": [
+            "m2r2>=0.2.0",
+            "Sphinx>=4.0.2,<6.0.0",
+            "sphinx_rtd_theme>=0.2.4,<0.5",
+            "autodocsumm>=0.1.10",
+        ],
     },
     install_package_data=True,
     install_requires=install_requires,
