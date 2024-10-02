@@ -36,6 +36,7 @@ def evaluate_single_dataset_model(
     # evaluator.evaluate_all_users()
     # evaluator.evaluate_all_non_pv_users()
     pv_user_evaluator.evaluate_model(None, distinguish_rare=True)
+    non_pv_user_evaluator.evaluate_model(None, distinguish_rare=True)
 
 
 def main():
@@ -43,7 +44,7 @@ def main():
     # evaluate_individual_user_models("acgan", include_generation=True)
     # evaluate_individual_user_models("acgan", include_generation=False, normalization_method="date")
     evaluate_single_dataset_model(
-        "acgan",
+        "diffusion_ts",
         geography="austin",
         include_generation=False,
         normalization_method="group",
