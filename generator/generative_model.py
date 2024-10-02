@@ -118,6 +118,4 @@ class GenerativeModel:
         Returns:
             dataset: The dataset in the required format.
         """
-        # Implement this method based on how your models expect the dataset
-        # For example, you might need to create an instance of PecanStreetDataManager
         pass
