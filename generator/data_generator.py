@@ -1,13 +1,14 @@
 import pandas as pd
 import torch
 
+from datasets.timeseries_dataset import TimeSeriesDataset
 from generator.diffcharge import DDPM
 from generator.diffusion_ts import Diffusion_TS
 from generator.gan.acgan import ACGAN
 from generator.options import Options
 
 
-class GenerativeModel:
+class DataGenerator:
     """
     A wrapper class for generative models.
     """
@@ -23,14 +24,12 @@ class GenerativeModel:
         self.model_name = model_name
         self.model_params = model_params if model_params is not None else {}
         self.model = None
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.opt = Options(model_name)
 
         # Update opt with parameters from model_params
         for key, value in self.model_params.items():
             setattr(self.opt, key, value)
 
-        # Initialize the model class
         self._initialize_model()
 
     def _initialize_model(self):
@@ -54,13 +53,11 @@ class GenerativeModel:
 
         Args:
             X: Input data. Should be a compatible dataset object or pandas DataFrame.
-            y: Not used. Included for compatibility with sklearn API.
         """
-        # If X is a pandas DataFrame, convert it to the expected dataset format
         if isinstance(X, pd.DataFrame):
             dataset = self._prepare_dataset(X)
         else:
-            dataset = X  # Assuming X is already a dataset in the required format
+            dataset = X
         self.model.train_model(dataset)
 
     def generate(self, conditioning_vars):
@@ -118,4 +115,14 @@ class GenerativeModel:
         Returns:
             dataset: The dataset in the required format.
         """
-        pass
+        if isinstance(df, torch.utils.data.Dataset):
+            return df
+        elif isinstance(df, pd.DataFrame):
+            dataset = TimeSeriesDataset(
+                dataframe=df,
+                conditioning_vars=self.conditioning_vars,
+                time_series_column="timeseries",
+            )
+            return dataset
+        else:
+            raise TypeError("Input X must be a Dataset or a DataFrame.")

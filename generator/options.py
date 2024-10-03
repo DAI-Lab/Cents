@@ -28,7 +28,7 @@ class Options:
         config = load_model_config()
         self.seed = 42
         self.model_name = model_name
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = config.device
 
         self.seq_len = config.seq_len
         self.input_dim = config.input_dim

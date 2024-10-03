@@ -16,7 +16,6 @@ Note: Please ensure compliance with the repository's license and credit the orig
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 from datasets.utils import prepare_dataloader

@@ -12,7 +12,6 @@ from torch.utils.data import Dataset
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class OpenPowerDataset(Dataset):
