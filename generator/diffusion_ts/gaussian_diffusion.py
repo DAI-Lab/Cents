@@ -32,10 +32,8 @@ from generator.diffusion_ts.model_utils import extract
 from generator.diffusion_ts.model_utils import identity
 from generator.diffusion_ts.transformer import Transformer
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-def linear_beta_schedule(timesteps):
+def linear_beta_schedule(timesteps, device):
     scale = 1000 / timesteps
     beta_start = scale * 0.0001
     beta_end = scale * 0.02
@@ -44,7 +42,7 @@ def linear_beta_schedule(timesteps):
     )
 
 
-def cosine_beta_schedule(timesteps, s=0.004):
+def cosine_beta_schedule(timesteps, device, s=0.004):
     steps = timesteps + 1
     x = torch.linspace(0, timesteps, steps, dtype=torch.float32).to(device)
     alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
@@ -90,15 +88,17 @@ class Diffusion_TS(nn.Module):
         )
 
         if opt.beta_schedule == "linear":
-            betas = linear_beta_schedule(opt.n_steps)
+            betas = linear_beta_schedule(opt.n_steps, self.device)
         elif opt.beta_schedule == "cosine":
-            betas = cosine_beta_schedule(opt.n_steps)
+            betas = cosine_beta_schedule(opt.n_steps, self.device)
         else:
             raise ValueError(f"unknown beta schedule {opt.beta_schedule}")
 
         alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, dim=0).to(device)
-        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0).to(device)
+        alphas_cumprod = torch.cumprod(alphas, dim=0).to(self.device)
+        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0).to(
+            self.device
+        )
 
         (timesteps,) = betas.shape
         self.num_timesteps = int(timesteps)
@@ -139,7 +139,7 @@ class Diffusion_TS(nn.Module):
 
         posterior_variance = (
             betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
-        ).to(device)
+        ).to(self.device)
 
         # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
 
@@ -352,7 +352,7 @@ class Diffusion_TS(nn.Module):
 
         train_loss = self.loss_fn(model_out, target, reduction="none")
 
-        fourier_loss = torch.tensor([0.0]).to(device)
+        fourier_loss = torch.tensor([0.0]).to(self.device)
         if self.use_ff:
             fft1 = torch.fft.fft(model_out.transpose(1, 2), norm="forward")
             fft2 = torch.fft.fft(target.transpose(1, 2), norm="forward")
@@ -380,7 +380,7 @@ class Diffusion_TS(nn.Module):
         )
 
     def train_model(self, train_dataset):
-        self.to(device)
+        self.to(self.device)
 
         train_loader = DataLoader(
             train_dataset,
@@ -397,25 +397,27 @@ class Diffusion_TS(nn.Module):
             betas=[0.9, 0.96],
         )
         self.ema = EMA(
-            self, beta=self.opt.ema_decay, update_every=self.opt.ema_update_interval
-        ).to(device)
+            self,
+            beta=self.opt.ema_decay,
+            update_every=self.opt.ema_update_interval,
+            device=self.device,
+        ).to(self.device)
         self.scheduler = ReduceLROnPlateau(
             self.optimizer, **self.opt.lr_scheduler_params
         )
 
         self.conditioning_module.to(self.device)
 
-        # Training loop
         for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
             total_loss = 0.0
             for i, (time_series_batch, conditioning_vars_batch) in enumerate(
                 train_loader
             ):
-                time_series_batch = time_series_batch.to(device)
+                time_series_batch = time_series_batch.to(self.device)
 
                 for key in conditioning_vars_batch:
                     conditioning_vars_batch[key] = conditioning_vars_batch[key].to(
-                        device
+                        self.device
                     )
 
                 current_batch_size = time_series_batch.size(0)
@@ -429,7 +431,7 @@ class Diffusion_TS(nn.Module):
                         embeddings = self.conditioning_module(conditioning_vars_batch)
                         rare_mask = (
                             self.conditioning_module.is_rare(embeddings)
-                            .to(device)
+                            .to(self.device)
                             .float()
                         )
 
@@ -443,8 +445,8 @@ class Diffusion_TS(nn.Module):
                     rare_indices = (rare_mask == 1.0).nonzero(as_tuple=True)[0]
                     non_rare_indices = (rare_mask == 0.0).nonzero(as_tuple=True)[0]
 
-                    loss_rare = torch.tensor(0.0).to(device)
-                    loss_non_rare = torch.tensor(0.0).to(device)
+                    loss_rare = torch.tensor(0.0).to(self.device)
+                    loss_non_rare = torch.tensor(0.0).to(self.device)
 
                     if len(rare_indices) > 0:
                         time_series_batch_rare = time_series_batch[rare_indices]
@@ -502,12 +504,13 @@ class Diffusion_TS(nn.Module):
 
 
 class EMA(nn.Module):
-    def __init__(self, model, beta, update_every):
+    def __init__(self, model, beta, update_every, device):
         super(EMA, self).__init__()
         self.ema_model = copy.deepcopy(model).eval().to(device)
         self.beta = beta
         self.update_every = update_every
         self.step = 0
+        self.device = device
         for param in self.ema_model.parameters():
             param.requires_grad = False
 

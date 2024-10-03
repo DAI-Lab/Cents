@@ -1,3 +1,5 @@
+from torch.utils.tensorboard import SummaryWriter
+
 from datasets.pecanstreet import PecanStreetDataManager
 from eval.evaluator import Evaluator
 
@@ -35,8 +37,10 @@ def evaluate_single_dataset_model(
     non_pv_user_evaluator = Evaluator(non_pv_user_dataset, model_name)
     # evaluator.evaluate_all_users()
     # evaluator.evaluate_all_non_pv_users()
-    pv_user_evaluator.evaluate_model(None, distinguish_rare=True)
-    non_pv_user_evaluator.evaluate_model(None, distinguish_rare=True)
+    non_pv_user_evaluator.evaluate_model(
+        None, distinguish_rare=True, data_label="non_pv_users"
+    )
+    pv_user_evaluator.evaluate_model(None, distinguish_rare=True, data_label="pv_users")
 
 
 def main():
@@ -45,7 +49,7 @@ def main():
     # evaluate_individual_user_models("acgan", include_generation=False, normalization_method="date")
     evaluate_single_dataset_model(
         "diffusion_ts",
-        geography="austin",
+        geography="california",
         include_generation=False,
         normalization_method="group",
     )

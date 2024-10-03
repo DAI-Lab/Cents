@@ -15,7 +15,6 @@ from datasets.utils import encode_conditioning_variables
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class PecanStreetDataManager:
