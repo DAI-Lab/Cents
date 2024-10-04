@@ -15,6 +15,9 @@ from eval.metrics import Context_FID
 from eval.metrics import calculate_mmd
 from eval.metrics import calculate_period_bound_mse
 from eval.metrics import dynamic_time_warping_dist
+from eval.metrics import plot_range_with_syn_values
+from eval.metrics import plot_syn_with_closest_real_ts
+from eval.metrics import visualization
 from eval.predictive_metric import predictive_score_metrics
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
@@ -197,6 +200,9 @@ class Evaluator:
         # Compute metrics
         self.compute_metrics(real_data_array, syn_data_array, real_data_subset, writer)
 
+        # Generate plots
+        self.create_visualizations(real_data_inv, syn_data_inv, dataset, model, writer)
+
         # Close the writer
         writer.flush()
         writer.close()
@@ -249,6 +255,80 @@ class Evaluator:
         pred_score = predictive_score_metrics(real_data, syn_data)
         writer.add_scalar("Predictive/score", pred_score)
         self.metrics["predictive"].append(pred_score)
+
+    def create_visualizations(
+        self,
+        real_data_df: pd.DataFrame,
+        syn_data_df: pd.DataFrame,
+        dataset: Any,
+        model: Any,
+        writer: SummaryWriter,
+        num_samples: int = 100,
+        num_runs: int = 3,
+    ):
+        """
+        Create various visualizations for the evaluation results.
+
+        Args:
+            real_data_df (pd.DataFrame): Inverse-transformed real data.
+            syn_data_df (pd.DataFrame): Inverse-transformed synthetic data.
+            dataset (Any): The dataset object.
+            model (Any): The trained model.
+            writer (SummaryWriter): TensorBoard writer for logging visualizations.
+            num_samples (int): Number of samples to generate for visualization.
+            num_runs (int): Number of visualization runs.
+        """
+        for i in range(num_runs):
+            # Sample a conditioning variable combination from real data
+            sample_row = real_data_df.sample(n=1).iloc[0]
+            conditioning_vars_sample = {
+                var_name: torch.tensor(
+                    [sample_row[var_name]] * num_samples,
+                    dtype=torch.long,
+                    device=device,
+                )
+                for var_name in model.categorical_dims.keys()
+            }
+
+            generated_samples = model.generate(conditioning_vars_sample).cpu().numpy()
+            if generated_samples.ndim == 2:
+                generated_samples = generated_samples.reshape(
+                    generated_samples.shape[0], -1, generated_samples.shape[1]
+                )
+
+            generated_samples_df = pd.DataFrame(
+                {
+                    var_name: [sample_row[var_name]] * num_samples
+                    for var_name in model.categorical_dims.keys()
+                }
+            )
+            generated_samples_df["timeseries"] = list(generated_samples)
+            generated_samples_df["dataid"] = sample_row[
+                "dataid"
+            ]  # required for inverse transform
+            generated_samples_df = dataset.inverse_transform(generated_samples_df)
+
+            # Extract month and weekday for plotting
+            month = sample_row.get("month", None)
+            weekday = sample_row.get("weekday", None)
+
+            # Visualization 1: Plot range with synthetic values
+            range_plot = plot_range_with_syn_values(
+                real_data_df, generated_samples_df, month, weekday
+            )
+            writer.add_figure(f"Visualizations/Range_Plot_{i}", range_plot)
+
+            # Visualization 2: Plot closest real signals with synthetic values
+            closest_plot = plot_syn_with_closest_real_ts(
+                real_data_df, generated_samples_df, month, weekday
+            )
+            writer.add_figure(f"Visualizations/Closest_Real_TS_{i}", closest_plot)
+
+        # Visualization 3: KDE plots for real and synthetic data
+        real_data_array = np.stack(real_data_df["timeseries"])
+        syn_data_array = np.stack(syn_data_df["timeseries"])
+        kde_plot = visualization(real_data_array, syn_data_array, "kernel")
+        writer.add_figure(f"Visualizations/KDE", kde_plot)
 
     def get_trained_model(self, dataset: Any) -> Any:
         """

@@ -67,7 +67,7 @@ diffusion_ts:
 
 acgan:
   batch_size: 32
-  n_epochs: 10
+  n_epochs: 200
   lr_gen: 3e-4
   lr_discr: 1e-4
-  warm_up_epochs: 5
+  warm_up_epochs: 50
