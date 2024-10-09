@@ -5,6 +5,7 @@ noise_dim: 256
 cond_emb_dim: 64
 shuffle: True
 sparse_conditioning_loss_weight: 0.8 # sparse conditioning training sample weight for loss computation [0, 1]
+freeze_cond_after_warmup: False # specify whether to freeze conditioning module parameters after warmup epochs
 
 conditioning_vars: # for each desired conditioning variable, add the name and number of categories
   month: 12
@@ -70,4 +71,5 @@ acgan:
   n_epochs: 200
   lr_gen: 3e-4
   lr_discr: 1e-4
-  warm_up_epochs: 50
+  warm_up_epochs: 100
+  include_auxiliary_losses: True

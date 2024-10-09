@@ -36,6 +36,7 @@ class Options:
         self.cond_emb_dim = config.cond_emb_dim
         self.shuffle = config.shuffle
         self.sparse_conditioning_loss_weight = config.sparse_conditioning_loss_weight
+        self.freeze_cond_after_warmup = config.freeze_cond_after_warmup
         self.categorical_dims = config.get("conditioning_vars", {})
 
         if model_name == "diffcharge":
@@ -111,3 +112,4 @@ class Options:
         self.lr_gen = model_params.lr_gen
         self.lr_discr = model_params.lr_discr
         self.warm_up_epochs = model_params.warm_up_epochs
+        self.include_auxiliary_losses = model_params.include_auxiliary_losses
