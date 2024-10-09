@@ -1,11 +1,12 @@
+from typing import Any
 from typing import Dict
 
 import pandas as pd
 import torch
 
 from datasets.timeseries_dataset import TimeSeriesDataset
-from generator.diffcharge import DDPM
-from generator.diffusion_ts import Diffusion_TS
+from generator.diffcharge.diffusion import DDPM
+from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
 from generator.options import Options
 
@@ -49,41 +50,40 @@ class DataGenerator:
         else:
             raise ValueError(f"Model {self.model_name} not recognized.")
 
+    def fit(self, X: Any, timeseries_colname: Any):
+        """
+        Train the model on the given dataset.
 
-def fit(self, X):
-    """
-    Train the model on the given dataset.
+        Args:
+            df (Any): Input data. Should be a compatible dataset object or pandas DataFrame.
+        """
+        if isinstance(X, pd.DataFrame):
+            dataset = self._prepare_dataset(X, timeseries_colname)
+        else:
+            dataset = X
 
-    Args:
-        X: Input data. Should be a compatible dataset object or pandas DataFrame.
-    """
-    if isinstance(X, pd.DataFrame):
-        dataset = self._prepare_dataset(X)
-    else:
-        dataset = X
+        sample_timeseries, sample_cond_vars = dataset[0]
+        expected_seq_len = self.model.opt.seq_len
+        assert (
+            sample_timeseries.shape[0] == expected_seq_len
+        ), f"Expected timeseries length {expected_seq_len}, but got {sample_timeseries.shape[0]}"
 
-    sample_timeseries, sample_cond_vars = dataset[0]
-    expected_seq_len = self.model.opt.seq_len
-    assert (
-        sample_timeseries.shape[0] == expected_seq_len
-    ), f"Expected timeseries length {expected_seq_len}, but got {sample_timeseries.shape[0]}"
+        if (
+            hasattr(self.model_params, "conditioning_vars")
+            and self.model_params.conditioning_vars
+        ):
+            for var in self.model_params.conditioning_vars:
+                assert (
+                    var in sample_cond_vars.keys()
+                ), f"Conditioning variable '{var}' specified in model_params.conditioning_vars not found in dataset"
 
-    if (
-        hasattr(self.model_params, "conditioning_vars")
-        and self.model_params.conditioning_vars
-    ):
-        for var in self.model_params.conditioning_vars:
-            assert (
-                var in sample_cond_vars.keys()
-            ), f"Conditioning variable '{var}' specified in model_params.conditioning_vars not found in dataset"
+        expected_input_dim = self.model.opt.input_dim
+        assert sample_timeseries.shape == (
+            expected_seq_len,
+            expected_input_dim,
+        ), f"Expected timeseries shape ({expected_seq_len}, {expected_input_dim}), but got {sample_timeseries.shape}"
 
-    expected_input_dim = self.model.opt.input_dim
-    assert sample_timeseries.shape == (
-        expected_seq_len,
-        expected_input_dim,
-    ), f"Expected timeseries shape ({expected_seq_len}, {expected_input_dim}), but got {sample_timeseries.shape}"
-
-    self.model.train_model(dataset)
+        self.model.train_model(dataset)
 
     def generate(self, conditioning_vars):
         """
@@ -147,8 +147,8 @@ def fit(self, X):
         elif isinstance(df, pd.DataFrame):
             dataset = TimeSeriesDataset(
                 dataframe=df,
+                time_series_column_name=timeseries_colname,
                 conditioning_vars=conditioning_vars,
-                time_series_column=timeseries_colname,
             )
             return dataset
         else:
