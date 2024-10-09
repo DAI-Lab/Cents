@@ -31,12 +31,14 @@ class TimeSeriesDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        time_series = self.data.iloc[idx][self.time_series_column]
+        sample = self.data.iloc[idx]
+
+        time_series = sample[self.time_series_column]
         time_series = torch.tensor(time_series, dtype=torch.float32)
 
         conditioning_vars_dict = {}
         for var in self.conditioning_vars:
-            value = self.data.iloc[idx][var]
+            value = sample[var]
             conditioning_vars_dict[var] = torch.tensor(value, dtype=torch.long)
 
         return time_series, conditioning_vars_dict

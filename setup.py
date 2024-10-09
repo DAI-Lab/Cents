@@ -24,7 +24,6 @@ install_requires = [
     "accelerate>=0.32.1",
     "torchvision>=0.18.1",
     "tensorboard>=2.5.0",
-    "tensorboardX>=2.6.2.2",
     "pyyaml>=6.0.1",
     "pre-commit>=3.5.0",
     "black>=24.4.2",

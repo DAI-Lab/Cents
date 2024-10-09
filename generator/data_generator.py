@@ -1,3 +1,5 @@
+from typing import Dict
+
 import pandas as pd
 import torch
 
@@ -47,18 +49,41 @@ class DataGenerator:
         else:
             raise ValueError(f"Model {self.model_name} not recognized.")
 
-    def fit(self, X):
-        """
-        Train the model on the given dataset.
 
-        Args:
-            X: Input data. Should be a compatible dataset object or pandas DataFrame.
-        """
-        if isinstance(X, pd.DataFrame):
-            dataset = self._prepare_dataset(X)
-        else:
-            dataset = X
-        self.model.train_model(dataset)
+def fit(self, X):
+    """
+    Train the model on the given dataset.
+
+    Args:
+        X: Input data. Should be a compatible dataset object or pandas DataFrame.
+    """
+    if isinstance(X, pd.DataFrame):
+        dataset = self._prepare_dataset(X)
+    else:
+        dataset = X
+
+    sample_timeseries, sample_cond_vars = dataset[0]
+    expected_seq_len = self.model.opt.seq_len
+    assert (
+        sample_timeseries.shape[0] == expected_seq_len
+    ), f"Expected timeseries length {expected_seq_len}, but got {sample_timeseries.shape[0]}"
+
+    if (
+        hasattr(self.model_params, "conditioning_vars")
+        and self.model_params.conditioning_vars
+    ):
+        for var in self.model_params.conditioning_vars:
+            assert (
+                var in sample_cond_vars.keys()
+            ), f"Conditioning variable '{var}' specified in model_params.conditioning_vars not found in dataset"
+
+    expected_input_dim = self.model.opt.input_dim
+    assert sample_timeseries.shape == (
+        expected_seq_len,
+        expected_input_dim,
+    ), f"Expected timeseries shape ({expected_seq_len}, {expected_input_dim}), but got {sample_timeseries.shape}"
+
+    self.model.train_model(dataset)
 
     def generate(self, conditioning_vars):
         """
@@ -105,7 +130,9 @@ class DataGenerator:
         self.model.load_state_dict(torch.load(path))
         self.model.to(self.device)
 
-    def _prepare_dataset(self, df: pd.DataFrame):
+    def _prepare_dataset(
+        self, df: pd.DataFrame, timeseries_colname: str, conditioning_vars: Dict = None
+    ):
         """
         Convert a pandas DataFrame into the required dataset format.
 
@@ -120,8 +147,8 @@ class DataGenerator:
         elif isinstance(df, pd.DataFrame):
             dataset = TimeSeriesDataset(
                 dataframe=df,
-                conditioning_vars=self.conditioning_vars,
-                time_series_column="timeseries",
+                conditioning_vars=conditioning_vars,
+                time_series_column=timeseries_colname,
             )
             return dataset
         else:

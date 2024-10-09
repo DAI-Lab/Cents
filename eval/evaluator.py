@@ -74,6 +74,11 @@ class Evaluator:
 
         model = self.get_trained_model(dataset)
 
+        if model.opt.sparse_conditioning_loss_weight != 0.5:
+            data_label += "/rare_upweighed"
+        else:
+            data_label += "/equal_weight"
+
         print("----------------------")
         if user_id is not None:
             print(f"Starting evaluation for user {user_id}")

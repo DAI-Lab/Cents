@@ -13,9 +13,12 @@ Modifications:
 Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
 """
 
+import os
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
 from datasets.utils import prepare_dataloader
@@ -158,7 +161,7 @@ class ACGAN:
         self.warm_up_epochs = opt.warm_up_epochs
         self.sparse_conditioning_loss_weight = opt.sparse_conditioning_loss_weight
 
-        # self.writer = SummaryWriter()
+        self.writer = SummaryWriter(log_dir=os.path.join("runs", "acgan"))
 
         assert (
             self.seq_len % 8 == 0
@@ -196,6 +199,9 @@ class ACGAN:
         num_epoch = self.opt.n_epochs
         train_loader = prepare_dataloader(dataset, batch_size)
 
+        previous_mean_embedding = None
+        previous_embedding_covariance = None
+
         for epoch in range(num_epoch):
             for batch_index, (time_series_batch, conditioning_vars_batch) in enumerate(
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
@@ -216,21 +222,26 @@ class ACGAN:
 
                 soft_zero, soft_one = 0, 0.95
 
-                rare_mask = torch.ones((current_batch_size,)).to(self.device)
+                rare_mask = torch.zeros((current_batch_size,)).to(self.device)
 
-                if epoch < self.warm_up_epochs:
-                    self.generator.conditioning_module.collect_embeddings(
+                if epoch > self.warm_up_epochs:
+
+                    batch_embeddings = self.generator.conditioning_module(
                         conditioning_vars_batch
                     )
-                elif epoch == self.warm_up_epochs and batch_index == 0:
-                    self.generator.conditioning_module.compute_gaussian_parameters()
-                else:
-                    embeddings = self.generator.conditioning_module(
-                        conditioning_vars_batch
+                    self.generator.conditioning_module.update_running_statistics(
+                        batch_embeddings
                     )
-                    rare_mask = self.generator.conditioning_module.is_rare(
-                        embeddings
-                    ).to(self.device)
+
+                    if self.opt.freeze_cond_after_warmup:
+                        for param in self.generator.conditioning_module.parameters():
+                            param.requires_grad = False  # if specified, freeze conditioning module training
+
+                    rare_mask = (
+                        self.generator.conditioning_module.is_rare(batch_embeddings)
+                        .to(self.device)
+                        .float()
+                    )
 
                 # ---------------------
                 #  Train Discriminator
@@ -246,14 +257,15 @@ class ACGAN:
                 d_fake_loss = self.adversarial_loss(
                     fake_pred, torch.ones_like(fake_pred) * soft_zero
                 )
-                for var_name in self.categorical_dims.keys():
-                    labels = conditioning_vars_batch[var_name].to(self.device)
-                    d_real_loss += self.auxiliary_loss(
-                        aux_outputs_real[var_name], labels
-                    )
-                    d_fake_loss += self.auxiliary_loss(
-                        aux_outputs_fake[var_name], labels
-                    )
+                if self.opt.include_auxiliary_losses:
+                    for var_name in self.categorical_dims.keys():
+                        labels = conditioning_vars_batch[var_name].to(self.device)
+                        d_real_loss += self.auxiliary_loss(
+                            aux_outputs_real[var_name], labels
+                        )
+                        d_fake_loss += self.auxiliary_loss(
+                            aux_outputs_fake[var_name], labels
+                        )
 
                 d_loss = 0.5 * (d_real_loss + d_fake_loss)
                 d_loss.backward()
@@ -285,10 +297,18 @@ class ACGAN:
                     * soft_one,
                 )
                 _lambda = self.sparse_conditioning_loss_weight
-                g_loss = _lambda * g_loss_rare + (1 - _lambda) * g_loss_non_rare
-                for var_name in self.categorical_dims.keys():
-                    labels = gen_categorical_vars[var_name]
-                    g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
+                N_r = rare_mask.sum().item()
+                N_nr = (torch.logical_not(rare_mask)).sum().item()
+                N = current_batch_size
+                g_loss = (
+                    _lambda * (N_r / N) * g_loss_rare
+                    + (1 - _lambda) * (N_nr / N) * g_loss_non_rare
+                )
+
+                if self.opt.include_auxiliary_losses:
+                    for var_name in self.categorical_dims.keys():
+                        labels = gen_categorical_vars[var_name]
+                        g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
 
                 g_loss.backward()
                 self.optimizer_G.step()
@@ -296,11 +316,29 @@ class ACGAN:
                 # -------------------
                 # TensorBoard Logging
                 # -------------------
-                # Log overall losses for both generator and discriminator
-                # Log overall losses for both generator and discriminator on the same chart
-                # self.writer.add_scalars('GAN Losses', {'Discriminator': d_loss.item(), 'Generator': g_loss.item()}, epoch * len(train_loader) + i)
+                global_step = epoch * len(train_loader) + batch_index
 
-        # self.writer.close()
+                # Log overall losses for both generator and discriminator
+                # self.writer.add_scalars('Losses', {'Discriminator': d_loss.item(), 'Generator': g_loss.item()}, global_step)
+
+            # End of epoch logging
+            if epoch > self.warm_up_epochs:
+
+                self.generator.conditioning_module.log_embedding_statistics(
+                    epoch,
+                    self.writer,
+                    previous_mean_embedding,
+                    previous_embedding_covariance,
+                    batch_embeddings,
+                )
+                previous_mean_embedding = (
+                    self.generator.conditioning_module.mean_embedding.clone()
+                )
+                previous_embedding_covariance = (
+                    self.generator.conditioning_module.cov_embedding.clone()
+                )
+
+        self.writer.close()
 
     def sample_conditioning_vars(self, dataset, batch_size, random=False):
         conditioning_vars = {}

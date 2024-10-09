@@ -422,18 +422,19 @@ class Diffusion_TS(nn.Module):
 
                 current_batch_size = time_series_batch.size(0)
 
-                if epoch < self.warm_up_epochs:
-                    self.conditioning_module.collect_embeddings(conditioning_vars_batch)
-                elif epoch == self.warm_up_epochs and i == 0:
-                    self.conditioning_module.compute_gaussian_parameters()
-                else:
-                    with torch.no_grad():
-                        embeddings = self.conditioning_module(conditioning_vars_batch)
-                        rare_mask = (
-                            self.conditioning_module.is_rare(embeddings)
-                            .to(self.device)
-                            .float()
-                        )
+                if epoch > self.warm_up_epochs:
+                    batch_embeddings = self.conditioning_module(conditioning_vars_batch)
+                    self.conditioning_module.update_running_statistics(batch_embeddings)
+
+                    if self.opt.freeze_cond_after_warmup:
+                        for param in self.conditioning_module.parameters():
+                            param.requires_grad = False  # if specified, freeze conditioning module training
+
+                    rare_mask = (
+                        self.conditioning_module.is_rare(batch_embeddings)
+                        .to(self.device)
+                        .float()
+                    )
 
                 self.optimizer.zero_grad()
 
@@ -470,8 +471,14 @@ class Diffusion_TS(nn.Module):
                             conditioning_vars=conditioning_vars_non_rare,
                         )
 
+                    N_r = rare_mask.sum().item()
+                    N_nr = (torch.logical_not(rare_mask)).sum().item()
+                    N = current_batch_size
                     _lambda = self.sparse_conditioning_loss_weight
-                    loss = _lambda * loss_rare + (1 - _lambda) * loss_non_rare
+                    loss = (
+                        _lambda * (N_r / N) * loss_rare
+                        + (1 - _lambda) * (N_nr / N) * loss_non_rare
+                    )
 
                 loss = loss / self.opt.gradient_accumulate_every
                 loss.backward()

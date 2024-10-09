@@ -10,7 +10,6 @@ accelerate
 torch
 torchvision
 tensorboard
-tensorboardX
 pyyaml
 pre-commit
 mypy
