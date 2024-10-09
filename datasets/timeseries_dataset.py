@@ -33,7 +33,7 @@ class TimeSeriesDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.data.iloc[idx]
 
-        time_series = sample[self.time_series_column]
+        time_series = sample[self.time_series_column_name]
         time_series = torch.tensor(time_series, dtype=torch.float32)
 
         conditioning_vars_dict = {}
