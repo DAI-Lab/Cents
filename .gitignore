@@ -113,3 +113,4 @@ runs/*
 Checkpoints_syn
 logs/*
 outputs/*
+checkpoints/*

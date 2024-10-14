@@ -276,7 +276,7 @@ def visualization(
                 label="Synthetic",
             )
             ax.legend()
-            ax.set_title(f"t-SNE plot for Dimension {d}")
+            ax.set_title(f"t-SNE plot for dimension {d}")
             plt.show()
             plots.append(f)
 
@@ -336,33 +336,35 @@ def plot_range_with_syn_values(
         return
 
     syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
-    timestamps = pd.date_range(start="00:00", end="23:45", freq="15T").strftime("%H:%M")
+    timestamps = pd.date_range(start="00:00", end="23:45", freq="15min").strftime(
+        "%H:%M"
+    )
+    hourly_labels = [ts if i % 4 == 0 else "" for i, ts in enumerate(timestamps)]
 
     f = plt.figure(figsize=(15, 7))
     plt.fill_between(
-        timestamps,
+        range(len(timestamps)),
         min_values,
         max_values,
         color="gray",
         alpha=0.5,
-        label="kwh load range of real data",
+        label="kWh load range of real data",
     )
 
-    # Plot all synthetic time series without adding multiple labels
     for index in range(syn_values.shape[0]):
         if index == 0:
             plt.plot(
-                timestamps,
+                range(len(timestamps)),
                 syn_values[index],
                 color="blue",
                 marker="o",
                 markersize=2,
                 linestyle="-",
-                label="Synthetic Data",
+                label="Synthetic time series",
             )
         else:
             plt.plot(
-                timestamps,
+                range(len(timestamps)),
                 syn_values[index],
                 color="blue",
                 marker="o",
@@ -372,8 +374,8 @@ def plot_range_with_syn_values(
 
     plt.title(f"Range of values and synthetic data for a {weekday} in {month}")
     plt.xlabel("Time of day")
-    plt.ylabel("Electric load in kwh")
-    plt.xticks(rotation=45)
+    plt.ylabel("Electric load in kWh")
+    plt.xticks(ticks=range(len(timestamps)), labels=hourly_labels, rotation=45)
     plt.legend()
     plt.tight_layout()
     plt.show()
@@ -409,6 +411,7 @@ def plot_syn_with_closest_real_ts(
 
     syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
     timestamps = pd.date_range(start="00:00", end="23:45", freq="15T").strftime("%H:%M")
+    hourly_labels = [ts if i % 4 == 0 else "" for i, ts in enumerate(timestamps)]
 
     f = plt.figure(figsize=(15, 7))
     synthetic_plotted = False
@@ -430,18 +433,18 @@ def plot_syn_with_closest_real_ts(
         # Plot synthetic time series
         if not synthetic_plotted:
             plt.plot(
-                timestamps,
+                range(len(timestamps)),
                 syn_ts,
                 color="blue",
                 marker="o",
                 markersize=2,
                 linestyle="-",
-                label="Synthetic Time Series",
+                label="Synthetic time series",
             )
             synthetic_plotted = True
         else:
             plt.plot(
-                timestamps,
+                range(len(timestamps)),
                 syn_ts,
                 color="blue",
                 marker="o",
@@ -452,18 +455,18 @@ def plot_syn_with_closest_real_ts(
         # Plot closest real time series
         if not real_plotted:
             plt.plot(
-                timestamps,
+                range(len(timestamps)),
                 closest_real_ts,
                 color="red",
                 marker="x",
                 markersize=2,
                 linestyle="--",
-                label="Closest Real Time Series",
+                label="Closest real time series",
             )
             real_plotted = True
         else:
             plt.plot(
-                timestamps,
+                range(len(timestamps)),
                 closest_real_ts,
                 color="red",
                 marker="x",
@@ -471,12 +474,10 @@ def plot_syn_with_closest_real_ts(
                 linestyle="--",
             )
 
-    plt.title(
-        f"Synthetic vs closest real time series (DTW) for a {weekday} in {month},"
-    )
+    plt.title(f"Synthetic vs closest real time series for a {weekday} in {month}")
     plt.xlabel("Time of day")
-    plt.ylabel("Electric load in kwh")
-    plt.xticks(rotation=45)
+    plt.ylabel("Electric load in kWh")
+    plt.xticks(ticks=range(len(timestamps)), labels=hourly_labels, rotation=45)
     plt.legend()
     plt.tight_layout()
     plt.show()
