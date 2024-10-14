@@ -14,6 +14,7 @@ Note: Please ensure compliance with the repository's license and credit the orig
 """
 
 import os
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -195,6 +196,7 @@ class ACGAN:
         )
 
     def train_model(self, dataset):
+        self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         batch_size = self.opt.batch_size
         num_epoch = self.opt.n_epochs
         train_loader = prepare_dataloader(dataset, batch_size)
@@ -283,7 +285,6 @@ class ACGAN:
                     dataset, current_batch_size, random=True
                 )
                 generated_time_series = self.generator(noise, gen_categorical_vars)
-
                 validity, aux_outputs = self.discriminator(generated_time_series)
 
                 g_loss_rare = self.adversarial_loss(
@@ -297,6 +298,18 @@ class ACGAN:
                     * torch.logical_not(rare_mask)
                     * soft_one,
                 )
+
+                if self.opt.include_auxiliary_losses:
+                    for var_name in self.categorical_dims.keys():
+                        labels = gen_categorical_vars[var_name]
+                        g_loss_rare += self.auxiliary_loss(
+                            aux_outputs[var_name] * rare_mask, labels * rare_mask
+                        )
+                        g_loss_non_rare += self.auxiliary_loss(
+                            aux_outputs[var_name] * (torch.logical_not(rare_mask)),
+                            labels * (torch.logical_not(rare_mask)),
+                        )
+
                 _lambda = self.sparse_conditioning_loss_weight
                 N_r = rare_mask.sum().item()
                 N_nr = (torch.logical_not(rare_mask)).sum().item()
@@ -306,18 +319,12 @@ class ACGAN:
                     + (1 - _lambda) * (N_nr / N) * g_loss_non_rare
                 )
 
-                if self.opt.include_auxiliary_losses:
-                    for var_name in self.categorical_dims.keys():
-                        labels = gen_categorical_vars[var_name]
-                        g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
-
                 g_loss.backward()
                 self.optimizer_G.step()
-
                 # -------------------
-                # TensorBoard Logging
+                # TensorBoard Loss Logging
                 # -------------------
-                global_step = epoch * len(train_loader) + batch_index
+                # global_step = epoch * len(train_loader) + batch_index
 
                 # Log overall losses for both generator and discriminator
                 # self.writer.add_scalars('Losses', {'Discriminator': d_loss.item(), 'Generator': g_loss.item()}, global_step)
@@ -340,11 +347,14 @@ class ACGAN:
                 )
 
             if (epoch + 1) % self.opt.save_cycle == 0:
+                os.mkdir(os.path.join(self.opt.results_folder, self.train_timestamp))
+
                 checkpoint_path = os.path.join(
-                    self.opt.results_folder, f"acgan_checkpoint_epoch_{epoch + 1}.pt"
+                    os.path.join(self.opt.results_folder, self.train_timestamp),
+                    f"acgan_checkpoint_{epoch + 1}.pt",
                 )
+
                 self.save(checkpoint_path, self.current_epoch)
-                print(f"Saved checkpoint at {checkpoint_path}.")
 
         self.writer.close()
 

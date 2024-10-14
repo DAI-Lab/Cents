@@ -15,6 +15,7 @@ Note: Please ensure compliance with the repository's license and credit the orig
 import copy
 import math
 import os
+from datetime import datetime
 from functools import partial
 
 import torch
@@ -384,6 +385,7 @@ class Diffusion_TS(nn.Module):
         )
 
     def train_model(self, train_dataset):
+        self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.train()
         self.to(self.device)
 
@@ -504,10 +506,14 @@ class Diffusion_TS(nn.Module):
             self.scheduler.step(total_loss)
 
         if (epoch + 1) % self.opt.save_cycle == 0:
+            os.mkdir(os.path.join(self.opt.results_folder, self.train_timestamp))
+
             checkpoint_path = os.path.join(
-                self.opt.results_folder, f"checkpoint-{epoch + 1}.pt"
+                os.path.join(self.opt.results_folder, self.train_timestamp),
+                f"diffusion_ts_checkpoint_{epoch + 1}.pt",
             )
             self.save(checkpoint_path, self.current_epoch)
+
             print(f"Saved checkpoint at {checkpoint_path}.")
 
         print("Training complete")
