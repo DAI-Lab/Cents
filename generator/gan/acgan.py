@@ -1,5 +1,5 @@
 """
-This class is adapted/taken from the synthetic-timeseries-smart-grid GitHub repository:
+This class is adapted from the synthetic-timeseries-smart-grid GitHub repository:
 
 Repository: https://github.com/vermouth1992/synthetic-time-series-smart-grid
 Author: Chi Zhang
@@ -203,6 +203,7 @@ class ACGAN:
         previous_embedding_covariance = None
 
         for epoch in range(num_epoch):
+            self.current_epoch = epoch + 1
             for batch_index, (time_series_batch, conditioning_vars_batch) in enumerate(
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
@@ -338,6 +339,13 @@ class ACGAN:
                     self.generator.conditioning_module.cov_embedding.clone()
                 )
 
+            if (epoch + 1) % self.opt.save_cycle == 0:
+                checkpoint_path = os.path.join(
+                    self.opt.results_folder, f"acgan_checkpoint_epoch_{epoch + 1}.pt"
+                )
+                self.save(checkpoint_path, self.current_epoch)
+                print(f"Saved checkpoint at {checkpoint_path}.")
+
         self.writer.close()
 
     def sample_conditioning_vars(self, dataset, batch_size, random=False):
@@ -366,3 +374,64 @@ class ACGAN:
         with torch.no_grad():
             generated_data = self.generator(noise, conditioning_vars)
         return generated_data
+
+    def save(self, path: str, epoch: int = None):
+        """
+        Save the generator and discriminator models, optimizers, and epoch number.
+
+        Args:
+            path (str): The file path to save the checkpoint to.
+            epoch (int, optional): The current epoch number. Defaults to None.
+        """
+        checkpoint = {
+            "epoch": epoch if epoch is not None else self.current_epoch,
+            "generator_state_dict": self.generator.state_dict(),
+            "discriminator_state_dict": self.discriminator.state_dict(),
+            "optimizer_G_state_dict": self.optimizer_G.state_dict(),
+            "optimizer_D_state_dict": self.optimizer_D.state_dict(),
+        }
+        torch.save(checkpoint, path)
+        print(f"Saved ACGAN checkpoint to {path}")
+
+    def load(self, path: str):
+        """
+        Load the generator and discriminator models, optimizers, and epoch number from a checkpoint file.
+
+        Args:
+            path (str): The file path to load the checkpoint from.
+        """
+        checkpoint = torch.load(path, map_location=self.device)
+
+        if "generator_state_dict" in checkpoint:
+            self.generator.load_state_dict(checkpoint["generator_state_dict"])
+            print("Loaded generator state.")
+        else:
+            raise KeyError("Checkpoint does not contain 'generator_state_dict'.")
+
+        if "discriminator_state_dict" in checkpoint:
+            self.discriminator.load_state_dict(checkpoint["discriminator_state_dict"])
+            print("Loaded discriminator state.")
+        else:
+            raise KeyError("Checkpoint does not contain 'discriminator_state_dict'.")
+
+        if "optimizer_G_state_dict" in checkpoint:
+            self.optimizer_G.load_state_dict(checkpoint["optimizer_G_state_dict"])
+            print("Loaded generator optimizer state.")
+        else:
+            print("No generator optimizer state found in checkpoint.")
+
+        if "optimizer_D_state_dict" in checkpoint:
+            self.optimizer_D.load_state_dict(checkpoint["optimizer_D_state_dict"])
+            print("Loaded discriminator optimizer state.")
+        else:
+            print("No discriminator optimizer state found in checkpoint.")
+
+        if "epoch" in checkpoint:
+            self.current_epoch = checkpoint["epoch"]
+            print(f"Loaded epoch number: {self.current_epoch}")
+        else:
+            print("No epoch information found in checkpoint.")
+
+        self.generator.to(self.device)
+        self.discriminator.to(self.device)
+        print(f"ACGAN models moved to {self.device}.")
