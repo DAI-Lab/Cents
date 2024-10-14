@@ -304,7 +304,11 @@ class Diffusion_TS(nn.Module):
     def generate(self, conditioning_vars):
         num_samples = len(conditioning_vars[list(conditioning_vars.keys())[0]])
         shape = (num_samples, self.seq_len, self.input_dim)
-        return self._generate(shape, conditioning_vars)
+
+        if self.opt.use_ema_sampling:
+            return self.ema.ema_model._generate(shape, conditioning_vars)
+        else:
+            return self._generate(shape, conditioning_vars)
 
     def _generate(self, shape, conditioning_vars):
         self.eval()
@@ -380,6 +384,7 @@ class Diffusion_TS(nn.Module):
         )
 
     def train_model(self, train_dataset):
+        self.train()
         self.to(self.device)
 
         train_loader = DataLoader(
@@ -401,7 +406,7 @@ class Diffusion_TS(nn.Module):
             beta=self.opt.ema_decay,
             update_every=self.opt.ema_update_interval,
             device=self.device,
-        ).to(self.device)
+        )
         self.scheduler = ReduceLROnPlateau(
             self.optimizer, **self.opt.lr_scheduler_params
         )
@@ -409,6 +414,7 @@ class Diffusion_TS(nn.Module):
         self.conditioning_module.to(self.device)
 
         for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
+            self.current_epoch = epoch + 1
             total_loss = 0.0
             for i, (time_series_batch, conditioning_vars_batch) in enumerate(
                 train_loader
@@ -423,18 +429,23 @@ class Diffusion_TS(nn.Module):
                 current_batch_size = time_series_batch.size(0)
 
                 if epoch > self.warm_up_epochs:
-                    batch_embeddings = self.conditioning_module(conditioning_vars_batch)
-                    self.conditioning_module.update_running_statistics(batch_embeddings)
+                    with torch.no_grad():
 
-                    if self.opt.freeze_cond_after_warmup:
-                        for param in self.conditioning_module.parameters():
-                            param.requires_grad = False  # if specified, freeze conditioning module training
+                        if self.opt.freeze_cond_after_warmup:
+                            for param in self.conditioning_module.parameters():
+                                param.requires_grad = False  # if specified, freeze conditioning module training
 
-                    rare_mask = (
-                        self.conditioning_module.is_rare(batch_embeddings)
-                        .to(self.device)
-                        .float()
-                    )
+                        batch_embeddings = self.conditioning_module(
+                            conditioning_vars_batch
+                        )
+                        self.conditioning_module.update_running_statistics(
+                            batch_embeddings
+                        )
+                        rare_mask = (
+                            self.conditioning_module.is_rare(batch_embeddings)
+                            .to(self.device)
+                            .float()
+                        )
 
                 self.optimizer.zero_grad()
 
@@ -492,27 +503,80 @@ class Diffusion_TS(nn.Module):
 
             self.scheduler.step(total_loss)
 
-            if (epoch + 1) % self.opt.save_cycle == 0:
-                checkpoint_path = os.path.join(
-                    self.opt.results_folder, f"checkpoint-{epoch + 1}.pt"
-                )
-                torch.save(
-                    {
-                        "epoch": epoch + 1,
-                        "model_state_dict": self.state_dict(),
-                        "optimizer_state_dict": self.optimizer.state_dict(),
-                        "ema_state_dict": self.ema.state_dict(),
-                    },
-                    checkpoint_path,
-                )
-                print(f"Saved checkpoint at {checkpoint_path}")
+        if (epoch + 1) % self.opt.save_cycle == 0:
+            checkpoint_path = os.path.join(
+                self.opt.results_folder, f"checkpoint-{epoch + 1}.pt"
+            )
+            self.save(checkpoint_path, self.current_epoch)
+            print(f"Saved checkpoint at {checkpoint_path}.")
 
         print("Training complete")
 
+    def load(self, path: str):
+        """
+        Load the model, optimizer, and EMA model from a checkpoint file.
 
-class EMA(nn.Module):
+        Args:
+            path (str): The file path to load the checkpoint from.
+        """
+        checkpoint = torch.load(path, map_location=self.device)
+
+        # Load the regular model state
+        if "model_state_dict" in checkpoint:
+            self.load_state_dict(checkpoint["model_state_dict"])
+            print("Loaded regular model state.")
+        else:
+            raise KeyError("Checkpoint does not contain 'model_state_dict'.")
+
+        if "optimizer_state_dict" in checkpoint and hasattr(self, "optimizer"):
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            print("Loaded optimizer state.")
+        else:
+            print(
+                "No optimizer state found in checkpoint or optimizer not initialized."
+            )
+
+        if "ema_state_dict" in checkpoint and hasattr(self, "ema"):
+            self.ema.ema_model.load_state_dict(checkpoint["ema_state_dict"])
+            print("Loaded EMA model state.")
+        else:
+            print("No EMA state found in checkpoint or EMA not initialized.")
+
+        if "epoch" in checkpoint:
+            self.current_epoch = checkpoint["epoch"]
+            print(f"Loaded epoch number: {self.current_epoch}")
+        else:
+            print("No epoch information found in checkpoint.")
+
+        self.to(self.device)
+        if hasattr(self, "ema") and self.ema.ema_model:
+            self.ema.ema_model.to(self.device)
+        print(f"Model and EMA model moved to {self.device}.")
+
+    def save(self, path: str, epoch: int = None):
+        model_state_dict_cpu = {k: v.cpu() for k, v in self.state_dict().items()}
+        optimizer_state_dict_cpu = {
+            k: v.cpu() if isinstance(v, torch.Tensor) else v
+            for k, v in self.optimizer.state_dict().items()
+        }
+        ema_state_dict_cpu = {
+            k: v.cpu() for k, v in self.ema.ema_model.state_dict().items()
+        }
+        torch.save(
+            {
+                "epoch": epoch + 1,
+                "model_state_dict": model_state_dict_cpu,
+                "optimizer_state_dict": optimizer_state_dict_cpu,
+                "ema_state_dict": ema_state_dict_cpu,
+            },
+            path,
+        )
+
+
+class EMA:
     def __init__(self, model, beta, update_every, device):
         super(EMA, self).__init__()
+        self.model = model
         self.ema_model = copy.deepcopy(model).eval().to(device)
         self.beta = beta
         self.update_every = update_every
@@ -527,7 +591,7 @@ class EMA(nn.Module):
             return
         with torch.no_grad():
             for ema_param, model_param in zip(
-                self.ema_model.parameters(), self.parameters()
+                self.ema_model.parameters(), self.model.parameters()
             ):
                 ema_param.data.mul_(self.beta).add_(
                     model_param.data, alpha=1.0 - self.beta

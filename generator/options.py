@@ -99,6 +99,7 @@ class Options:
         self.ema_update_interval = model_params.ema_update_interval
         self.lr_scheduler_params = model_params.lr_scheduler_params
         self.warm_up_epochs = model_params.warm_up_epochs
+        self.use_ema_sampling = model_params.use_ema_sampling
 
     def _load_acgan_params(self, model_params):
         """

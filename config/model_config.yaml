@@ -1,4 +1,4 @@
-device: 1 # 0, cpu
+device: 0 # 0, cpu
 seq_len: 96 # should not be changed for the current datasets
 input_dim: 2 # or 1 depending on user, but is dynamically set
 noise_dim: 256
@@ -6,6 +6,7 @@ cond_emb_dim: 64
 shuffle: True
 sparse_conditioning_loss_weight: 0.8 # sparse conditioning training sample weight for loss computation [0, 1]
 freeze_cond_after_warmup: False # specify whether to freeze conditioning module parameters after warmup epochs
+save_cycle: 200 # specify number of epochs to save model after
 
 conditioning_vars: # for each desired conditioning variable, add the name and number of categories
   month: 12
@@ -39,7 +40,7 @@ diffusion_ts:
   base_lr: 1e-4
   n_layer_enc: 4
   n_layer_dec: 5
-  d_model: 256
+  d_model: 128
   sampling_timesteps: null
   loss_type: l1 #l2
   beta_schedule: cosine #linear
@@ -52,9 +53,8 @@ diffusion_ts:
   padding_size: null
   use_ff: true
   reg_weight: null
-  results_folder: ./Checkpoints_syn
+  results_folder: ./checkpoints
   gradient_accumulate_every: 2
-  save_cycle: 1000
   ema_decay: 0.99
   ema_update_interval: 10
   lr_scheduler_params:
@@ -64,7 +64,9 @@ diffusion_ts:
     threshold: 1.0e-1
     threshold_mode: rel
     verbose: false
-  warm_up_epochs: 100
+  warm_up_epochs: 200
+  use_ema_sampling: False
+  save_cycle: 1000
 
 acgan:
   batch_size: 32

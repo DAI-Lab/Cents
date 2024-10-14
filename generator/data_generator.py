@@ -111,24 +111,45 @@ class DataGenerator:
         """
         return self.model.sample_conditioning_vars(dataset, num_samples, random)
 
-    def save(self, path):
+    def save(self, path: str):
         """
-        Save the model to a file.
+        Save the model, optimizer, and EMA model to a checkpoint file.
 
         Args:
-            path (str): The file path to save the model.
+            path (str): The file path to save the checkpoint to.
         """
-        torch.save(self.model.state_dict(), path)
+        if self.model is None:
+            raise ValueError("Model is not initialized. Cannot save checkpoint.")
+
+        checkpoint = {
+            "epoch": getattr(self.model, "current_epoch", None),
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": (
+                getattr(self.model, "optimizer", None).state_dict()
+                if hasattr(self.model, "optimizer")
+                else None
+            ),
+            "ema_state_dict": (
+                getattr(self.model, "ema", None).ema_model.state_dict()
+                if hasattr(self.model, "ema")
+                else None
+            ),
+        }
+
+        torch.save(checkpoint, path)
+        print(f"Saved checkpoint to {path}")
 
     def load(self, path):
         """
-        Load the model from a file.
+        Load the model, optimizer, and EMA model from a checkpoint file.
 
         Args:
-            path (str): The file path to load the model from.
+            path (str): The file path to load the checkpoint from.
         """
-        self.model.load_state_dict(torch.load(path))
-        self.model.to(self.device)
+        if self.model is None:
+            raise ValueError("Model is not initialized. Cannot load checkpoint.")
+
+        self.model.load(path)
 
     def _prepare_dataset(
         self, df: pd.DataFrame, timeseries_colname: str, conditioning_vars: Dict = None
