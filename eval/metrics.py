@@ -345,7 +345,7 @@ def plot_range_with_syn_values(
         max_values,
         color="gray",
         alpha=0.5,
-        label="Range of Real Data",
+        label="kwh load range of real data",
     )
 
     # Plot all synthetic time series without adding multiple labels
@@ -370,11 +370,9 @@ def plot_range_with_syn_values(
                 linestyle="-",
             )
 
-    plt.title(
-        f"Range of Values and Synthetic Data Comparison for Month={month}, Weekday={weekday}"
-    )
-    plt.xlabel("Time of Day")
-    plt.ylabel("Values")
+    plt.title(f"Range of values and synthetic data for a {weekday} in {month}")
+    plt.xlabel("Time of day")
+    plt.ylabel("Electric load in kwh")
     plt.xticks(rotation=45)
     plt.legend()
     plt.tight_layout()
@@ -474,10 +472,10 @@ def plot_syn_with_closest_real_ts(
             )
 
     plt.title(
-        f"Synthetic vs Closest Real Time Series (DTW) for Month={month}, Weekday={weekday}"
+        f"Synthetic vs closest real time series (DTW) for a {weekday} in {month},"
     )
-    plt.xlabel("Time of Day")
-    plt.ylabel("Values")
+    plt.xlabel("Time of day")
+    plt.ylabel("Electric load in kwh")
     plt.xticks(rotation=45)
     plt.legend()
     plt.tight_layout()
