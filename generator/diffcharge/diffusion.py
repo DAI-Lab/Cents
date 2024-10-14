@@ -17,7 +17,7 @@ Note: Please ensure compliance with the repository's license and credit the orig
 import copy
 import math
 import os
-from functools import partial
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -286,6 +286,7 @@ class DDPM(nn.Module):
         os.makedirs(self.opt.results_folder, exist_ok=True)
 
         for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
+            self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             self.current_epoch = epoch + 1
             batch_loss = []
             for i, (time_series_batch, conditioning_vars_batch) in enumerate(
@@ -368,11 +369,14 @@ class DDPM(nn.Module):
             self.lr_scheduler.step(epoch_mean_loss)
 
             if (epoch + 1) % self.opt.save_cycle == 0:
+                os.mkdir(os.path.join(self.opt.results_folder, self.train_timestamp))
+
                 checkpoint_path = os.path.join(
-                    self.opt.results_folder, f"ddpm_checkpoint_epoch_{epoch + 1}.pt"
+                    os.path.join(self.opt.results_folder, self.train_timestamp),
+                    f"diffcharge_checkpoint_{epoch + 1}.pt",
                 )
+
                 self.save(checkpoint_path, self.current_epoch)
-                print(f"Saved checkpoint at {checkpoint_path}.")
 
         print("Training complete")
         self.writer.close()
