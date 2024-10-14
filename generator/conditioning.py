@@ -4,10 +4,11 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class ConditioningModule(nn.Module):
-    def __init__(self, categorical_dims, embedding_dim, device):
+    def __init__(self, categorical_dims, embedding_dim, device, alpha=0.9):
         super(ConditioningModule, self).__init__()
         self.embedding_dim = embedding_dim
         self.device = device
+        self.alpha = alpha
 
         self.category_embeddings = nn.ModuleDict(
             {
@@ -52,49 +53,62 @@ class ConditioningModule(nn.Module):
         self.inverse_cov_embedding = torch.inverse(self.cov_embedding)
         self.n_samples = embeddings.size(0)
 
-    def update_running_statistics(self, embeddings):
-        """
-        Update mean and covariance using an online algorithm.
-        """
-        batch_size = embeddings.size(0)
-        if self.n_samples == 0:
-            self.initialize_statistics(embeddings)
-            return
 
-        new_mean = torch.mean(embeddings, dim=0)
-        delta = new_mean - self.mean_embedding
-        total_samples = self.n_samples + batch_size
+def update_running_statistics(self, embeddings):
+    """
+    Update mean and covariance using an EWMA algorithm.
 
-        # Update mean
-        self.mean_embedding = (
-            self.n_samples * self.mean_embedding + batch_size * new_mean
-        ) / total_samples
+    Args:
+        embeddings (torch.Tensor): Batch of embedding vectors of shape (batch_size, embedding_dim).
+    """
+    batch_size = embeddings.size(0)
 
-        # Compute batch covariance
-        centered_embeddings = embeddings - new_mean.unsqueeze(0)
-        batch_cov = torch.matmul(centered_embeddings.T, centered_embeddings) / (
-            batch_size - 1
-        )
-        batch_cov += (
-            torch.eye(batch_cov.size(0)).to(self.device) * 1e-6
-        )  # For numerical stability
+    if self.n_samples == 0:
+        self.initialize_statistics(embeddings)
+        return
 
-        # Update covariance
-        delta_outer = (
-            torch.ger(delta, delta) * self.n_samples * batch_size / (total_samples**2)
-        )
-        self.cov_embedding = (
-            self.n_samples * self.cov_embedding + batch_size * batch_cov + delta_outer
-        ) / total_samples
+    # Compute batch mean
+    batch_mean = torch.mean(embeddings, dim=0)
 
-        self.n_samples = total_samples
+    # Update mean using EWMA
+    # μ_t = α * μ_{t-1} + (1 - α) * μ_batch
+    self.mean_embedding = (
+        self.alpha * self.mean_embedding + (1 - self.alpha) * batch_mean
+    )
 
-        # Update inverse covariance matrix
-        cov_embedding_reg = (
-            self.cov_embedding
-            + torch.eye(self.cov_embedding.size(0)).to(self.device) * 1e-6
-        )
-        self.inverse_cov_embedding = torch.inverse(cov_embedding_reg)
+    # Compute batch covariance
+    centered_embeddings = embeddings - batch_mean.unsqueeze(0)
+    batch_cov = torch.matmul(centered_embeddings.T, centered_embeddings) / (
+        batch_size - 1
+    )
+    batch_cov += (
+        torch.eye(batch_cov.size(0)).to(self.device) * 1e-6
+    )  # Numerical stability
+
+    # Compute delta (change in mean)
+    delta = (
+        batch_mean - self.mean_embedding.detach()
+    )  # Detach to prevent gradients flowing
+
+    # Update covariance using EWMA
+    # Σ_t = α * Σ_{t-1} + (1 - α) * Σ_batch + (1 - α) * δ δ^T
+    delta_outer = torch.ger(delta, delta)  # Outer product δ δ^T
+    self.cov_embedding = (
+        self.alpha * self.cov_embedding
+        + (1 - self.alpha) * batch_cov
+        + (1 - self.alpha) * delta_outer
+    )
+
+    # Update inverse covariance
+    cov_embedding_reg = (
+        self.cov_embedding
+        + torch.eye(self.cov_embedding.size(0)).to(self.device) * 1e-6
+    )
+    self.inverse_cov_embedding = torch.inverse(cov_embedding_reg)
+
+    # Update effective sample count (optional, based on EWMA)
+    # In pure EWMA, sample counts are not tracked, but can be approximated if needed
+    # self.n_samples = self.alpha * self.n_samples + (1 - self.alpha) * batch_size
 
     def compute_mahalanobis_distance(self, embeddings):
         """
