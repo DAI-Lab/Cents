@@ -349,7 +349,7 @@ def plot_range_with_syn_values(
     hourly_positions, hourly_labels = get_hourly_ticks(timestamps)
     month_name, weekday_name = get_month_weekday_names(month, weekday)
 
-    plt.figure(figsize=(15, 7))
+    f = plt.figure(figsize=(15, 7))
 
     plt.fill_between(
         range(len(timestamps)),
@@ -395,6 +395,7 @@ def plot_range_with_syn_values(
     plt.legend()
     plt.tight_layout()
     plt.show()
+    return f
 
 
 def plot_syn_with_closest_real_ts(
@@ -437,7 +438,7 @@ def plot_syn_with_closest_real_ts(
     month_name, weekday_name = get_month_weekday_names(month, weekday)
 
     # Create the plot
-    plt.figure(figsize=(15, 7))
+    f = plt.figure(figsize=(15, 7))
     synthetic_plotted = False
     real_plotted = False
 
@@ -513,3 +514,4 @@ def plot_syn_with_closest_real_ts(
     plt.legend()
     plt.tight_layout()
     plt.show()
+    return f

@@ -58,6 +58,7 @@ class Evaluator:
         user_id: int = None,
         distinguish_rare: bool = False,
         data_label: str = None,
+        model: Any = None,
     ):
         """
         Evaluate the model for a specific user or the entire dataset.
@@ -72,7 +73,8 @@ class Evaluator:
         else:
             dataset = self.real_dataset
 
-        model = self.get_trained_model(dataset)
+        if not model:
+            model = self.get_trained_model(dataset)
 
         if model.opt.sparse_conditioning_loss_weight != 0.5:
             data_label += "/rare_upweighed"

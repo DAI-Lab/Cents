@@ -525,7 +525,7 @@ class Diffusion_TS(nn.Module):
         Args:
             path (str): The file path to load the checkpoint from.
         """
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path)
 
         # Load the regular model state
         if "model_state_dict" in checkpoint:
@@ -570,7 +570,7 @@ class Diffusion_TS(nn.Module):
         }
         torch.save(
             {
-                "epoch": epoch + 1,
+                "epoch": epoch,
                 "model_state_dict": model_state_dict_cpu,
                 "optimizer_state_dict": optimizer_state_dict_cpu,
                 "ema_state_dict": ema_state_dict_cpu,
