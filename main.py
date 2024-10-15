@@ -1,5 +1,6 @@
 from datasets.pecanstreet import PecanStreetDataManager
 from eval.evaluator import Evaluator
+from generator.data_generator import DataGenerator
 
 
 def evaluate_individual_user_models(
@@ -45,12 +46,24 @@ def main():
     # evaluate_individual_user_models("gpt", include_generation=False)
     # evaluate_individual_user_models("acgan", include_generation=True)
     # evaluate_individual_user_models("acgan", include_generation=False, normalization_method="date")
-    evaluate_single_dataset_model(
-        "diffusion_ts",
-        # geography="california",
+    # evaluate_single_dataset_model(
+    #     "diffusion_ts",
+    #     # geography="california",
+    #     include_generation=True,
+    #     normalization_method="group",
+    # )
+    dataset_manager = PecanStreetDataManager(
+        geography="california",
+        normalize=True,
         include_generation=True,
         normalization_method="group",
+        threshold=(-5, 5),
     )
+    non_pv_user_dataset = dataset_manager.create_non_pv_user_dataset()
+    generator = DataGenerator("diffusion_ts")
+    generator.load("checkpoints/2024-10-15_05-09-19/diffusion_ts_checkpoint_1000.pt")
+    evaluator = Evaluator(non_pv_user_dataset, "diffusion_ts")
+    evaluator.evaluate_model(model=generator.model, data_label="pre-loaded")
 
 
 if __name__ == "__main__":
