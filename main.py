@@ -47,7 +47,7 @@ def main():
     # evaluate_individual_user_models("acgan", include_generation=True)
     # evaluate_individual_user_models("acgan", include_generation=False, normalization_method="date")
     evaluate_single_dataset_model(
-        "diffusion_ts",
+        "acgan",
         geography="california",
         include_generation=True,
         normalization_method="group",

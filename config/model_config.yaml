@@ -1,4 +1,4 @@
-device: 1 # 0, cpu
+device: 0 # 0, cpu
 seq_len: 96 # should not be changed for the current datasets
 input_dim: 1 # or 1 depending on user, but is dynamically set
 noise_dim: 256
@@ -74,4 +74,5 @@ acgan:
   lr_gen: 3e-4
   lr_discr: 1e-4
   warm_up_epochs: 100
-  include_auxiliary_losses: True
+  include_auxiliary_losses: False
+  save_cycle: 100
