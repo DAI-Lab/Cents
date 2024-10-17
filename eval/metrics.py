@@ -384,7 +384,7 @@ def plot_range_with_syn_values(
                 alpha=0.6,
             )
 
-    plt.title(f"Range of Values and Synthetic Data for {weekday_name} in {month_name}")
+    plt.title(f"Range of Values and Synthetic Data for {weekday_name}s in {month_name}")
     plt.xlabel("Time of day")
     plt.ylabel("Electric load in kWh")
 
@@ -394,8 +394,7 @@ def plot_range_with_syn_values(
 
     plt.legend()
     plt.tight_layout()
-    plt.show()
-    return f
+    return plt.gcf()
 
 
 def plot_syn_with_closest_real_ts(
@@ -432,7 +431,7 @@ def plot_syn_with_closest_real_ts(
     syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
 
     # Generate timestamps at 15-minute intervals
-    timestamps = pd.date_range(start="00:00", end="23:45", freq="15T")
+    timestamps = pd.date_range(start="00:00", end="23:45", freq="15min")
 
     hourly_positions, hourly_labels = get_hourly_ticks(timestamps)
     month_name, weekday_name = get_month_weekday_names(month, weekday)
@@ -503,7 +502,7 @@ def plot_syn_with_closest_real_ts(
                 )
 
     plt.title(
-        f"Synthetic vs Closest Real Time Series for {weekday_name} in {month_name}"
+        f"Synthetic vs Closest Real Time Series for {weekday_name}s in {month_name}"
     )
     plt.xlabel("Time of day")
     plt.ylabel("Electric load in kWh")
@@ -513,5 +512,4 @@ def plot_syn_with_closest_real_ts(
 
     plt.legend()
     plt.tight_layout()
-    plt.show()
-    return f
+    return plt.gcf()

@@ -323,19 +323,22 @@ class Evaluator:
             range_plot = plot_range_with_syn_values(
                 real_data_df, generated_samples_df, month, weekday
             )
-            writer.add_figure(f"Visualizations/Range_Plot_{i}", range_plot)
+            if range_plot is not None:
+                writer.add_figure(f"Visualizations/Range_Plot_{i}", range_plot)
 
             # Visualization 2: Plot closest real signals with synthetic values
             closest_plot = plot_syn_with_closest_real_ts(
                 real_data_df, generated_samples_df, month, weekday
             )
-            writer.add_figure(f"Visualizations/Closest_Real_TS_{i}", closest_plot)
+            if closest_plot is not None:
+                writer.add_figure(f"Visualizations/Closest_Real_TS_{i}", closest_plot)
 
         # Visualization 3: KDE plots for real and synthetic data
         real_data_array = np.stack(real_data_df["timeseries"])
         syn_data_array = np.stack(syn_data_df["timeseries"])
         kde_plot = visualization(real_data_array, syn_data_array, "kernel")
-        writer.add_figure(f"Visualizations/KDE", kde_plot)
+        if kde_plot is None:
+            writer.add_figure(f"Visualizations/KDE", kde_plot)
 
     def get_trained_model(self, dataset: Any) -> Any:
         """
