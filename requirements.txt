@@ -23,3 +23,5 @@ seaborn
 einops
 sentencepiece
 omegaconf
+pytest
+hydra

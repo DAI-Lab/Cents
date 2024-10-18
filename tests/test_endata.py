@@ -1,16 +1,18 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """Tests for `endata` package."""
 
 import os
+import sys
 import unittest
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from typing import List
 
 import numpy as np
 import torch
 from sklearn.metrics import mean_squared_error
 
+from datasets.openpower import OpenPowerDataManager
 from datasets.pecanstreet import PecanStreetDataManager
 from generator.gan.acgan import ACGAN
 from generator.options import Options
@@ -47,12 +49,20 @@ class TestDataset(unittest.TestCase):
         )
 
         assert data_manager.data.shape[0] > 0, "Dataframe not loaded correctly"
-        assert "timeseries" in data_manager.data.columns
+        assert "timeseries" in data_manager.data.columns, "No timeseries column found."
 
         ts_shape = data_manager.data.timeseries.iloc[0].shape
         assert ts_shape == (96, 2)
 
-    def test_reverse_transform(self):
+        op_data_manager = OpenPowerDataManager()
+
+        assert op_data_manager.data.shape[0] > 0, "Dataframe not loaded correctly"
+        assert "timeseries" in data_manager.data.columns, "No timeseries column found."
+
+        ts_shape = data_manager.data.timeseries.iloc[0].shape
+        assert ts_shape == (96, 2)
+
+    def test_ps_reverse_transform(self):
         data_manager = PecanStreetDataManager(
             config_path=TEST_CONFIG_PATH,
             include_generation=False,
@@ -111,3 +121,39 @@ class TestDataset(unittest.TestCase):
 
         avg_mse = np.mean(mse_list)
         assert avg_mse < 0.001
+
+    def test_op_reverse_transform(self):
+        data_manager = OpenPowerDataManager(normalize=False, include_generation=True)
+        normalized_data_manager = OpenPowerDataManager(
+            normalize=True, include_generation=True
+        )
+
+        original_dataset = data_manager.create_pv_user_dataset()
+        normalized_dataset = normalized_data_manager.create_pv_user_dataset()
+
+        original_data = original_dataset.data.sort_values(
+            by=["dataid", "year", "month", "weekday"]
+        )
+        normalized_data = normalized_dataset.data.sort_values(
+            by=["dataid", "year", "month", "weekday"]
+        )
+
+        transformed = normalized_dataset.inverse_transform(normalized_data)
+
+        mse_list: List[float] = []
+
+        for idx in range(len(original_data)):
+            unnormalized_timeseries = original_data.iloc[idx]["timeseries"]
+            transformed_timeseries = transformed.iloc[idx]["timeseries"]
+
+            mse = mean_squared_error(unnormalized_timeseries, transformed_timeseries)
+
+            mse_list.append(mse)
+
+        avg_mse = np.mean(mse_list)
+        assert avg_mse < 0.001
+
+
+if __name__ == "__main__":
+    test = TestDataset()
+    test.test_op_reverse_transform()

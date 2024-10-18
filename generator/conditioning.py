@@ -4,7 +4,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 class ConditioningModule(nn.Module):
-    def __init__(self, categorical_dims, embedding_dim, device, alpha=0.9):
+    def __init__(self, categorical_dims, embedding_dim, device, alpha=0.8):
         super(ConditioningModule, self).__init__()
         self.embedding_dim = embedding_dim
         self.device = device

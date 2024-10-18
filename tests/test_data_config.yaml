@@ -22,18 +22,19 @@ datasets:
   # goinerdata:
   #   path: "home/fuest/EnData/data/goinerdata/"
   #   columns: ["pv", "id"]
-  # openpower:
-  #   path: "home/fuest/EnData/data/openpower/"
-  #   columns: ["utc_timestamp",
-  #    "DE_KN_residential1_pv",
-  #    "DE_KN_residential1_grid_import",
-  #    "DE_KN_residential2_grid_import",
-  #    "DE_KN_residential3_pv",
-  #    "DE_KN_residential3_grid_import",
-  #    "DE_KN_residential4_pv",
-  #    "DE_KN_residential4_grid_import",
-  #    "DE_KN_residential5_grid_import",
-  #    "DE_KN_residential6_pv",
-  #    "DE_KN_residential6_grid_import",
-  #    ]
-  #   user_flags: [True, False, True, True, False, True]
+  openpower:
+    path: "tests/testdata/"
+    columns: ["utc_timestamp",
+     "DE_KN_residential1_pv",
+     "DE_KN_residential1_grid_import",
+     "DE_KN_residential2_grid_import",
+     "DE_KN_residential3_pv",
+     "DE_KN_residential3_grid_import",
+     "DE_KN_residential4_pv",
+     "DE_KN_residential4_grid_import",
+     "DE_KN_residential5_grid_import",
+     "DE_KN_residential6_pv",
+     "DE_KN_residential6_grid_import",
+     ]
+    user_flags: [True, False, True, True, False, True]
+    ev_flags: [False, False, True, True, False, False]

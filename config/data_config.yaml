@@ -20,10 +20,10 @@ datasets:
       "house_construction_year"
     ]
   goinerdata:
-    path: "home/fuest/EnData/data/goinerdata/"
+    path: "./data/goinerdata/"
     columns: ["pv", "id"]
   openpower:
-    path: "home/fuest/EnData/data/openpower/"
+    path: "./data/openpower/"
     data_columns: ["utc_timestamp",
      "DE_KN_residential1_pv",
      "DE_KN_residential1_grid_import",
@@ -36,8 +36,5 @@ datasets:
      "DE_KN_residential6_pv",
      "DE_KN_residential6_grid_import",
      ]
-    metadata_columns: [
-
-    ]
     user_flags: [True, False, True, True, False, True]
     ev_flags: [False, False, True, True, False, False]
