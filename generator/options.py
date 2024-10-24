@@ -114,3 +114,4 @@ class Options:
         self.lr_discr = model_params.lr_discr
         self.warm_up_epochs = model_params.warm_up_epochs
         self.include_auxiliary_losses = model_params.include_auxiliary_losses
+        self.save_cycle = model_params.save_cycle

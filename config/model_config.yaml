@@ -75,4 +75,4 @@ acgan:
   lr_discr: 1e-4
   warm_up_epochs: 100
   include_auxiliary_losses: False
-  save_cycle: 100
+  save_cycle: 200
