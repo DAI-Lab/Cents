@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from typing import Any
 from typing import Dict
 
@@ -139,17 +141,15 @@ class DataGenerator:
         torch.save(checkpoint, path)
         print(f"Saved checkpoint to {path}")
 
-    def load(self, path):
+    def load_model(self):
         """
         Load the model, optimizer, and EMA model from a checkpoint file.
-
-        Args:
-            path (str): The file path to load the checkpoint from.
         """
         if self.model is None:
             raise ValueError("Model is not initialized. Cannot load checkpoint.")
 
-        self.model.load(path)
+        checkpoint_path = self._get_model_checkpoint_path()
+        self.model.load(checkpoint_path)
 
     def _prepare_dataset(
         self, df: pd.DataFrame, timeseries_colname: str, conditioning_vars: Dict = None
@@ -174,3 +174,20 @@ class DataGenerator:
             return dataset
         else:
             raise TypeError("Input X must be a Dataset or a DataFrame.")
+
+    def _get_model_checkpoint_path(self):
+        """
+        Returns the checkpoint path for the data generator's model type.
+        """
+        project_root = str(Path(__file__).resolve().parent.parent)
+        checkpoint_dir = os.path.join(project_root, "checkpoints/models/")
+
+        if self.model_name == "diffusion_ts":
+            checkpoint_name = "diffusion_ts_checkpoint_1000.pt"
+        elif self.model_name == "acgan":
+            checkpoint_name = "acgan_checkpoint_200.pt"
+        elif self.model_name == "diffcharge":
+            checkpoint_name == "diffcharge_checkpoint_1000.pt"
+        else:
+            raise ValueError(f"No model checkpoint found for {self.model_name}.")
+        return os.path.join(checkpoint_dir, checkpoint_name)

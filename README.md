@@ -93,43 +93,55 @@ getting started with **EnData**.
 
 ## Generating Data
 
-To get started, define a DataGenerator and specify the name of the model you would like to sample from.
+To get started, define a DataGenerator and specify the name of the model you would like to use.
 
-    generator = DataGenerator(model_name="diffusion_ts")
+```python
+generator = DataGenerator(model_name="diffusion_ts")
+```
 
 We provide pre-trained model checkpoints that were trained on the [PecanStreet Dataport](https://www.pecanstreet.org/dataport/) dataset. You can use these checkpoints to load a trained model as follows:
 
-    generator.load_trained_model()
+```python
+generator.load_trained_model()
+```
 
-These pre-trained models are conditional models, meaning they require a set of conditioning variables to generate synthetic time series data. If you want to generate samples for a random set of conditioning variables, you can do so as follows:
+These pre-trained models are conditional models, meaning they require a set of conditioning variables to generate synthetic time series data. If you want to generate samples for a random set of conditioning variables (among those present in the dataset the model was trained on), you can do so as follows:
 
-    conditioning_variables = generator.sample_conditioning_variables(random=True)
-    synthetic_data = generator.generate(conditioning_variables)
+```python
+conditioning_variables = generator.sample_conditioning_variables(random=True)
+synthetic_data = generator.generate(conditioning_variables)
+```
 
 ## Training
 
-If you are interested in training these models from scratch on your own datasets, you need to start by creating a time series dataset object:
+If you are interested in training a model from scratch on your own dataset, you need to start by creating a time series dataset object:
 
-    your_dataset = TimeSeriesDataset(
-        dataframe=your_custom_df,
-        time_series_column_name="your_custom_timeseries_column_name,
-        conditioning_vars="your_custom_conditioning_dict"
-    )
+```python
+your_dataset = TimeSeriesDataset(
+    dataframe=your_custom_df,
+    time_series_column_name="your_custom_timeseries_column_name,
+    conditioning_vars="your_custom_conditioning_dict"
+)
+```
 
-This TimeSeriesDataset takes a [pandas](https://pandas.pydata.org/) Data Frame as input, and ensures compatability with EnData models. You can optionally define a dictionary of conditioning variables, where the keys correspond to the conditioning variable column names, and the values correspond to the number of discrete categories for that variable. Note that variables should already be Integer encoded. The following line of code starts model training:
+This TimeSeriesDataset takes a [pandas](https://pandas.pydata.org/) `pd.DataFrame` object as input, and ensures compatability with EnData models. You can optionally define a dictionary of conditioning variables, where the keys correspond to the conditioning variable column names, and the values correspond to the number of discrete categories for that variable. Note that variables should already be Integer encoded. The following line of code starts model training:
 
-    generator.fit(your_dataset, "your_custom_timeseries_column_name")
+```python
+generator.fit(your_dataset, "your_custom_timeseries_column_name")
+```
 
 Once the model is trained, synthetic data can be created as before:
 
-    my_custom_conditioning_variables = generator.sample_conditioning_variables(random=True)
-    synthetic_data = generator.generate(conditioning_variables)
+```python
+my_custom_conditioning_variables = generator.sample_conditioning_variables(random=True)
+synthetic_data = generator.generate(conditioning_variables)
+```
 
 Please refer to our [documentation]() or to the [tutorials]() for more details.
 
 ## Datasets
 
-If you want to reproduce our models from scratch, you will need to download the [PecanStreet DataPort dataset](https://www.pecanstreet.org/dataport/) and place it under the path specified in your configuration file. Specifically you will require the following files:
+If you want to reproduce our models from scratch, you will need to download the [PecanStreet DataPort dataset](https://www.pecanstreet.org/dataport/) and place it under the path specified in your `data_config.yaml`. Specifically you will require the following files:
 
 - 15minute_data_austin.csv
 - 15minute_data_california.csv
@@ -139,6 +151,8 @@ If you want to reproduce our models from scratch, you will need to download the 
 If you want to train models using the [Open Power Systems dataset](https://data.open-power-system-data.org/household_data/), you will need to download the following file:
 
 - household_data_15min_singleindex.csv
+
+and again place it under the path specified in `data_config.yaml`.
 
 # What's next?
 
