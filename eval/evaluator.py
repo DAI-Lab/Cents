@@ -1,28 +1,28 @@
 import datetime
 import os
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
+from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.tensorboard import SummaryWriter
 
 from eval.discriminative_metric import discriminative_score_metrics
-from eval.metrics import Context_FID
-from eval.metrics import calculate_mmd
-from eval.metrics import calculate_period_bound_mse
-from eval.metrics import dynamic_time_warping_dist
-from eval.metrics import plot_range_with_syn_values
-from eval.metrics import plot_syn_with_closest_real_ts
-from eval.metrics import visualization
+from eval.metrics import (
+    Context_FID,
+    calculate_mmd,
+    calculate_period_bound_mse,
+    dynamic_time_warping_dist,
+    plot_range_with_syn_values,
+    plot_syn_with_closest_real_ts,
+    visualization,
+)
 from eval.predictive_metric import predictive_score_metrics
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
-from generator.options import Options
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -32,7 +32,7 @@ class Evaluator:
     A class for evaluating generative models on time series data.
     """
 
-    def __init__(self, real_dataset: Any, model_name: str, log_dir: str = "runs"):
+    def __init__(self, cfg: DictConfig, real_dataset: Any):
         """
         Initialize the Evaluator.
 
@@ -42,8 +42,9 @@ class Evaluator:
             log_dir (str): Base directory for storing TensorBoard logs.
         """
         self.real_dataset = real_dataset
-        self.model_name = model_name
-        self.base_log_dir = os.path.join(log_dir, model_name)
+        self.cfg = cfg
+        self.model_name = cfg.model.name
+        self.base_log_dir = os.path.join(cfg.evaluator.log_dir, cfg.model.name)
         self.metrics: Dict[str, List] = {
             "dtw": [],
             "mmd": [],
@@ -354,8 +355,7 @@ class Evaluator:
             int(dataset.include_generation) + 1
         )  # 2 if generation is included, otherwise 1
 
-        opt = Options(self.model_name)
-        opt.input_dim = input_dim
+        self.cfg.input_dim = input_dim
 
         model_dict = {
             "acgan": ACGAN,
@@ -366,7 +366,7 @@ class Evaluator:
 
         if self.model_name in model_dict:
             model_class = model_dict[self.model_name]
-            model = model_class(opt)
+            model = model_class(self.cfg)
         else:
             raise ValueError("Model name not recognized!")
 

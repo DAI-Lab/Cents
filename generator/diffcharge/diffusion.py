@@ -6,10 +6,11 @@ Author: Xinyu Yuan
 License: MIT License
 
 Modifications:
-- Conditioning and sampling logic
-- Added further functions and removed unused functionality
-- Added conditioning module logic for rare and non-rare samples
-- Implemented saving and loading functionality
+- Integrated conditioning logic from Diffusion_TS.
+- Removed old classifier-free conditioning and sampling logic.
+- Simplified the conditioning handling by directly concatenating conditioning vectors.
+- Maintained rare and non-rare sample handling for balanced training.
+- Ensured compatibility with the modified model architecture.
 
 Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
 """
@@ -22,17 +23,15 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from omegaconf import DictConfig
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
 from datasets.utils import prepare_dataloader
 from generator.conditioning import ConditioningModule
-from generator.diffcharge.network import CNN
-from generator.diffcharge.network import Attention
+from generator.diffcharge.network import CNN, Attention
 from generator.diffusion_ts.gaussian_diffusion import cosine_beta_schedule
-from generator.diffusion_ts.model_utils import default
-from generator.diffusion_ts.model_utils import extract
-from generator.diffusion_ts.model_utils import identity
+from generator.diffusion_ts.model_utils import default, extract, identity
 
 
 def linear_beta_schedule(timesteps, device):
@@ -106,28 +105,28 @@ class EMA:
 
 
 class DDPM(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, cfg: DictConfig):
         super(DDPM, self).__init__()
-        self.opt = opt
-        self.device = opt.device
+        self.cfg = cfg
+        self.device = cfg.device
 
         # Initialize the conditioning module
         self.conditioning_module = ConditioningModule(
-            categorical_dims=opt.categorical_dims,
-            embedding_dim=opt.cond_emb_dim,
-            device=opt.device,
+            categorical_dims=cfg.dataset.conditioning_vars,
+            embedding_dim=cfg.cond_emb_dim,
+            device=cfg.device,
         ).to(self.device)
 
-        # Initialize the epsilon model
-        if opt.network == "attention":
-            self.eps_model = Attention(opt).to(self.device)
+        # Initialize the epsilon model with increased input dimension to accommodate conditioning
+        if cfg.model.network == "attention":
+            self.eps_model = Attention(cfg).to(self.device)
         else:
-            self.eps_model = CNN(opt).to(self.device)
+            self.eps_model = CNN(cfg).to(self.device)
 
-        self.n_steps = opt.n_steps
-        schedule = opt.schedule
-        beta_start = opt.beta_start
-        beta_end = opt.beta_end
+        self.n_steps = cfg.model.n_steps
+        schedule = cfg.model.schedule
+        beta_start = cfg.model.beta_start
+        beta_end = cfg.model.beta_end
 
         if schedule == "linear":
             self.beta = linear_beta_schedule(self.n_steps, self.device)
@@ -152,9 +151,11 @@ class DDPM(nn.Module):
                 self.beta[1:] * (1 - self.alpha_bar[:-1]) / (1 - self.alpha_bar[1:]),
             )
         )
-        self.optimizer = torch.optim.Adam(self.eps_model.parameters(), lr=opt.init_lr)
+        self.optimizer = torch.optim.Adam(
+            self.eps_model.parameters(), lr=cfg.model.init_lr
+        )
         self.loss_func = nn.MSELoss()
-        n_epochs = opt.n_epochs
+        n_epochs = cfg.model.n_epochs
         p1, p2 = int(0.75 * n_epochs), int(0.9 * n_epochs)
         self.lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
             self.optimizer, milestones=[p1, p2], gamma=0.1
@@ -163,14 +164,17 @@ class DDPM(nn.Module):
         # Initialize EMA
         self.ema = EMA(
             self.eps_model,
-            beta=opt.ema_decay,
-            update_every=opt.ema_update_interval,
+            beta=cfg.model.ema_decay,
+            update_every=cfg.model.ema_update_interval,
             device=self.device,
         )
 
         # Initialize tracking variables
         self.current_epoch = 0
         self.writer = SummaryWriter(log_dir=os.path.join("runs", "ddpm"))
+
+        # Sparse conditioning loss weight
+        self.sparse_conditioning_loss_weight = cfg.sparse_conditioning_loss_weight
 
     def gather(self, const, t):
         """
@@ -229,11 +233,8 @@ class DDPM(nn.Module):
         Returns:
             torch.Tensor: Sampled x_{t-1}.
         """
-        eps_theta_cond = self.eps_model(xt, c, t)
-        eps_theta_uncond = self.eps_model(xt, torch.zeros_like(c), t)
-        eps_theta = eps_theta_uncond + guidance_scale * (
-            eps_theta_cond - eps_theta_uncond
-        )
+        # Directly use the conditional epsilon prediction
+        eps_theta = self.eps_model(torch.cat([xt, c], dim=-1), t)
         alpha_bar = self.gather(self.alpha_bar, t)
         alpha = self.gather(self.alpha, t)
         eps_coef = (1 - alpha) / (1 - alpha_bar).sqrt()
@@ -257,6 +258,7 @@ class DDPM(nn.Module):
         Returns:
             torch.Tensor: Computed loss.
         """
+        c = c.unsqueeze(1).repeat(1, self.cfg.seq_len, 1)
         batch_size = x0.shape[0]
         t = torch.randint(0, self.n_steps, (batch_size,), device=self.device)
         noise = torch.randn_like(x0)
@@ -266,7 +268,7 @@ class DDPM(nn.Module):
         if torch.rand(1).item() < drop_prob:
             c = torch.zeros_like(c)
 
-        eps_theta = self.eps_model(xt, c, t)
+        eps_theta = self.eps_model(torch.cat([xt, c], dim=-1), t)
         return self.loss_func(noise, eps_theta)
 
     def train_model(self, train_dataset):
@@ -280,12 +282,12 @@ class DDPM(nn.Module):
         self.to(self.device)
 
         train_loader = prepare_dataloader(
-            train_dataset, self.opt.batch_size, shuffle=True
+            train_dataset, self.cfg.model.batch_size, shuffle=True
         )
 
-        os.makedirs(self.opt.results_folder, exist_ok=True)
+        os.makedirs(self.cfg.results_folder, exist_ok=True)
 
-        for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
+        for epoch in tqdm(range(self.cfg.model.n_epochs), desc="Training"):
             self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             self.current_epoch = epoch + 1
             batch_loss = []
@@ -296,9 +298,9 @@ class DDPM(nn.Module):
                 c = self.conditioning_module(conditioning_vars_batch).to(self.device)
 
                 # Compute rare_mask after warm-up epochs
-                if epoch >= self.opt.warm_up_epochs:
+                if epoch >= self.cfg.model.warm_up_epochs:
                     with torch.no_grad():
-                        if self.opt.freeze_cond_after_warmup:
+                        if self.cfg.freeze_cond_after_warmup:
                             for param in self.conditioning_module.parameters():
                                 param.requires_grad = (
                                     False  # Freeze conditioning module
@@ -320,7 +322,7 @@ class DDPM(nn.Module):
 
                 self.optimizer.zero_grad()
 
-                if epoch < self.opt.warm_up_epochs:
+                if epoch < self.cfg.model.warm_up_epochs:
                     # Standard loss without separating rare and non-rare
                     loss = self.cal_loss(x0, c, drop_prob=0.1)
                 else:
@@ -363,16 +365,18 @@ class DDPM(nn.Module):
                 # self.writer.add_scalar('Loss/train', loss.item(), epoch * len(train_loader) + i)
 
             epoch_mean_loss = sum(batch_loss) / len(batch_loss)
-            print(f"Epoch {epoch + 1}/{self.opt.n_epochs}, Loss: {epoch_mean_loss:.4f}")
+            print(
+                f"Epoch {epoch + 1}/{self.cfg.model.n_epochs}, Loss: {epoch_mean_loss:.4f}"
+            )
 
             # Scheduler step
             self.lr_scheduler.step(epoch_mean_loss)
 
-            if (epoch + 1) % self.opt.save_cycle == 0:
-                os.mkdir(os.path.join(self.opt.results_folder, self.train_timestamp))
+            if (epoch + 1) % self.cfg.model.save_cycle == 0:
+                os.mkdir(os.path.join(self.cfg.results_folder, self.train_timestamp))
 
                 checkpoint_path = os.path.join(
-                    os.path.join(self.opt.results_folder, self.train_timestamp),
+                    os.path.join(self.cfg.results_folder, self.train_timestamp),
                     f"diffcharge_checkpoint_{epoch + 1}.pt",
                 )
 
@@ -468,7 +472,7 @@ class DDPM(nn.Module):
         """
         conditioning_vars = {}
         if random:
-            for var_name, num_categories in self.opt.categorical_dims.items():
+            for var_name, num_categories in self.cfg.dataset.conditioning_vars.items():
                 conditioning_vars[var_name] = torch.randint(
                     0,
                     num_categories,
@@ -478,7 +482,7 @@ class DDPM(nn.Module):
                 )
         else:
             sampled_rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
-            for var_name in self.opt.categorical_dims.keys():
+            for var_name in self.cfg.dataset.conditioning_vars.keys():
                 conditioning_vars[var_name] = torch.tensor(
                     sampled_rows[var_name].values, dtype=torch.long, device=self.device
                 )
@@ -497,7 +501,7 @@ class DDPM(nn.Module):
             torch.Tensor: Generated synthetic time series data.
         """
         num_samples = conditioning_vars[next(iter(conditioning_vars))].shape[0]
-        shape = (num_samples, self.opt.seq_len, self.opt.input_dim)
+        shape = (num_samples, self.cfg.seq_len, self.cfg.input_dim)
 
         if use_ema_sampling:
             print("Generating using EMA model parameters.")
@@ -529,3 +533,19 @@ class DDPM(nn.Module):
         ):
             img = self.p_sample(img, conditioning_vars, t)
         return img
+
+    def p_sample(self, xt, conditioning_vars, t):
+        """
+        Sample from p(x_{t-1} | x_t).
+
+        Args:
+            xt (torch.Tensor): Current data.
+            conditioning_vars (dict): Conditioning variables.
+            t (int): Current timestep.
+
+        Returns:
+            torch.Tensor: Sampled x_{t-1}.
+        """
+        t_tensor = torch.full((xt.shape[0],), t, device=self.device, dtype=torch.long)
+        c = self.conditioning_module(conditioning_vars).to(self.device)
+        return self.p_sample(xt, c, t_tensor)

@@ -1,0 +1,18 @@
+_target_: generator.diffcharge.diffusion.DDPM
+name: diffcharge
+batch_size: 64
+n_epochs: 1000
+init_lr: 3e-5
+network: cnn # attention
+use_cfg: True
+guidance_scale: 1.2
+ema_decay: 0.99
+ema_update_interval: 10
+hidden_dim: 256
+nhead: 8
+beta_start: 1e-4
+beta_end: 0.02
+n_steps: 1000
+schedule: linear # quadratic, cosine
+warm_up_epochs: 100
+save_cycle: 200 # specify number of epochs to save model after
