@@ -1,0 +1,19 @@
+name: pecanstreet
+geography: null
+normalize: True
+threshold: 6 # int, bounds values within +-threshold stds
+include_generation: false
+normalization_method: "group"
+path: "./data/pecanstreet"
+data_columns: ["dataid","local_15min","car1","grid","solar"]
+metadata_columns: ["dataid","building_type","solar","car1","city","state","total_square_footage","house_construction_year"]
+conditioning_vars: # for each desired conditioning variable, add the name and number of categories
+  month: 12
+  weekday: 7
+  building_type: 3
+  has_solar: 2 # note that the metadata column name is 'solar', which is renamed to avoid conflicts with the 'solar' column in the other csv.
+  car1: 2
+  city: 7
+  state: 3
+  total_square_footage: 5
+  house_construction_year: 5

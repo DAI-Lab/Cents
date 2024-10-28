@@ -24,4 +24,4 @@ einops
 sentencepiece
 omegaconf
 pytest
-hydra
+hydra-core

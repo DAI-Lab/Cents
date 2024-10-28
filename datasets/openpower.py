@@ -1,9 +1,7 @@
 import os
 import re
 import warnings
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -92,6 +90,44 @@ class OpenPowerDataManager:
                 "user_flags and ev_flags lists must each have exactly 6 elements."
             )
         return user_flags, ev_flags
+
+    def get_conditioning_variables_integer_mapping(self) -> Dict[str, Dict[int, str]]:
+        """
+        Includes predefined mappings for 'weekday' and 'month', and merges with any additional mappings
+        present in self.category_mapping.
+
+        Returns:
+            Dict[str, Dict[int, str]]: A dictionary where each key is a column name and its value is another
+                                        dictionary mapping integer codes to their corresponding string values.
+        """
+        mapping = {
+            "weekday": {
+                0: "Monday",
+                1: "Tuesday",
+                2: "Wednesday",
+                3: "Thursday",
+                4: "Friday",
+                5: "Saturday",
+                6: "Sunday",
+            },
+            "month": {
+                0: "January",
+                1: "February",
+                2: "March",
+                3: "April",
+                4: "May",
+                5: "June",
+                6: "July",
+                7: "August",
+                8: "September",
+                9: "October",
+                10: "November",
+                11: "December",
+            },
+            "solar": {0: "non-pv household", 1: "pv household"},
+            "ev": {0: "non-ev household", 1: "ev household"},
+        }
+        return mapping
 
     def load_and_preprocess_data(
         self,
@@ -249,7 +285,6 @@ class OpenPowerDataManager:
         filtered_data = grouped_data[
             grouped_data["timeseries"].apply(valid_timeseries)
         ].reset_index(drop=True)
-        # filtered_data = filtered_data.drop(columns=["grid_import", "pv"])
 
         return filtered_data
 

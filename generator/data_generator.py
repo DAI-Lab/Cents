@@ -1,16 +1,17 @@
 import os
 from pathlib import Path
-from typing import Any
-from typing import Dict
+from typing import Any, Dict, List, Optional
 
+import hydra
 import pandas as pd
 import torch
+from hydra.utils import instantiate
+from omegaconf import DictConfig, OmegaConf
 
 from datasets.timeseries_dataset import TimeSeriesDataset
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
-from generator.options import Options
 
 
 class DataGenerator:
@@ -18,24 +19,49 @@ class DataGenerator:
     A wrapper class for generative models.
     """
 
-    def __init__(self, model_name: str, model_params: dict = None):
+    @hydra.main(version_base=None, config_path="config", config_name="config")
+    def __init__(self, model_name: str, overrides: Optional[List[str]] = None):
         """
         Initialize the wrapper with the model name and model parameters.
 
         Args:
             model_name (str): The name of the generative model ('acgan', 'diffusion_ts', etc.).
-            model_params (dict): A dictionary of model parameters.
         """
         self.model_name = model_name
-        self.model_params = model_params if model_params is not None else {}
+        self.cfg = self._load_config()
         self.model = None
-        self.opt = Options(model_name)
-
-        # Update opt with parameters from model_params
-        for key, value in self.model_params.items():
-            setattr(self.opt, key, value)
-
         self._initialize_model()
+
+    def _load_config(self) -> DictConfig:
+        """
+        Load and merge the global config and model-specific config, then apply overrides.
+
+        Returns:
+            DictConfig: The merged configuration.
+        """
+        project_root = Path(__file__).resolve().parent.parent
+        config_dir = project_root / "config"
+        global_config_path = config_dir / "config.yaml"
+        model_config_path = config_dir / "models" / f"{self.model_name}.yaml"
+
+        if not global_config_path.exists():
+            raise FileNotFoundError(
+                f"Global config file not found at {global_config_path}"
+            )
+        global_cfg = OmegaConf.load(global_config_path)
+
+        if not model_config_path.exists():
+            raise FileNotFoundError(
+                f"Model config file not found at {model_config_path}"
+            )
+        model_cfg = OmegaConf.load(model_config_path)
+        merged_cfg = OmegaConf.merge(global_cfg, model_cfg)
+
+        if self.overrides:
+            overrides_conf = OmegaConf.from_dotlist(self.overrides)
+            merged_cfg = OmegaConf.merge(merged_cfg, overrides_conf)
+
+        return merged_cfg
 
     def _initialize_model(self):
         """
@@ -48,38 +74,31 @@ class DataGenerator:
         }
         if self.model_name in model_dict:
             model_class = model_dict[self.model_name]
-            self.model = model_class(self.opt)
+            self.model = model_class(self.cfg)
         else:
             raise ValueError(f"Model {self.model_name} not recognized.")
 
-    def fit(self, X: Any, timeseries_colname: Any):
+    def fit(self, dataset):
         """
         Train the model on the given dataset.
 
         Args:
             df (Any): Input data. Should be a compatible dataset object or pandas DataFrame.
         """
-        if isinstance(X, pd.DataFrame):
-            dataset = self._prepare_dataset(X, timeseries_colname)
-        else:
-            dataset = X
-
         sample_timeseries, sample_cond_vars = dataset[0]
-        expected_seq_len = self.model.opt.seq_len
+        expected_seq_len = self.model.cfg.model.seq_len  # Access via cfg
         assert (
             sample_timeseries.shape[0] == expected_seq_len
         ), f"Expected timeseries length {expected_seq_len}, but got {sample_timeseries.shape[0]}"
 
-        if (
-            hasattr(self.model_params, "conditioning_vars")
-            and self.model_params.conditioning_vars
-        ):
-            for var in self.model_params.conditioning_vars:
+        if self.model.conditioning_vars:
+            for var in self.model.conditioning_vars:
                 assert (
                     var in sample_cond_vars.keys()
-                ), f"Conditioning variable '{var}' specified in model_params.conditioning_vars not found in dataset"
+                ), f"Set conditioning variable '{var}' specified in model.conditioning_vars not found in dataset"
 
-        expected_input_dim = self.model.opt.input_dim
+        expected_input_dim = self.model.cfg.model.input_dim
+
         assert sample_timeseries.shape == (
             expected_seq_len,
             expected_input_dim,
@@ -87,7 +106,35 @@ class DataGenerator:
 
         self.model.train_model(dataset)
 
-    def generate(self, conditioning_vars):
+    def get_model_conditioning_vars(self):
+        """
+        Get conditioning variable mappings available for the current dataset config.
+        """
+        if not self.dataset or not self.cfg.dataset.conditioning_vars:
+            return {}
+        elif self.dataset:
+            return self.dataset.get_conditioning_variables_integer_mapping()
+
+    def set_model_conditioning_vars(self, conditioning_vars):
+        """
+        Set conditioning variables model training and generation is conditioned on.
+
+        Args:
+            conditioning_vars (Dict[str, int]): Sets the column name and number of categories of the conditioning column.
+        """
+        if not self.dataset:
+            raise ValueError(
+                "You need to set a dataset before setting conditioning variables!"
+            )
+
+        conditioning_vars = {
+            key: torch.tensor(value, dtype=torch.long())
+            for key, value in conditioning_vars.items()
+        }
+
+        self.conditioning_var_buffer = conditioning_vars
+
+    def generate(self):
         """
         Generate data using the trained model.
 
@@ -97,7 +144,15 @@ class DataGenerator:
         Returns:
             Generated data.
         """
-        return self.model.generate(conditioning_vars)
+        if (
+            not self.conditioning_var_buffer
+            and self.dataset.conditioning_vars is not None
+        ):
+            raise ValueError(
+                f"The following conditioning variables need to be set using set_model_conditioning_variables(): {self.dataset.conditioning_vars.keys()}"
+            )
+
+        return self.model.generate(self.conditioning_var_buffer)
 
     def sample_conditioning_vars(self, dataset, num_samples, random=False):
         """
@@ -112,34 +167,6 @@ class DataGenerator:
             conditioning_vars: Dictionary of conditioning variables.
         """
         return self.model.sample_conditioning_vars(dataset, num_samples, random)
-
-    def save(self, path: str):
-        """
-        Save the model, optimizer, and EMA model to a checkpoint file.
-
-        Args:
-            path (str): The file path to save the checkpoint to.
-        """
-        if self.model is None:
-            raise ValueError("Model is not initialized. Cannot save checkpoint.")
-
-        checkpoint = {
-            "epoch": getattr(self.model, "current_epoch", None),
-            "model_state_dict": self.model.state_dict(),
-            "optimizer_state_dict": (
-                getattr(self.model, "optimizer", None).state_dict()
-                if hasattr(self.model, "optimizer")
-                else None
-            ),
-            "ema_state_dict": (
-                getattr(self.model, "ema", None).ema_model.state_dict()
-                if hasattr(self.model, "ema")
-                else None
-            ),
-        }
-
-        torch.save(checkpoint, path)
-        print(f"Saved checkpoint to {path}")
 
     def load_model(self):
         """
