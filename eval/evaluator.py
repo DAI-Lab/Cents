@@ -44,7 +44,7 @@ class Evaluator:
         self.real_dataset = real_dataset
         self.cfg = cfg
         self.model_name = cfg.model.name
-        self.base_log_dir = os.path.join(cfg.evaluator.log_dir, cfg.model.name)
+        self.base_log_dir = os.getcwd()
         self.metrics: Dict[str, List] = {
             "dtw": [],
             "mmd": [],
@@ -58,11 +58,10 @@ class Evaluator:
         self,
         user_id: int = None,
         distinguish_rare: bool = False,
-        data_label: str = None,
         model: Any = None,
     ):
         """
-        Evaluate the model for a specific user or the entire dataset.
+        Evaluate the model.
 
         Args:
             user_id (int, optional): The ID of the user to evaluate. If None, evaluate on the entire dataset.
@@ -70,19 +69,12 @@ class Evaluator:
         """
         if user_id is not None:
             dataset = self.real_dataset.create_user_dataset(user_id)
-            data_label = f"user_{user_id}"
         else:
             dataset = self.real_dataset
 
         if not model:
             model = self.get_trained_model(dataset)
 
-        if model.opt.sparse_conditioning_loss_weight != 0.5:
-            data_label += "/rare_upweighed"
-        else:
-            data_label += "/equal_weight"
-
-        print("----------------------")
         if user_id is not None:
             print(f"Starting evaluation for user {user_id}")
         else:
@@ -90,11 +82,9 @@ class Evaluator:
         print("----------------------")
 
         # Pass data_label to run_evaluation
-        self.run_evaluation(dataset, model, distinguish_rare, data_label)
+        self.run_evaluation(dataset, model, distinguish_rare)
 
-    def run_evaluation(
-        self, dataset: Any, model: Any, distinguish_rare: bool, data_label: str
-    ):
+    def run_evaluation(self, dataset: Any, model: Any, distinguish_rare: bool):
         """
         Run the evaluation process.
 
@@ -102,27 +92,21 @@ class Evaluator:
             dataset: The dataset to evaluate.
             model: The trained model.
             distinguish_rare (bool): Whether to distinguish between rare and non-rare data samples.
-            data_label (str): Label for the dataset (used in log directory).
         """
         if distinguish_rare:
             rare_indices, non_rare_indices = self.identify_rare_combinations(
                 dataset, model
             )
-            self.evaluate_subset(
-                dataset, model, rare_indices, data_type="rare", data_label=data_label
-            )
+            self.evaluate_subset(dataset, model, rare_indices, data_type="rare")
             self.evaluate_subset(
                 dataset,
                 model,
                 non_rare_indices,
                 data_type="non_rare",
-                data_label=data_label,
             )
         else:
             all_indices = dataset.data.index.to_numpy()
-            self.evaluate_subset(
-                dataset, model, all_indices, data_type="all", data_label=data_label
-            )
+            self.evaluate_subset(dataset, model, all_indices, data_type="all")
 
     def identify_rare_combinations(
         self, dataset: Any, model: Any
@@ -164,7 +148,6 @@ class Evaluator:
         model: Any,
         indices: np.ndarray,
         data_type: str,
-        data_label: str,
     ):
         """
         Evaluate the model on a subset of the data.
@@ -174,11 +157,10 @@ class Evaluator:
             model: The trained model to generate data.
             indices (np.ndarray): Indices of data to use.
             data_type (str): Label for the data subset ("rare", "non_rare", or "all").
-            data_label (str): Label for the dataset (used in log directory).
         """
         # Generate the timestamp here to create a unique subdirectory under data_type
         timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        log_dir = os.path.join(self.base_log_dir, data_label, data_type, timestamp)
+        log_dir = os.path.join(self.base_log_dir, data_type, timestamp)
         writer = SummaryWriter(log_dir=log_dir)
 
         real_data_subset = dataset.data.iloc[indices].reset_index(drop=True)

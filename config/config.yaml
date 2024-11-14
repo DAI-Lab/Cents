@@ -1,6 +1,6 @@
 defaults:
   - model: diffusion_ts
-  - dataset: default
+  - dataset: pecanstreet
   - evaluator: default
   - _self_
 
