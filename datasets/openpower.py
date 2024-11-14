@@ -7,8 +7,11 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
+from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig
 from torch.utils.data import Dataset
+
+from datasets.utils import encode_conditioning_variables
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,7 +26,7 @@ class OpenPowerDataManager:
         cfg (DictConfig): The hydra config file
     """
 
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig = None):
         """
         Initializes the OpenPowerDatasetManager object.
 
@@ -33,9 +36,16 @@ class OpenPowerDataManager:
             threshold (Tuple[float, float], optional): Values to clip data. Defaults to None.
             include_generation (bool, optional): Whether to include PV generation data. Defaults to True.
         """
+        if not cfg:
+            with initialize_config_dir(
+                config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
+            ):
+                cfg = compose(config_name="openpower", overrides=None)
+
         self.normalize = cfg.normalize
-        self.threshold = cfg.threshold
+        self.threshold = (-1 * int(cfg.threshold), int(cfg.threshold))
         self.include_generation = cfg.include_generation
+        self.cfg = cfg
 
         # Read user_flags and ev_flags from config
         self.user_flags, self.ev_flags = self._get_user_flags()
@@ -110,14 +120,14 @@ class OpenPowerDataManager:
         Returns:
             Tuple[pd.DataFrame, Dict[str, Dict[str, bool]]]: Preprocessed data and user mapping with PV and EV flags.
         """
-        dataset_info = self._get_dataset_info()
-        path = dataset_info["path"]
-        columns = dataset_info["data_columns"]
+        path = self.cfg.path
+        columns = self.cfg.data_columns
 
         data = self._load_full_data(path, columns)
         data = self._preprocess_data(data)
         user_mapping = self._map_user_flags()
         data = self._add_user_flags(data, user_mapping)
+        data, self.cond_mapping = encode_conditioning_variables(data)
         return data, user_mapping
 
     def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
@@ -199,7 +209,7 @@ class OpenPowerDataManager:
         df_combined["month"] = df_combined["utc_timestamp"].dt.month - 1
         df_combined["weekday"] = df_combined["utc_timestamp"].dt.weekday.astype(int)
         df_combined["date_day"] = df_combined["utc_timestamp"].dt.day
-        df_combined["year"] = df_combined["utc_timestamp"].dt.year.astype(int)
+        df_combined["year"] = df_combined["utc_timestamp"].dt.year.astype(str)
         df_combined = df_combined.sort_values(by=["utc_timestamp"]).copy()
         df_combined.drop(columns=["utc_timestamp"], inplace=True)
 
@@ -243,6 +253,9 @@ class OpenPowerDataManager:
             return ts.shape == (96, 1) or ts.shape == (96, 2)
 
         def combine_timeseries(row):
+            if not self.include_generation:
+                return np.expand_dims(row["grid_import"], axis=-1)
+
             grid_import = row["grid_import"]
             pv = row["pv"]
 
@@ -253,6 +266,10 @@ class OpenPowerDataManager:
             return timeseries
 
         grouped_data["timeseries"] = grouped_data.apply(combine_timeseries, axis=1)
+        grouped_data.drop(columns=["grid_import"], inplace=True)
+
+        if self.include_generation:
+            grouped_data.drop(columns=["pv"], inplace=True)
 
         filtered_data = grouped_data[
             grouped_data["timeseries"].apply(valid_timeseries)
@@ -284,7 +301,7 @@ class OpenPowerDataManager:
         Returns:
             Dict[str, Dict[str, bool]]: Mapping of user IDs to their PV and EV flags.
         """
-        user_ids = self._extract_user_ids(self._get_dataset_info()["data_columns"])
+        user_ids = self._extract_user_ids(self.cfg.data_columns)
         if len(user_ids) != len(self.user_flags) or len(user_ids) != len(self.ev_flags):
             raise ValueError(
                 "Length of user_flags and ev_flags must match number of users."
@@ -311,10 +328,10 @@ class OpenPowerDataManager:
             pd.DataFrame: The augmented dataset with PV and EV flags.
         """
         data["pv_flag"] = (
-            data["dataid"].astype(str).map(lambda x: user_mapping[x]["pv"])
+            data["dataid"].astype(str).map(lambda x: str(user_mapping[x]["pv"]))
         )
         data["ev_flag"] = (
-            data["dataid"].astype(str).map(lambda x: user_mapping[x]["ev"])
+            data["dataid"].astype(str).map(lambda x: str(user_mapping[x]["ev"]))
         )
         return data
 
