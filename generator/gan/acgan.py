@@ -148,8 +148,9 @@ class Discriminator(nn.Module):
         return validity, aux_outputs
 
 
-class ACGAN:
+class ACGAN(nn.Module):
     def __init__(self, cfg: DictConfig):
+        super(ACGAN, self).__init__()
         self.cfg = cfg
         self.code_size = cfg.noise_dim
         self.input_dim = cfg.input_dim

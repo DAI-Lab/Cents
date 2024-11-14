@@ -21,7 +21,7 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    generator = DataGenerator(model_name="diffusion_ts")
+    generator = DataGenerator(model_name="acgan")
     dataset_manager = PecanStreetDataManager()
     dataset = dataset_manager.create_all_pv_user_dataset()
     generator.set_dataset(dataset)
