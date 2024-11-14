@@ -30,112 +30,128 @@ def time_embedding(t, hidden_dim, seq_len, device):  # (B, )
 
 
 class Attention(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, cfg):
         super(Attention, self).__init__()
-        self.opt = opt
-        self.cond_embedder = nn.Sequential(
-            nn.Linear(opt.cond_emb_dim * 2, opt.hidden_dim), nn.Tanh()
-        )
+        self.cfg = cfg
+
         self.input_projector = nn.LSTM(
-            opt.input_dim + opt.hidden_dim,
-            opt.hidden_dim,
+            cfg.input_dim + cfg.cond_emb_dim,
+            cfg.model.hidden_dim,
             num_layers=4,
             batch_first=True,
         )
         self.encoder_layer = nn.TransformerEncoderLayer(
-            d_model=opt.hidden_dim, nhead=opt.nhead, dim_feedforward=opt.hidden_dim
+            d_model=cfg.model.hidden_dim,
+            nhead=cfg.model.nhead,
+            dim_feedforward=cfg.model.hidden_dim,
+            activation="relu",
+            batch_first=True,
         )
         self.trans_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=5)
-        self.output_projector = self.conv1d_with_init(opt.hidden_dim, opt.input_dim, 1)
-
-        self.month_embed = nn.Embedding(12, opt.cond_emb_dim)
-        self.weekday_embed = nn.Embedding(7, opt.cond_emb_dim)
+        self.output_projector = self.conv1d_with_init(
+            cfg.model.hidden_dim, cfg.input_dim, 1
+        )
 
     def conv1d_with_init(self, in_channels, out_channels, kernel_size):
         conv1d_layer = nn.Conv1d(in_channels, out_channels, kernel_size)
         nn.init.kaiming_normal_(conv1d_layer.weight)
         return conv1d_layer
 
-    def forward(self, x, c=None, t=None, guidance_scale=1.0):
+    def forward(self, x, t):
+        """
+        Forward pass of the Attention model.
 
-        if c is not None:
-            weekday_emb = self.weekday_embed(c[:, 0])
-            month_emb = self.month_embed(c[:, 1])
-            cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
-            cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
-        else:
-            cond_emb = self.null_embed.unsqueeze(0).repeat(x.size(0), 1)
+        Args:
+            x (torch.Tensor): Input tensor with concatenated conditioning vectors. Shape: (B, L, input_dim + cond_emb_dim)
+            t (torch.Tensor): Timesteps tensor. Shape: (B,)
 
-        cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
-            1, self.opt.seq_len, 1
-        )
-        x = torch.cat([x, cond_emb], dim=2)
+        Returns:
+            torch.Tensor: Output tensor. Shape: (B, L, input_dim)
+        """
+        hid_enc, _ = self.input_projector(x)  # (B, L, hidden_dim)
 
-        hid_enc, (_, _) = self.input_projector(x)  # (B, L, hidden_dim)
         time_emb = time_embedding(
-            t, self.opt.hidden_dim, self.opt.seq_len, self.opt.device
+            t, self.cfg.model.hidden_dim, self.cfg.seq_len, self.cfg.device
         )
-        hid_enc = hid_enc + time_emb
-        trans_enc = self.trans_encoder(hid_enc).permute(0, 2, 1)  # (B, hidden_dim, L)
-        output = self.output_projector(trans_enc).permute(0, 2, 1)  # (B, L, input_dim)
+        hid_enc = hid_enc + time_emb  # (B, L, hidden_dim)
 
-        if guidance_scale != 1.0:
-            uncond_output = self.forward(x, c=None, t=t, guidance_scale=1.0)
-            output = uncond_output + guidance_scale * (output - uncond_output)
+        # Pass through Transformer Encoder
+        trans_enc = self.trans_encoder(hid_enc)
+        trans_enc = trans_enc.permute(0, 2, 1)
+        output = self.output_projector(trans_enc).permute(0, 2, 1)
 
         return output
 
 
+"""
+This class is adapted/taken from the DiffCharge GitHub repository:
+
+Repository: https://github.com/LSY-Cython/DiffCharge
+Author: Siyang Li, Hui Xiong, Yize Chen (HKUST-GZ)
+License: None
+
+Modifications:
+- Removed internal conditioning logic.
+- Removed classifier-free-guidance sampling.
+- Assumes conditioning vectors are concatenated externally to the input.
+- Simplified forward method to accept only `x` and `t`.
+
+Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
+"""
+
+import torch
+from torch import nn
+
+
+def time_embedding(t, hidden_dim, seq_len, device):  # (B, )
+    t = t.view(-1, 1)
+    te = torch.zeros(t.shape[0], hidden_dim).to(device)
+    div_term = 1 / torch.pow(
+        10000.0,
+        torch.arange(0, hidden_dim, 2, dtype=torch.float32).to(device) / hidden_dim,
+    )
+    te[:, 0::2] = torch.sin(t * div_term)
+    te[:, 1::2] = torch.cos(t * div_term)
+    te = te.view(te.shape[0], 1, hidden_dim).repeat(1, seq_len, 1)  # (B, L, hidden_dim)
+    return te
+
+
 class CNN(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, cfg):
         super(CNN, self).__init__()
-        self.opt = opt
-
-        self.cond_embedder = nn.Sequential(
-            nn.Linear(opt.cond_emb_dim * 2, opt.hidden_dim), nn.Tanh()
-        )
-
+        self.cfg = cfg
         self.input_projector = nn.LSTM(
-            opt.input_dim + opt.hidden_dim,
-            opt.hidden_dim,
+            cfg.input_dim + cfg.cond_emb_dim,
+            cfg.model.hidden_dim,
             num_layers=4,
             batch_first=True,
         )
         self.output_projector = nn.Sequential(
-            nn.Conv1d(opt.hidden_dim, opt.hidden_dim, kernel_size=1),
-            nn.BatchNorm1d(opt.hidden_dim),
-            nn.Conv1d(opt.hidden_dim, opt.input_dim, kernel_size=1),
+            nn.Conv1d(cfg.model.hidden_dim, cfg.model.hidden_dim, kernel_size=1),
+            nn.BatchNorm1d(cfg.model.hidden_dim),
+            nn.Conv1d(cfg.model.hidden_dim, cfg.input_dim, kernel_size=1),
         )
 
-        self.month_embed = nn.Embedding(12, opt.cond_emb_dim)
-        self.weekday_embed = nn.Embedding(7, opt.cond_emb_dim)
+    def forward(self, x, t):
+        """
+        Forward pass of the CNN model.
 
-    def forward(self, x, c=None, t=None, guidance_scale=1.0):
+        Args:
+            x (torch.Tensor): Input tensor with concatenated conditioning vectors. Shape: (B, L, input_dim + cond_emb_dim)
+            t (torch.Tensor): Timesteps tensor. Shape: (B,)
 
-        if c is not None:
-            weekday_emb = self.weekday_embed(c[:, 0])
-            month_emb = self.month_embed(c[:, 1])
-            cond_emb = torch.concat([weekday_emb, month_emb], dim=1)
-            cond_emb = self.cond_embedder(cond_emb)  # (B, hidden_dim)
-        else:
-            cond_emb = self.null_embed.unsqueeze(0).repeat(x.size(0), 1)
+        Returns:
+            torch.Tensor: Output tensor. Shape: (B, L, input_dim)
+        """
+        # Pass through LSTM
+        hid_enc, _ = self.input_projector(x)  # (B, L, hidden_dim)
 
-        cond_emb = cond_emb.view(cond_emb.shape[0], 1, self.opt.hidden_dim).repeat(
-            1, self.opt.seq_len, 1
-        )
-        x = torch.cat([x, cond_emb], dim=2)
-
-        hid_enc, (_, _) = self.input_projector(x)  # (B, L, hidden_dim)
+        # Add time embeddings
         time_emb = time_embedding(
-            t, self.opt.hidden_dim, self.opt.seq_len, self.opt.device
+            t, self.cfg.model.hidden_dim, self.cfg.seq_len, self.cfg.device
         )
-        hid_enc = hid_enc + time_emb
-        output = self.output_projector(hid_enc.permute(0, 2, 1)).permute(
-            0, 2, 1
-        )  # (B, L, input_dim)
+        hid_enc = hid_enc + time_emb  # (B, L, hidden_dim)
 
-        if guidance_scale != 1.0:
-            uncond_output = self.forward(x, c=None, t=t, guidance_scale=1.0)
-            output = uncond_output + guidance_scale * (output - uncond_output)
-
+        hid_enc = hid_enc.permute(0, 2, 1)
+        output = self.output_projector(hid_enc).permute(0, 2, 1)
         return output

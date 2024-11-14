@@ -1,14 +1,13 @@
 import os
 import warnings
-from typing import Dict
-from typing import List
-from typing import Tuple
-from typing import Union
+from typing import Dict, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
+from hydra import compose, initialize_config_dir
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset
 
 from datasets.utils import encode_conditioning_variables
@@ -18,32 +17,20 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class PecanStreetDataManager:
-    def __init__(
-        self,
-        geography: str = None,
-        config_path: str = "config/data_config.yaml",
-        normalize: bool = False,
-        threshold: Union[Tuple[float, float], None] = None,
-        include_generation: bool = False,
-        normalization_method: str = "global",
-    ):
-        self.geography = geography
+    def __init__(self, cfg: DictConfig = None):
+        if not cfg:
+            with initialize_config_dir(
+                config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
+            ):
+                cfg = compose(config_name="pecanstreet", overrides=None)
 
-        if config_path is None:
-            module_dir = os.path.dirname(os.path.abspath(__file__))
-            self.config_path = os.path.join(
-                module_dir, "..", "config", "data_config.yaml"
-            )
-            self.config_path = os.path.normpath(self.config_path)
-        else:
-            module_dir = os.path.dirname(os.path.abspath(__file__))
-            self.config_path = os.path.join(module_dir, "..", config_path)
-            self.config_path = os.path.normpath(self.config_path)
-
-        self.normalize = normalize
-        self.threshold = threshold
-        self.include_generation = include_generation
-        self.normalization_method = normalization_method.lower()
+        self.cfg = cfg
+        self.name = cfg.name
+        self.geography = cfg.geography
+        self.normalize = cfg.normalize
+        self.threshold = (-1 * int(cfg.threshold), int(cfg.threshold))
+        self.include_generation = cfg.include_generation
+        self.normalization_method = cfg.normalization_method.lower()
 
         assert self.normalization_method in [
             "group",
@@ -51,25 +38,19 @@ class PecanStreetDataManager:
             "date",
         ], "normalization_method must be 'group', 'global', or 'date'"
 
-        self.name = "pecanstreet"
+        self.name = cfg.name
         self.stats = {}
         self.data, self.metadata, self.user_flags = self.load_and_preprocess_data()
 
     def _get_dataset_info(self) -> Tuple[str, List[str], List[str]]:
-        with open(self.config_path, "r") as file:
-            config = yaml.safe_load(file)
-        dataset_info = config["datasets"].get(self.name)
-        if not dataset_info:
-            raise ValueError(f"No dataset configuration found for {self.name}")
-
         module_dir = os.path.dirname(os.path.abspath(__file__))
-        dataset_path = os.path.join(module_dir, "..", dataset_info["path"])
+        dataset_path = os.path.join(module_dir, "..", self.cfg.path)
         dataset_path = os.path.normpath(dataset_path)
 
         return (
             dataset_path,
-            dataset_info["data_columns"],
-            dataset_info["metadata_columns"],
+            self.cfg.data_columns,
+            self.cfg.metadata_columns,
         )
 
     def load_and_preprocess_data(
@@ -97,7 +78,8 @@ class PecanStreetDataManager:
         data = self._preprocess_data(data)
         data = pd.merge(data, metadata, on="dataid", how="left")
         data = self._handle_missing_data(data)
-        data = encode_conditioning_variables(data)
+        data, category_mapping = encode_conditioning_variables(data)
+        self.category_mapping = category_mapping
         return data, metadata, user_flags
 
     def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
@@ -349,6 +331,53 @@ class PecanStreetDataManager:
             for user_id in data["dataid"].unique()
         }
 
+    def get_conditioning_variables_integer_mapping(self) -> Dict[str, Dict[int, str]]:
+        """
+        Includes predefined mappings for 'weekday' and 'month', and merges with any additional mappings
+        present in self.category_mapping.
+
+        Returns:
+            Dict[str, Dict[int, str]]: A dictionary where each key is a column name and its value is another
+                                        dictionary mapping integer codes to their corresponding string values.
+        """
+        predefined_mapping = {
+            "weekday": {
+                0: "Monday",
+                1: "Tuesday",
+                2: "Wednesday",
+                3: "Thursday",
+                4: "Friday",
+                5: "Saturday",
+                6: "Sunday",
+            },
+            "month": {
+                0: "January",
+                1: "February",
+                2: "March",
+                3: "April",
+                4: "May",
+                5: "June",
+                6: "July",
+                7: "August",
+                8: "September",
+                9: "October",
+                10: "November",
+                11: "December",
+            },
+        }
+
+        final_mapping: Dict[str, Dict[int, str]] = predefined_mapping.copy()
+
+        if hasattr(self, "category_mapping") and isinstance(
+            self.category_mapping, dict
+        ):
+            for column, mapping in self.category_mapping.items():
+                if column in final_mapping:
+                    final_mapping[column].update(mapping)
+                else:
+                    final_mapping[column] = mapping
+        return final_mapping
+
     def create_user_dataset(self, user_id: int) -> "PecanStreetDataset":
         """
         Creates a dataset for a specific user based on the user ID.
@@ -460,6 +489,7 @@ class PecanStreetDataset(Dataset):
             metadata (pd.DataFrame): Metadata for the dataset (e.g., user locations, PV info).
             normalization_method (str, optional): Normalization method used ('group', 'global', or 'date'). Defaults to 'global'.
         """
+        self.name = "pecanstreet"
         self.data = self.validate_data(data)
         self.stats = stats
         self.is_pv_user = is_pv_user

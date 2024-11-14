@@ -1,0 +1,2 @@
+model_name: ${model.name}
+log_dir: runs

@@ -1,18 +1,16 @@
 import os
 import re
 import warnings
-from typing import Dict
-from typing import List
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
+from omegaconf import DictConfig
 from torch.utils.data import Dataset
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
-
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -22,22 +20,10 @@ class OpenPowerDataManager:
     including normalization, handling PV data, and user-specific data retrieval.
 
     Attributes:
-        config_path (str): Path to the dataset configuration YAML file.
-        normalize (bool): Whether to apply normalization.
-        threshold (Tuple[float, float], optional): Threshold for clipping data.
-        include_generation (bool): Whether to include PV (solar) generation data.
-        stats (Dict): Stores statistics like mean and standard deviation for normalization.
-        data (pd.DataFrame): The processed data containing all users.
-        user_mapping (Dict[str, Dict[str, bool]]): Mapping of user IDs to their PV and EV flags.
+        cfg (DictConfig): The hydra config file
     """
 
-    def __init__(
-        self,
-        config_path: str = "config/data_config.yaml",
-        normalize: bool = True,
-        threshold: Tuple[float, float] = None,
-        include_generation: bool = True,
-    ):
+    def __init__(self, cfg: DictConfig):
         """
         Initializes the OpenPowerDatasetManager object.
 
@@ -47,10 +33,9 @@ class OpenPowerDataManager:
             threshold (Tuple[float, float], optional): Values to clip data. Defaults to None.
             include_generation (bool, optional): Whether to include PV generation data. Defaults to True.
         """
-        self.config_path = os.path.join(ROOT_DIR, config_path)
-        self.normalize = normalize
-        self.threshold = threshold
-        self.include_generation = include_generation
+        self.normalize = cfg.normalize
+        self.threshold = cfg.threshold
+        self.include_generation = cfg.include_generation
 
         # Read user_flags and ev_flags from config
         self.user_flags, self.ev_flags = self._get_user_flags()
@@ -59,20 +44,6 @@ class OpenPowerDataManager:
         self.stats = {}
         self.data, self.user_mapping = self.load_and_preprocess_data()
 
-    def _get_dataset_info(self) -> Dict:
-        """
-        Retrieves dataset information from the configuration file.
-
-        Returns:
-            Dict: Dictionary containing path, data_columns, user_flags, and ev_flags.
-        """
-        with open(self.config_path, "r") as file:
-            config = yaml.safe_load(file)
-        dataset_info = config.get("datasets", {}).get("openpower")
-        if not dataset_info:
-            raise ValueError(f"No dataset configuration found for {self.name}")
-        return dataset_info
-
     def _get_user_flags(self) -> Tuple[List[bool], List[bool]]:
         """
         Retrieves user_flags and ev_flags from the configuration.
@@ -80,9 +51,8 @@ class OpenPowerDataManager:
         Returns:
             Tuple[List[bool], List[bool]]: user_flags and ev_flags lists.
         """
-        dataset_info = self._get_dataset_info()
-        user_flags = dataset_info.get("user_flags")
-        ev_flags = dataset_info.get("ev_flags")
+        user_flags = self.cfg.user_flags
+        ev_flags = self.cfg.ev_flags
         if user_flags is None or ev_flags is None:
             raise ValueError(
                 "user_flags and ev_flags must be provided in the config file under openpower."
@@ -92,6 +62,44 @@ class OpenPowerDataManager:
                 "user_flags and ev_flags lists must each have exactly 6 elements."
             )
         return user_flags, ev_flags
+
+    def get_conditioning_variables_integer_mapping(self) -> Dict[str, Dict[int, str]]:
+        """
+        Includes predefined mappings for 'weekday' and 'month', and merges with any additional mappings
+        present in self.category_mapping.
+
+        Returns:
+            Dict[str, Dict[int, str]]: A dictionary where each key is a column name and its value is another
+                                        dictionary mapping integer codes to their corresponding string values.
+        """
+        mapping = {
+            "weekday": {
+                0: "Monday",
+                1: "Tuesday",
+                2: "Wednesday",
+                3: "Thursday",
+                4: "Friday",
+                5: "Saturday",
+                6: "Sunday",
+            },
+            "month": {
+                0: "January",
+                1: "February",
+                2: "March",
+                3: "April",
+                4: "May",
+                5: "June",
+                6: "July",
+                7: "August",
+                8: "September",
+                9: "October",
+                10: "November",
+                11: "December",
+            },
+            "solar": {0: "non-pv household", 1: "pv household"},
+            "ev": {0: "non-ev household", 1: "ev household"},
+        }
+        return mapping
 
     def load_and_preprocess_data(
         self,
@@ -249,7 +257,6 @@ class OpenPowerDataManager:
         filtered_data = grouped_data[
             grouped_data["timeseries"].apply(valid_timeseries)
         ].reset_index(drop=True)
-        # filtered_data = filtered_data.drop(columns=["grid_import", "pv"])
 
         return filtered_data
 
