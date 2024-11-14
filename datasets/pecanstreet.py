@@ -394,71 +394,42 @@ class PecanStreetDataManager:
         if user_id not in self.user_flags:
             raise ValueError(f"User ID {user_id} not found in the dataset.")
         user_data = self.data[self.data["dataid"] == user_id].copy()
-        if not self.include_generation:
-            self.user_flags[user_id] = False
+
         return PecanStreetDataset(
             data=user_data,
             stats=self.stats,
-            is_pv_user=self.user_flags[user_id],
-            include_generation=False,
+            include_generation=self.user_flags[user_id],
             metadata=self.metadata,
             normalization_method=self.normalization_method,
         )
 
-    def create_non_pv_user_dataset(self) -> "PecanStreetDataset":
-        """
-        Creates a dataset for all users without solar generation data (non-PV users).
+    def create_dataset(self) -> "PecanStreetDataset":
+        if self.cfg.user_id:
+            return self.create_user_dataset(self.cfg.user_id)
 
-        Returns:
-            PecanStreetDataset: The dataset containing all non-PV users.
-        """
-        non_pv_users = [user for user, has_pv in self.user_flags.items() if not has_pv]
-        non_pv_data = self.data[self.data["dataid"].isin(non_pv_users)].copy()
+        if self.cfg.user_group == "pv_users":
+            users = [user for user, has_pv in self.user_flags.items() if has_pv]
 
+        elif self.cfg.user_group == "non_pv_users":
+            assert (
+                self.include_generation == False
+            ), "Include_generation must be set to False when working with the non pv user dataset!"
+            users = [user for user, has_pv in self.user_flags.items() if not has_pv]
+
+        elif self.cfg.user_group == "all":
+            assert (
+                self.include_generation == False
+            ), "Include_generation must be set to False when working with the entire dataset!"
+            users = [user for user, has_pv in self.user_flags.items()]
+
+        else:
+            raise ValueError(f"User group {self.cfg.user_group} is not specified.")
+
+        data = self.data[self.data["dataid"].isin(users)].copy()
         return PecanStreetDataset(
-            data=non_pv_data,
+            data=data,
             stats=self.stats,
-            is_pv_user=False,
-            include_generation=False,
-            metadata=self.metadata,
-            normalization_method=self.normalization_method,
-        )
-
-    def create_all_pv_user_dataset(self) -> "PecanStreetDataset":
-        """
-        Creates a dataset for all users with solar generation data (PV users).
-
-        Returns:
-            PecanStreetDataset: The dataset containing all PV users.
-        """
-        pv_users = [user for user, has_pv in self.user_flags.items() if has_pv]
-        pv_data = self.data[self.data["dataid"].isin(pv_users)].copy()
-
-        return PecanStreetDataset(
-            data=pv_data,
-            stats=self.stats,
-            is_pv_user=self.include_generation,
             include_generation=self.include_generation,
-            metadata=self.metadata,
-            normalization_method=self.normalization_method,
-        )
-
-    def create_all_user_dataset(self) -> "PecanStreetDataset":
-        """
-        Creates a dataset for all users without solar generation data (non-PV users).
-
-        Returns:
-            PecanStreetDataset: The dataset containing all non-PV users.
-        """
-        assert (
-            self.include_generation == False
-        ), "Include_generation must be set to False when working with the entire dataset!"
-
-        return PecanStreetDataset(
-            data=self.data,
-            stats=self.stats,
-            is_pv_user=False,
-            include_generation=False,
             metadata=self.metadata,
             normalization_method=self.normalization_method,
         )
@@ -585,7 +556,7 @@ class PecanStreetDataset(Dataset):
             solar = row[:, 1].reshape(-1, 1) if row.shape[1] > 1 else None
             return pd.Series({"grid": grid, "solar": solar})
 
-        if self.include_generation and self.is_pv_user:
+        if self.include_generation:
             df[["grid", "solar"]] = df["timeseries"].apply(split_timeseries)
         else:
             df["grid"] = df["timeseries"]

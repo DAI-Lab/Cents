@@ -7,6 +7,10 @@ normalization_method: "group"
 path: "./data/pecanstreet"
 data_columns: ["dataid","local_15min","car1","grid","solar"]
 metadata_columns: ["dataid","building_type","solar","car1","city","state","total_square_footage","house_construction_year"]
+
+user_id: null
+user_group: pv_users # non_pv_users, all
+
 conditioning_vars: # for each desired conditioning variable, add the name and number of categories
   month: 12
   weekday: 7
