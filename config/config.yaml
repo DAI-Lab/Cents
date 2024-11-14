@@ -1,7 +1,8 @@
 defaults:
-  - model: diffcharge
+  - model: diffusion_ts
   - dataset: default
   - evaluator: default
+  - _self_
 
 device: 0 # 0, cpu
 seq_len: 96 # should not be changed for the current datasets

@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
+from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset
 
@@ -16,8 +17,15 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class PecanStreetDataManager:
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig = None):
+        if not cfg:
+            with initialize_config_dir(
+                config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
+            ):
+                cfg = compose(config_name="pecanstreet", overrides=None)
+
         self.cfg = cfg
+        self.name = cfg.name
         self.geography = cfg.geography
         self.normalize = cfg.normalize
         self.threshold = (-1 * int(cfg.threshold), int(cfg.threshold))
@@ -481,6 +489,7 @@ class PecanStreetDataset(Dataset):
             metadata (pd.DataFrame): Metadata for the dataset (e.g., user locations, PV info).
             normalization_method (str, optional): Normalization method used ('group', 'global', or 'date'). Defaults to 'global'.
         """
+        self.name = "pecanstreet"
         self.data = self.validate_data(data)
         self.stats = stats
         self.is_pv_user = is_pv_user

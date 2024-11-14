@@ -90,16 +90,17 @@ def encode_conditioning_variables(
             continue
 
         if pd.api.types.is_numeric_dtype(encoded_data[col]):
-            binned = pd.cut(
-                encoded_data[col], bins=5, labels=[0, 1, 2, 3, 4], include_lowest=True
-            )
-            encoded_data[col] = binned.astype(int)
+            binned = pd.cut(encoded_data[col], bins=5, include_lowest=True)
+            encoded_data[col] = binned.cat.codes  # Assign integer codes starting from 0
             bin_intervals = binned.cat.categories
-            bin_mapping = {i: str(interval) for i, interval in enumerate(bin_intervals)}
+            # Create the mapping from integer code to bin interval
+            bin_mapping = {
+                code: str(interval) for code, interval in enumerate(bin_intervals)
+            }
             mapping[col] = bin_mapping
         else:
             encoded_data[col] = encoded_data[col].astype("category").cat.codes
-            categories = encoded_data[col].astype("category").cat.categories
+            categories = data[col].astype("category").cat.categories
             category_mapping = {i: category for i, category in enumerate(categories)}
             mapping[col] = category_mapping
 
