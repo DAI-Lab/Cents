@@ -411,7 +411,7 @@ class ACGAN:
         Args:
             path (str): The file path to load the checkpoint from.
         """
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path)
 
         if "generator_state_dict" in checkpoint:
             self.generator.load_state_dict(checkpoint["generator_state_dict"])

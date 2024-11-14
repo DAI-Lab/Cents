@@ -6,7 +6,7 @@ n_steps: 1000
 base_lr: 1e-4
 n_layer_enc: 4
 n_layer_dec: 5
-d_model: 256
+d_model: 128
 sampling_timesteps: null
 loss_type: l1 #l2
 beta_schedule: cosine #linear

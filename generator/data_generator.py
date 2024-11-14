@@ -2,9 +2,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import hydra
 import pandas as pd
 import torch
+from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
@@ -13,14 +13,20 @@ from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 class DataGenerator:
     """
     A wrapper class for generative models.
     """
 
-    @hydra.main(version_base=None, config_path="config", config_name="config")
-    def __init__(self, model_name: str, overrides: Optional[List[str]] = None):
+    def __init__(
+        self,
+        model_name: str,
+        dataset: Optional[TimeSeriesDataset] = None,
+        overrides: Optional[List[str]] = [],
+    ):
         """
         Initialize the wrapper with the model name and model parameters.
 
@@ -28,6 +34,8 @@ class DataGenerator:
             model_name (str): The name of the generative model ('acgan', 'diffusion_ts', etc.).
         """
         self.model_name = model_name
+        self.dataset = dataset
+        self.overrides = overrides
         self.cfg = self._load_config()
         self.model = None
         self._initialize_model()
@@ -39,29 +47,14 @@ class DataGenerator:
         Returns:
             DictConfig: The merged configuration.
         """
-        project_root = Path(__file__).resolve().parent.parent
-        config_dir = project_root / "config"
-        global_config_path = config_dir / "config.yaml"
-        model_config_path = config_dir / "models" / f"{self.model_name}.yaml"
+        config_dir = os.path.join(ROOT_DIR, "config")
 
-        if not global_config_path.exists():
-            raise FileNotFoundError(
-                f"Global config file not found at {global_config_path}"
-            )
-        global_cfg = OmegaConf.load(global_config_path)
+        self.overrides = [f"model={self.model_name}"] + self.overrides
 
-        if not model_config_path.exists():
-            raise FileNotFoundError(
-                f"Model config file not found at {model_config_path}"
-            )
-        model_cfg = OmegaConf.load(model_config_path)
-        merged_cfg = OmegaConf.merge(global_cfg, model_cfg)
+        with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+            cfg = compose(config_name="config", overrides=self.overrides)
 
-        if self.overrides:
-            overrides_conf = OmegaConf.from_dotlist(self.overrides)
-            merged_cfg = OmegaConf.merge(merged_cfg, overrides_conf)
-
-        return merged_cfg
+        return cfg
 
     def _initialize_model(self):
         """
@@ -74,7 +67,7 @@ class DataGenerator:
         }
         if self.model_name in model_dict:
             model_class = model_dict[self.model_name]
-            self.model = model_class(self.cfg)
+            self.model = model_class(self.cfg).to(self.cfg.device)
         else:
             raise ValueError(f"Model {self.model_name} not recognized.")
 
@@ -85,8 +78,9 @@ class DataGenerator:
         Args:
             df (Any): Input data. Should be a compatible dataset object or pandas DataFrame.
         """
+        self.dataset = dataset
         sample_timeseries, sample_cond_vars = dataset[0]
-        expected_seq_len = self.model.cfg.model.seq_len  # Access via cfg
+        expected_seq_len = self.model.cfg.model.seq_len
         assert (
             sample_timeseries.shape[0] == expected_seq_len
         ), f"Expected timeseries length {expected_seq_len}, but got {sample_timeseries.shape[0]}"
@@ -128,45 +122,74 @@ class DataGenerator:
             )
 
         conditioning_vars = {
-            key: torch.tensor(value, dtype=torch.long())
+            key: torch.tensor(value, dtype=torch.long)
             for key, value in conditioning_vars.items()
         }
 
         self.conditioning_var_buffer = conditioning_vars
 
-    def generate(self):
+    def generate(self, num_samples=100):
         """
         Generate data using the trained model.
 
         Args:
-            conditioning_vars: The conditioning variables for generation.
+            num_samples: The number of timeseries to generate for the current conditioning_var_buffer
 
         Returns:
             Generated data.
         """
         if (
             not self.conditioning_var_buffer
-            and self.dataset.conditioning_vars is not None
+            and self.cfg.dataset.conditioning_vars is not None
         ):
             raise ValueError(
-                f"The following conditioning variables need to be set using set_model_conditioning_variables(): {self.dataset.conditioning_vars.keys()}"
+                f"The following conditioning variables need to be set using set_model_conditioning_variables(): {self.cfg.dataset.conditioning_vars.keys()}"
             )
 
-        return self.model.generate(self.conditioning_var_buffer)
+        conditioning_vars = {}
+        for var_name, code in self.conditioning_var_buffer.items():
+            conditioning_vars[var_name] = torch.full(
+                (num_samples,), code, dtype=torch.long, device=self.cfg.device
+            )
 
-    def sample_conditioning_vars(self, dataset, num_samples, random=False):
+        return self.model.generate(conditioning_vars)
+
+    def set_dataset(self, dataset: TimeSeriesDataset):
+        """
+        Set the dataset for the DataGenerator.
+
+        Args:
+            dataset (TimeSeriesDataset): The dataset to be used.
+        """
+        self.dataset = dataset
+
+        if hasattr(dataset, "name"):
+            if self.dataset.name == "pecanstreet":
+                with initialize_config_dir(
+                    config_dir=os.path.join(ROOT_DIR, "config/dataset"),
+                    version_base=None,
+                ):
+                    pecanstreet_cfg = compose(config_name="pecanstreet", overrides=None)
+                    self.cfg.dataset = pecanstreet_cfg
+            else:
+                print(
+                    f"Warning: No cfg found for dataset {self.dataset.name}, setting default dataset config."
+                )
+
+        self._initialize_model()  # re init with dataset update
+
+    def sample_conditioning_vars(self, num_samples, random=False):
         """
         Sample conditioning variables from the dataset.
 
         Args:
-            dataset: The dataset to sample from.
             num_samples (int): Number of samples to generate.
             random (bool): Whether to sample randomly or from the dataset.
 
         Returns:
             conditioning_vars: Dictionary of conditioning variables.
         """
-        return self.model.sample_conditioning_vars(dataset, num_samples, random)
+        return self.model.sample_conditioning_vars(self.dataset, num_samples, random)
 
     def load_model(self):
         """
@@ -174,6 +197,11 @@ class DataGenerator:
         """
         if self.model is None:
             raise ValueError("Model is not initialized. Cannot load checkpoint.")
+
+        if self.dataset is None:
+            raise ValueError(
+                "Dataset is not set. Cannot ensure compatibility when loading the model."
+            )
 
         checkpoint_path = self._get_model_checkpoint_path()
         self.model.load(checkpoint_path)
@@ -207,7 +235,9 @@ class DataGenerator:
         Returns the checkpoint path for the data generator's model type.
         """
         project_root = str(Path(__file__).resolve().parent.parent)
-        checkpoint_dir = os.path.join(project_root, "checkpoints/models/")
+        checkpoint_dir = os.path.join(
+            project_root, f"checkpoints/models/{self.dataset}"
+        )
 
         if self.model_name == "diffusion_ts":
             checkpoint_name = "diffusion_ts_checkpoint_1000.pt"
