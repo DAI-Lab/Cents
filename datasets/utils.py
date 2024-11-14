@@ -1,12 +1,10 @@
-from typing import List
-from typing import Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 from sklearn.metrics import mean_squared_error
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
 
 
 def check_inverse_transform(
@@ -81,26 +79,40 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
     return train_dataset, val_dataset
 
 
-def encode_conditioning_variables(data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Takes conditioning columns (e.g. city, total square footage), and converts it into integer encoded mappings. Discretizes numerical conditioning
-    variables into categorical bins.
+def encode_conditioning_variables(
+    data: pd.DataFrame,
+) -> Tuple[pd.DataFrame, Dict[str, Dict[int, Any]]]:
+    encoded_data = data.copy()
+    mapping: Dict[str, Dict[int, Any]] = {}
 
-    Args:
-        data (pd.DataFrame): The data whose cols are being encoded.
-
-    Returns:
-        data (pd.DataFrame): The data frame that now has integer codes where numerical and categorical values used to be.
-    """
-    for col in data.columns:
-
+    for col in encoded_data.columns:
         if col in ["dataid", "timeseries", "month", "weekday", "date_day"]:
             continue
 
-        if pd.api.types.is_numeric_dtype(data[col]):
-            data[col] = pd.cut(
-                data[col], bins=5, labels=[0, 1, 2, 3, 4], include_lowest=True
-            ).astype(int)
+        if pd.api.types.is_numeric_dtype(encoded_data[col]):
+            binned = pd.cut(encoded_data[col], bins=5, include_lowest=True)
+            encoded_data[col] = binned.cat.codes  # Assign integer codes starting from 0
+            bin_intervals = binned.cat.categories
+            # Create the mapping from integer code to bin interval
+            bin_mapping = {
+                code: str(interval) for code, interval in enumerate(bin_intervals)
+            }
+            mapping[col] = bin_mapping
         else:
-            data[col] = data[col].astype("category").cat.codes
-    return data
+            encoded_data[col] = encoded_data[col].astype("category").cat.codes
+            categories = data[col].astype("category").cat.categories
+            category_mapping = {i: category for i, category in enumerate(categories)}
+            mapping[col] = category_mapping
+
+    return encoded_data, mapping
+
+
+def decode_conditioning_variables(
+    encoded_data: pd.DataFrame, mapping: Dict[str, Dict[int, Any]]
+) -> pd.DataFrame:
+    decoded_data = encoded_data.copy()
+
+    for col, map_dict in mapping.items():
+        decoded_data[col] = decoded_data[col].map(map_dict)
+
+    return decoded_data

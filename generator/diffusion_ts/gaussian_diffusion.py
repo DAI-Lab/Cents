@@ -21,6 +21,7 @@ from functools import partial
 import torch
 import torch.nn.functional as F
 from einops import reduce
+from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -28,9 +29,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 from generator.conditioning import ConditioningModule
-from generator.diffusion_ts.model_utils import default
-from generator.diffusion_ts.model_utils import extract
-from generator.diffusion_ts.model_utils import identity
+from generator.diffusion_ts.model_utils import default, extract, identity
 from generator.diffusion_ts.transformer import Transformer
 
 
@@ -53,19 +52,20 @@ def cosine_beta_schedule(timesteps, device, s=0.004):
 
 
 class Diffusion_TS(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, cfg: DictConfig):
         super(Diffusion_TS, self).__init__()
-        self.opt = opt
-        self.eta, self.use_ff = opt.eta, opt.use_ff
-        self.seq_len = opt.seq_len
-        self.input_dim = opt.input_dim
-        self.ff_weight = default(opt.reg_weight, math.sqrt(opt.seq_len) / 5)
-        self.device = opt.device
-        self.embedding_dim = opt.cond_emb_dim
-        self.categorical_dims = opt.categorical_dims
-        self.warm_up_epochs = opt.warm_up_epochs  # Number of warm-up epochs
+        print(cfg.keys())
+        self.cfg = cfg
+        self.eta, self.use_ff = cfg.model.eta, cfg.model.use_ff
+        self.seq_len = cfg.seq_len
+        self.input_dim = cfg.input_dim
+        self.ff_weight = default(cfg.model.reg_weight, math.sqrt(cfg.seq_len) / 5)
+        self.device = cfg.device
+        self.embedding_dim = cfg.cond_emb_dim
+        self.categorical_dims = cfg.dataset.conditioning_vars
+        self.warm_up_epochs = cfg.model.warm_up_epochs  # Number of warm-up epochs
         self.sparse_conditioning_loss_weight = (
-            opt.sparse_conditioning_loss_weight
+            cfg.sparse_conditioning_loss_weight
         )  # Weight for rare samples
 
         self.conditioning_module = ConditioningModule(
@@ -76,24 +76,24 @@ class Diffusion_TS(nn.Module):
         # Update model to accept the new input dimension
         self.model = Transformer(
             n_feat=self.input_dim + self.embedding_dim,
-            n_channel=opt.seq_len,
-            n_layer_enc=opt.n_layer_enc,
-            n_layer_dec=opt.n_layer_dec,
-            n_heads=opt.n_heads,
-            attn_pdrop=opt.attn_pd,
-            resid_pdrop=opt.resid_pd,
-            mlp_hidden_times=opt.mlp_hidden_times,
-            max_len=opt.seq_len,
-            n_embd=opt.d_model,
-            conv_params=[opt.kernel_size, opt.padding_size],
+            n_channel=cfg.seq_len,
+            n_layer_enc=cfg.model.n_layer_enc,
+            n_layer_dec=cfg.model.n_layer_dec,
+            n_heads=cfg.model.n_heads,
+            attn_pdrop=cfg.model.attn_pd,
+            resid_pdrop=cfg.model.resid_pd,
+            mlp_hidden_times=cfg.model.mlp_hidden_times,
+            max_len=cfg.seq_len,
+            n_embd=cfg.model.d_model,
+            conv_params=[cfg.model.kernel_size, cfg.model.padding_size],
         )
 
-        if opt.beta_schedule == "linear":
-            betas = linear_beta_schedule(opt.n_steps, self.device)
-        elif opt.beta_schedule == "cosine":
-            betas = cosine_beta_schedule(opt.n_steps, self.device)
+        if cfg.model.beta_schedule == "linear":
+            betas = linear_beta_schedule(cfg.model.n_steps, self.device)
+        elif cfg.model.beta_schedule == "cosine":
+            betas = cosine_beta_schedule(cfg.model.n_steps, self.device)
         else:
-            raise ValueError(f"unknown beta schedule {opt.beta_schedule}")
+            raise ValueError(f"unknown beta schedule {cfg.model.beta_schedule}")
 
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0).to(self.device)
@@ -103,12 +103,12 @@ class Diffusion_TS(nn.Module):
 
         (timesteps,) = betas.shape
         self.num_timesteps = int(timesteps)
-        self.loss_type = opt.loss_type
+        self.loss_type = cfg.model.loss_type
 
         # sampling related parameters
 
         self.sampling_timesteps = default(
-            opt.sampling_timesteps, timesteps
+            cfg.model.sampling_timesteps, timesteps
         )  # default num sampling timesteps to number of timesteps at training
 
         assert self.sampling_timesteps <= timesteps
@@ -306,7 +306,7 @@ class Diffusion_TS(nn.Module):
         num_samples = len(conditioning_vars[list(conditioning_vars.keys())[0]])
         shape = (num_samples, self.seq_len, self.input_dim)
 
-        if self.opt.use_ema_sampling:
+        if self.cfg.model.use_ema_sampling:
             return self.ema.ema_model._generate(shape, conditioning_vars)
         else:
             return self._generate(shape, conditioning_vars)
@@ -391,31 +391,31 @@ class Diffusion_TS(nn.Module):
 
         train_loader = DataLoader(
             train_dataset,
-            batch_size=self.opt.batch_size,
-            shuffle=self.opt.shuffle,
+            batch_size=self.cfg.model.batch_size,
+            shuffle=self.cfg.shuffle,
             drop_last=True,
         )
 
-        os.makedirs(self.opt.results_folder, exist_ok=True)
+        os.makedirs(self.cfg.results_folder, exist_ok=True)
 
         self.optimizer = Adam(
             filter(lambda p: p.requires_grad, self.parameters()),
-            lr=self.opt.base_lr,
+            lr=self.cfg.model.base_lr,
             betas=[0.9, 0.96],
         )
         self.ema = EMA(
             self,
-            beta=self.opt.ema_decay,
-            update_every=self.opt.ema_update_interval,
+            beta=self.cfg.model.ema_decay,
+            update_every=self.cfg.model.ema_update_interval,
             device=self.device,
         )
         self.scheduler = ReduceLROnPlateau(
-            self.optimizer, **self.opt.lr_scheduler_params
+            self.optimizer, **self.cfg.model.lr_scheduler_params
         )
 
         self.conditioning_module.to(self.device)
 
-        for epoch in tqdm(range(self.opt.n_epochs), desc="Training"):
+        for epoch in tqdm(range(self.cfg.model.n_epochs), desc="Training"):
             self.current_epoch = epoch + 1
             total_loss = 0.0
             for i, (time_series_batch, conditioning_vars_batch) in enumerate(
@@ -433,7 +433,7 @@ class Diffusion_TS(nn.Module):
                 if epoch > self.warm_up_epochs:
                     with torch.no_grad():
 
-                        if self.opt.freeze_cond_after_warmup:
+                        if self.cfg.freeze_cond_after_warmup:
                             for param in self.conditioning_module.parameters():
                                 param.requires_grad = False  # if specified, freeze conditioning module training
 
@@ -493,11 +493,11 @@ class Diffusion_TS(nn.Module):
                         + (1 - _lambda) * (N_nr / N) * loss_non_rare
                     )
 
-                loss = loss / self.opt.gradient_accumulate_every
+                loss = loss / self.cfg.model.gradient_accumulate_every
                 loss.backward()
                 total_loss += loss.item()
 
-                if (i + 1) % self.opt.gradient_accumulate_every == 0:
+                if (i + 1) % self.cfg.model.gradient_accumulate_every == 0:
                     torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
                     self.optimizer.step()
                     self.optimizer.zero_grad()
@@ -505,11 +505,11 @@ class Diffusion_TS(nn.Module):
 
             self.scheduler.step(total_loss)
 
-        if (epoch + 1) % self.opt.save_cycle == 0:
-            os.mkdir(os.path.join(self.opt.results_folder, self.train_timestamp))
+        if (epoch + 1) % self.cfg.model.save_cycle == 0:
+            os.mkdir(os.path.join(self.cfg.results_folder, self.train_timestamp))
 
             checkpoint_path = os.path.join(
-                os.path.join(self.opt.results_folder, self.train_timestamp),
+                os.path.join(self.cfg.results_folder, self.train_timestamp),
                 f"diffusion_ts_checkpoint_{epoch + 1}.pt",
             )
             self.save(checkpoint_path, self.current_epoch)

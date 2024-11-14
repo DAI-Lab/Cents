@@ -1,0 +1,8 @@
+name: null
+geography: null
+normalize: True
+threshold: 6 # int, bounds values within +-threshold stds
+include_generation: false
+data_columns: []
+metadata_columns: []
+conditioning_vars: {}

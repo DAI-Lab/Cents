@@ -19,6 +19,7 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from omegaconf import DictConfig
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
@@ -148,19 +149,19 @@ class Discriminator(nn.Module):
 
 
 class ACGAN:
-    def __init__(self, opt):
-        self.opt = opt
-        self.code_size = opt.noise_dim
-        self.input_dim = opt.input_dim
-        self.lr_gen = opt.lr_gen
-        self.lr_discr = opt.lr_discr
-        self.seq_len = opt.seq_len
-        self.noise_dim = opt.noise_dim
-        self.cond_emb_dim = opt.cond_emb_dim
-        self.categorical_dims = opt.categorical_dims
-        self.device = opt.device
-        self.warm_up_epochs = opt.warm_up_epochs
-        self.sparse_conditioning_loss_weight = opt.sparse_conditioning_loss_weight
+    def __init__(self, cfg: DictConfig):
+        self.cfg = cfg
+        self.code_size = cfg.noise_dim
+        self.input_dim = cfg.input_dim
+        self.lr_gen = cfg.model.lr_gen
+        self.lr_discr = cfg.model.lr_discr
+        self.seq_len = cfg.seq_len
+        self.noise_dim = cfg.noise_dim
+        self.cond_emb_dim = cfg.cond_emb_dim
+        self.categorical_dims = cfg.dataset.conditioning_vars
+        self.device = cfg.device
+        self.warm_up_epochs = cfg.model.warm_up_epochs
+        self.sparse_conditioning_loss_weight = cfg.sparse_conditioning_loss_weight
 
         self.writer = SummaryWriter(log_dir=os.path.join("runs", "acgan"))
 
@@ -197,8 +198,8 @@ class ACGAN:
 
     def train_model(self, dataset):
         self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        batch_size = self.opt.batch_size
-        num_epoch = self.opt.n_epochs
+        batch_size = self.cfg.model.batch_size
+        num_epoch = self.cfg.model.n_epochs
         train_loader = prepare_dataloader(dataset, batch_size)
 
         previous_mean_embedding = None
@@ -236,7 +237,7 @@ class ACGAN:
                         batch_embeddings
                     )
 
-                    if self.opt.freeze_cond_after_warmup:
+                    if self.cfgfreeze_cond_after_warmup:
                         for param in self.generator.conditioning_module.parameters():
                             param.requires_grad = False  # if specified, freeze conditioning module training
 
@@ -260,7 +261,7 @@ class ACGAN:
                 d_fake_loss = self.adversarial_loss(
                     fake_pred, torch.ones_like(fake_pred) * soft_zero
                 )
-                if self.opt.include_auxiliary_losses:
+                if self.cfg.model.include_auxiliary_losses:
                     for var_name in self.categorical_dims.keys():
                         labels = conditioning_vars_batch[var_name].to(self.device)
                         d_real_loss += self.auxiliary_loss(
@@ -299,7 +300,7 @@ class ACGAN:
                     * soft_one,
                 )
 
-                if self.opt.include_auxiliary_losses:
+                if self.cfg.model.include_auxiliary_losses:
                     for var_name in self.categorical_dims.keys():
                         labels = gen_categorical_vars[var_name]
                         g_loss_rare += self.auxiliary_loss(
@@ -346,11 +347,11 @@ class ACGAN:
                     self.generator.conditioning_module.cov_embedding.clone()
                 )
 
-            if (epoch + 1) % self.opt.save_cycle == 0:
-                os.mkdir(os.path.join(self.opt.results_folder, self.train_timestamp))
+            if (epoch + 1) % self.cfg.model.save_cycle == 0:
+                os.mkdir(os.path.join(self.cfg.results_folder, self.train_timestamp))
 
                 checkpoint_path = os.path.join(
-                    os.path.join(self.opt.results_folder, self.train_timestamp),
+                    os.path.join(self.cfg.results_folder, self.train_timestamp),
                     f"acgan_checkpoint_{epoch + 1}.pt",
                 )
 
@@ -410,7 +411,7 @@ class ACGAN:
         Args:
             path (str): The file path to load the checkpoint from.
         """
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path)
 
         if "generator_state_dict" in checkpoint:
             self.generator.load_state_dict(checkpoint["generator_state_dict"])
