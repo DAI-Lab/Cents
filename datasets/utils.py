@@ -80,17 +80,14 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
 
 
 def encode_conditioning_variables(
-    data: pd.DataFrame,
+    data: pd.DataFrame, columns_to_encode: List, bins: int
 ) -> Tuple[pd.DataFrame, Dict[str, Dict[int, Any]]]:
     encoded_data = data.copy()
     mapping: Dict[str, Dict[int, Any]] = {}
 
-    for col in encoded_data.columns:
-        if col in ["dataid", "timeseries", "month", "weekday", "date_day"]:
-            continue
-
+    for col in columns_to_encode:
         if pd.api.types.is_numeric_dtype(encoded_data[col]):
-            binned = pd.cut(encoded_data[col], bins=5, include_lowest=True)
+            binned = pd.cut(encoded_data[col], bins=bins, include_lowest=True)
             encoded_data[col] = binned.cat.codes  # Assign integer codes starting from 0
             bin_intervals = binned.cat.categories
             # Create the mapping from integer code to bin interval
@@ -107,12 +104,23 @@ def encode_conditioning_variables(
     return encoded_data, mapping
 
 
-def decode_conditioning_variables(
-    encoded_data: pd.DataFrame, mapping: Dict[str, Dict[int, Any]]
+def convert_generated_data_to_df(
+    data: torch.Tensor,
+    conditioning_vars: Dict[str, Any],
+    mapping: Dict[str, Any] = None,
 ) -> pd.DataFrame:
-    decoded_data = encoded_data.copy()
+    n_timeseries, seq_len, n_dim = data.shape
+    data_np = data.cpu().numpy()
 
-    for col, map_dict in mapping.items():
-        decoded_data[col] = decoded_data[col].map(map_dict)
+    decoded_conditioning_vars = {}
+    if mapping:
+        for var_name, code in conditioning_vars.items():
+            decoded_conditioning_vars[var_name] = mapping[var_name][code]
 
-    return decoded_data
+    records = []
+    for i in range(n_timeseries):
+        record = decoded_conditioning_vars.copy()
+        record["timeseries"] = data_np[i]
+        records.append(record)
+    df = pd.DataFrame.from_records(records)
+    return df

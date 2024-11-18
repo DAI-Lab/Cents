@@ -1,8 +1,11 @@
 name: openpower
 geography: null
 normalize: True
+scale: True
 threshold: 6 # int, bounds values within +-threshold stds
-include_generation: false
+include_generation: False
+user_group: all #pv_users, all
+seq_len: 96
 
 path: "./data/openpower/"
 data_columns: ["utc_timestamp",
