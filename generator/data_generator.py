@@ -9,6 +9,7 @@ from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
 from datasets.timeseries_dataset import TimeSeriesDataset
+from datasets.utils import convert_generated_data_to_df
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
@@ -133,10 +134,10 @@ class DataGenerator:
         Generate data using the trained model.
 
         Args:
-            num_samples: The number of timeseries to generate for the current conditioning_var_buffer
+            num_samples: The number of timeseries to generate for the current conditioning_var_buffer.
 
         Returns:
-            Generated data.
+            Generated data in a data frame.
         """
         if (
             not self.conditioning_var_buffer
@@ -151,8 +152,8 @@ class DataGenerator:
             conditioning_vars[var_name] = torch.full(
                 (num_samples,), code, dtype=torch.long, device=self.cfg.device
             )
-
-        return self.model.generate(conditioning_vars)
+        data = self.model.generate(conditioning_vars)
+        return convert_generated_data_to_df(data, self.conditioning_var_buffer)
 
     def set_dataset(self, dataset: TimeSeriesDataset):
         """
@@ -224,7 +225,7 @@ class DataGenerator:
             dataset = TimeSeriesDataset(
                 dataframe=df,
                 time_series_column_name=timeseries_colname,
-                conditioning_vars=conditioning_vars,
+                conditioning_var_column_names=conditioning_vars,
             )
             return dataset
         else:
@@ -236,7 +237,7 @@ class DataGenerator:
         """
         project_root = str(Path(__file__).resolve().parent.parent)
         checkpoint_dir = os.path.join(
-            project_root, f"checkpoints/models/{self.dataset}"
+            project_root, f"checkpoints/models/{self.dataset.name}"
         )
 
         if self.model_name == "diffusion_ts":

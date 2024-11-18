@@ -6,20 +6,20 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 import torch
-import yaml
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig
 from torch.utils.data import Dataset
 
+from datasets.timeseries_dataset import TimeSeriesDataset
 from datasets.utils import encode_conditioning_variables
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-class OpenPowerDataManager:
+class OpenPowerDataset(TimeSeriesDataset):
     """
-    A dataset manager class for handling and preprocessing OpenPower time series data,
+    A dataset class for handling and preprocessing OpenPower time series data,
     including normalization, handling PV data, and user-specific data retrieval.
 
     Attributes:
@@ -27,93 +27,42 @@ class OpenPowerDataManager:
     """
 
     def __init__(self, cfg: DictConfig = None):
-        """
-        Initializes the OpenPowerDatasetManager object.
-
-        Args:
-            config_path (str, optional): Path to the configuration file. Defaults to "config/data_config.yaml".
-            normalize (bool, optional): Whether to normalize the dataset. Defaults to True.
-            threshold (Tuple[float, float], optional): Values to clip data. Defaults to None.
-            include_generation (bool, optional): Whether to include PV generation data. Defaults to True.
-        """
         if not cfg:
             with initialize_config_dir(
                 config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
             ):
                 cfg = compose(config_name="openpower", overrides=None)
 
+        self.cfg = cfg
+        self.name = cfg.name
         self.normalize = cfg.normalize
         self.threshold = (-1 * int(cfg.threshold), int(cfg.threshold))
         self.include_generation = cfg.include_generation
-        self.cfg = cfg
+        self._load_data()
 
-        # Read user_flags and ev_flags from config
-        self.user_flags, self.ev_flags = self._get_user_flags()
+        time_series_column_names = ["grid_import"]
 
-        self.name = "openpower"
-        self.stats = {}
-        self.data, self.user_mapping = self.load_and_preprocess_data()
+        if self.include_generation:
+            assert (
+                self.cfg.user_group == "pv_users"
+            ), "If generation is to be included, the config defined user group should be 'pv_users'!"
+            time_series_column_names.append("pv")
 
-    def _get_user_flags(self) -> Tuple[List[bool], List[bool]]:
-        """
-        Retrieves user_flags and ev_flags from the configuration.
+        conditioning_vars = list(self.cfg.conditioning_vars.keys())
+        normalization_group_keys = ["dataid", "year", "month", "weekday"]
 
-        Returns:
-            Tuple[List[bool], List[bool]]: user_flags and ev_flags lists.
-        """
-        user_flags = self.cfg.user_flags
-        ev_flags = self.cfg.ev_flags
-        if user_flags is None or ev_flags is None:
-            raise ValueError(
-                "user_flags and ev_flags must be provided in the config file under openpower."
-            )
-        if len(user_flags) != 6 or len(ev_flags) != 6:
-            raise ValueError(
-                "user_flags and ev_flags lists must each have exactly 6 elements."
-            )
-        return user_flags, ev_flags
+        super().__init__(
+            data=self.data,
+            entity_column_name="dataid",
+            time_series_column_names=time_series_column_names,
+            conditioning_var_column_names=conditioning_vars,
+            seq_len=self.cfg.seq_len,
+            normalize=self.cfg.normalize,
+            scale=self.cfg.scale,
+            normalization_group_keys=normalization_group_keys,
+        )
 
-    def get_conditioning_variables_integer_mapping(self) -> Dict[str, Dict[int, str]]:
-        """
-        Includes predefined mappings for 'weekday' and 'month', and merges with any additional mappings
-        present in self.category_mapping.
-
-        Returns:
-            Dict[str, Dict[int, str]]: A dictionary where each key is a column name and its value is another
-                                        dictionary mapping integer codes to their corresponding string values.
-        """
-        mapping = {
-            "weekday": {
-                0: "Monday",
-                1: "Tuesday",
-                2: "Wednesday",
-                3: "Thursday",
-                4: "Friday",
-                5: "Saturday",
-                6: "Sunday",
-            },
-            "month": {
-                0: "January",
-                1: "February",
-                2: "March",
-                3: "April",
-                4: "May",
-                5: "June",
-                6: "July",
-                7: "August",
-                8: "September",
-                9: "October",
-                10: "November",
-                11: "December",
-            },
-            "solar": {0: "non-pv household", 1: "pv household"},
-            "ev": {0: "non-ev household", 1: "ev household"},
-        }
-        return mapping
-
-    def load_and_preprocess_data(
-        self,
-    ) -> Tuple[pd.DataFrame, Dict[str, Dict[str, bool]]]:
+    def _load_data(self):
         """
         Loads and preprocesses the OpenPower dataset.
 
@@ -122,32 +71,13 @@ class OpenPowerDataManager:
         """
         path = self.cfg.path
         columns = self.cfg.data_columns
-
-        data = self._load_full_data(path, columns)
-        data = self._preprocess_data(data)
-        user_mapping = self._map_user_flags()
-        data = self._add_user_flags(data, user_mapping)
-        data, self.cond_mapping = encode_conditioning_variables(data)
-        return data, user_mapping
-
-    def _load_full_data(self, path: str, columns: List[str]) -> pd.DataFrame:
-        """
-        Loads the full dataset from the given path.
-
-        Args:
-            path (str): Path to the data directory.
-            columns (List[str]): List of columns to load.
-
-        Returns:
-            pd.DataFrame: The loaded dataset.
-        """
         dataset_path = os.path.join(
             ROOT_DIR, path, "household_data_15min_singleindex.csv"
         )
 
         if not os.path.exists(dataset_path):
             raise FileNotFoundError(f"Data file not found at {dataset_path}")
-        return pd.read_csv(dataset_path)[columns]
+        self.data = pd.read_csv(dataset_path)[columns]
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -160,13 +90,6 @@ class OpenPowerDataManager:
         Returns:
             pd.DataFrame: The preprocessed dataset.
         """
-        # Extract unique user IDs from the data_columns
-        user_ids = self._extract_user_ids(data.columns)
-        if len(user_ids) != len(self.user_flags):
-            raise ValueError(
-                "Number of user_flags does not match number of users extracted from data_columns."
-            )
-
         # Melt grid_import and pv columns
         grid_import_columns = [col for col in data.columns if "grid_import" in col]
         pv_columns = [col for col in data.columns if "pv" in col]
@@ -202,12 +125,11 @@ class OpenPowerDataManager:
         df_combined = df_combined.loc[~df_combined.grid_import.isna()].copy()
         df_combined = df_combined.sort_values(by=["dataid", "utc_timestamp"])
 
-        # Time-based features
         df_combined["utc_timestamp"] = pd.to_datetime(
             df_combined["utc_timestamp"], utc=True
         )
-        df_combined["month"] = df_combined["utc_timestamp"].dt.month - 1
-        df_combined["weekday"] = df_combined["utc_timestamp"].dt.weekday.astype(int)
+        df_combined["month"] = df_combined["utc_timestamp"].dt.month_name()
+        df_combined["weekday"] = df_combined["utc_timestamp"].dt.day_name()
         df_combined["date_day"] = df_combined["utc_timestamp"].dt.day
         df_combined["year"] = df_combined["utc_timestamp"].dt.year.astype(str)
         df_combined = df_combined.sort_values(by=["utc_timestamp"]).copy()
@@ -237,45 +159,7 @@ class OpenPowerDataManager:
         else:
             grouped_data = grouped_grid_data
 
-        if self.normalize:
-            self.stats["grid_import"] = self._calculate_and_store_statistics(
-                grouped_data, "grid_import"
-            )
-            grouped_data = self._normalize_and_scale(grouped_data, "grid_import")
-
-            if self.include_generation:
-                self.stats["pv"] = self._calculate_and_store_statistics(
-                    grouped_pv_data, "pv"
-                )
-                grouped_data = self._normalize_and_scale(grouped_data, "pv")
-
-        def valid_timeseries(ts):
-            return ts.shape == (96, 1) or ts.shape == (96, 2)
-
-        def combine_timeseries(row):
-            if not self.include_generation:
-                return np.expand_dims(row["grid_import"], axis=-1)
-
-            grid_import = row["grid_import"]
-            pv = row["pv"]
-
-            if np.any(np.isnan(pv)):
-                timeseries = grid_import.reshape(-1, 1)
-            else:
-                timeseries = np.column_stack((grid_import, pv))
-            return timeseries
-
-        grouped_data["timeseries"] = grouped_data.apply(combine_timeseries, axis=1)
-        grouped_data.drop(columns=["grid_import"], inplace=True)
-
-        if self.include_generation:
-            grouped_data.drop(columns=["pv"], inplace=True)
-
-        filtered_data = grouped_data[
-            grouped_data["timeseries"].apply(valid_timeseries)
-        ].reset_index(drop=True)
-
-        return filtered_data
+        return self._set_and_add_user_flags(grouped_data)
 
     def _extract_user_ids(self, columns: List[str]) -> List[str]:
         """
@@ -294,358 +178,36 @@ class OpenPowerDataManager:
                 user_ids.add(match.group(1))
         return sorted(list(user_ids), key=lambda x: int(x))
 
-    def _map_user_flags(self) -> Dict[str, Dict[str, bool]]:
+    def _set_and_add_user_flags(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Maps each user ID to its corresponding PV and EV flags.
+
+        Args:
+            data (pd.DataFrame): The df the user flags are set to. Can't be self.data because it hasn't been written to self.data yet.
 
         Returns:
             Dict[str, Dict[str, bool]]: Mapping of user IDs to their PV and EV flags.
         """
+        user_flags = self.cfg.user_flags
+        ev_flags = self.cfg.ev_flags
+
         user_ids = self._extract_user_ids(self.cfg.data_columns)
-        if len(user_ids) != len(self.user_flags) or len(user_ids) != len(self.ev_flags):
+        if len(user_ids) != len(user_flags) or len(user_ids) != len(ev_flags):
             raise ValueError(
                 "Length of user_flags and ev_flags must match number of users."
             )
         user_mapping = {}
         for idx, user_id in enumerate(user_ids):
             user_mapping[user_id] = {
-                "pv": self.user_flags[idx],
-                "ev": self.ev_flags[idx],
+                "pv": user_flags[idx],
+                "ev": ev_flags[idx],
             }
-        return user_mapping
+        self.user_flags = user_mapping
 
-    def _add_user_flags(
-        self, data: pd.DataFrame, user_mapping: Dict[str, Dict[str, bool]]
-    ) -> pd.DataFrame:
-        """
-        Adds binary PV and EV flags to the dataset based on user_mapping.
-
-        Args:
-            data (pd.DataFrame): The dataset to augment.
-            user_mapping (Dict[str, Dict[str, bool]]): Mapping of user IDs to their PV and EV flags.
-
-        Returns:
-            pd.DataFrame: The augmented dataset with PV and EV flags.
-        """
-        data["pv_flag"] = (
+        data["pv"] = (
             data["dataid"].astype(str).map(lambda x: str(user_mapping[x]["pv"]))
         )
-        data["ev_flag"] = (
+        data["ev"] = (
             data["dataid"].astype(str).map(lambda x: str(user_mapping[x]["ev"]))
         )
         return data
-
-    def _calculate_and_store_statistics(self, data: pd.DataFrame, column: str) -> Dict:
-        """
-        Calculates and stores statistics like mean and std for normalization.
-
-        Args:
-            data (pd.DataFrame): Data to calculate statistics for.
-            column (str): Column name for which to calculate statistics.
-
-        Returns:
-            Dict: A dictionary containing the calculated statistics.
-        """
-
-        def calculate_stats(group):
-            grid_import_values = np.concatenate(group[column].values)
-            mean = np.mean(grid_import_values)
-            std = np.std(grid_import_values)
-            z_scores = (grid_import_values - mean) / (std + 1e-8)
-            z_min = np.min(z_scores)
-            z_max = np.max(z_scores)
-            return pd.Series({"mean": mean, "std": std, "z_min": z_min, "z_max": z_max})
-
-        if self.normalize:
-            grouped_stats = data.groupby(["dataid", "year", "month", "weekday"]).apply(
-                calculate_stats
-            )
-            return grouped_stats.to_dict(orient="index")
-        else:
-            return {}
-
-    def _normalize_and_scale(self, data: pd.DataFrame, column: str) -> pd.DataFrame:
-        """
-        Applies standardization followed by min-max scaling to the data.
-
-        Args:
-            data (pd.DataFrame): The data to normalize and scale.
-            column (str): The column on which normalization and scaling are applied.
-
-        Returns:
-            pd.DataFrame: The normalized and scaled data.
-        """
-
-        def normalize_and_scale_row(row):
-            stats = self.stats[column][
-                (row["dataid"], row["year"], row["month"], row["weekday"])
-            ]
-
-            mean = stats["mean"]
-            std = stats["std"]
-            z_min = stats["z_min"]
-            z_max = stats["z_max"]
-
-            values = np.array(row[column])
-            standardized = (values - mean) / (std + 1e-8)
-
-            if self.threshold:
-                standardized = np.clip(standardized, *self.threshold)
-
-            scaled = (standardized - z_min) / (z_max - z_min + 1e-8)
-            return scaled
-
-        data[column] = data.apply(normalize_and_scale_row, axis=1)
-        return data
-
-    def create_pv_user_dataset(self) -> "OpenPowerDataset":
-        """
-        Creates a dataset containing data from all users with PV data.
-
-        Returns:
-            OpenPowerDataset: The dataset containing all PV users.
-        """
-        pv_users = [
-            user_id for user_id, flags in self.user_mapping.items() if flags["pv"]
-        ]
-        pv_data = self.data[self.data["dataid"].astype(str).isin(pv_users)].copy()
-
-        pv_data = pv_data[
-            pv_data["timeseries"].apply(lambda ts: ts.shape == (96, 2))
-        ].copy()
-
-        return OpenPowerDataset(
-            data=pv_data,
-            include_generation=True,
-            stats=self.stats,
-            user_mapping=self.user_mapping,
-        )
-
-    def create_non_pv_user_dataset(self) -> "OpenPowerDataset":
-        """
-        Creates a dataset containing data from all users without PV data.
-
-        Returns:
-            OpenPowerDataset: The dataset containing all non-PV users.
-        """
-        non_pv_users = [
-            user_id for user_id, flags in self.user_mapping.items() if not flags["pv"]
-        ]
-        non_pv_data = self.data[
-            self.data["dataid"].astype(str).isin(non_pv_users)
-        ].copy()
-
-        pv_data = pv_data[
-            pv_data["timeseries"].apply(lambda ts: ts.shape == (96, 1))
-        ].copy()
-
-        return OpenPowerDataset(
-            data=non_pv_data,
-            include_generation=False,
-            stats=self.stats,
-            user_mapping=self.user_mapping,
-        )
-
-    def create_all_user_dataset(self) -> "OpenPowerDataset":
-        """
-        Creates a dataset containing data from all users without PV data.
-
-        Returns:
-            OpenPowerDataset: The dataset containing all non-PV users.
-        """
-        assert (
-            self.include_generation == False
-        ), "Include_generation must be set to False when working with the entire dataset!"
-
-        return OpenPowerDataset(
-            data=self.data,
-            include_generation=self.include_generation,
-            stats=self.stats,
-            user_mapping=self.user_mapping,
-        )
-
-
-class OpenPowerDataset(Dataset):
-    """
-    A dataset class for handling individual user data from the OpenPower dataset.
-    """
-
-    def __init__(
-        self,
-        data: pd.DataFrame,
-        include_generation: bool,
-        stats: Dict,
-        user_mapping: Dict[str, Dict[str, bool]],
-    ):
-        """
-        Initializes the OpenPowerDataset object.
-
-        Args:
-            data (pd.DataFrame): Time series data for all users.
-            user_mapping (Dict[str, Dict[str, bool]]): Mapping of user IDs to their PV and EV flags.
-        """
-        self.data = self.validate_data(data)
-        self.include_generation = include_generation
-        self.user_mapping = user_mapping
-        self.stats = stats
-
-    def validate_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Validates the data to ensure consistency in the shapes of time series.
-
-        Args:
-            data (pd.DataFrame): DataFrame containing time series data.
-
-        Returns:
-            pd.DataFrame: The validated and possibly corrected time series data.
-        """
-        shapes = data["timeseries"].apply(
-            lambda x: x.shape if isinstance(x, np.ndarray) else None
-        )
-        if len(shapes.unique()) > 2:
-            print("Warning: More than two unique shapes found in timeseries")
-        elif len(shapes.unique()) == 2:
-            # Check if one shape is [96] and the other is [96, 2]
-            expected_shapes = {(96,), (96, 2)}
-            actual_shapes = set(shapes.unique())
-            if not actual_shapes.issubset(expected_shapes):
-                print("Warning: Inconsistent shapes found in timeseries")
-        return data
-
-    def inverse_transform_column(self, row: pd.Series, colname: str) -> np.ndarray:
-        """
-        Performs inverse transformation on a normalized and scaled column to retrieve original values.
-
-        Args:
-            row (pd.Series): A row from the DataFrame that contains the normalized and scaled data.
-            colname (str): The column name of the normalized and scaled data (e.g., "grid" or "solar").
-
-        Returns:
-            np.ndarray: The original (un-normalized and un-scaled) time series data.
-        """
-        stats = self.stats[colname].get(
-            (row["dataid"], row["year"], row["month"], row["weekday"])
-        )
-        if not stats:
-            raise ValueError(
-                f"No stats found for {colname} with dataid={row['dataid']}, month={row['month']}, weekday={row['weekday']}"
-            )
-
-        mean = stats["mean"]
-        std = stats["std"]
-        z_min = stats["z_min"]
-        z_max = stats["z_max"]
-
-        unscaled = row[colname] * (z_max - z_min + 1e-8) + z_min
-        unnormalized = unscaled * (std + 1e-8) + mean
-        return unnormalized
-
-    def inverse_transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Applies inverse transformation on the entire dataset to recover original time series values.
-
-        Args:
-            df (pd.DataFrame): The DataFrame containing normalized and scaled time series data.
-
-        Returns:
-            pd.DataFrame: The DataFrame with the original (un-normalized and un-scaled) time series.
-        """
-
-        def split_timeseries(row: np.ndarray) -> pd.Series:
-            grid = row[:, 0].reshape(-1, 1)
-            solar = row[:, 1].reshape(-1, 1) if row.shape[1] > 1 else None
-            return pd.Series({"grid_import": grid, "pv": solar})
-
-        if self.include_generation:
-            df[["grid_import", "pv"]] = df["timeseries"].apply(split_timeseries)
-        else:
-            df["grid_import"] = df["timeseries"]
-
-        df.drop(columns=["timeseries"], inplace=True)
-
-        for idx, row in df.iterrows():
-            df.at[idx, "grid_import"] = self.inverse_transform_column(
-                row, "grid_import"
-            )
-            if self.include_generation and "pv" in df.columns and row["pv"] is not None:
-                df.at[idx, "pv"] = self.inverse_transform_column(row, "pv")
-
-        df = self._merge_columns_into_timeseries(df)
-        df.sort_values(by=["dataid", "year", "month", "weekday"], inplace=True)
-        return df
-
-    def __len__(self) -> int:
-        """
-        Returns the number of samples in the dataset.
-
-        Returns:
-            int: Number of samples in the dataset.
-        """
-        return len(self.data)
-
-    def __getitem__(
-        self, idx: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Retrieves a single sample from the dataset.
-
-        Args:
-            idx (int): The index of the sample to retrieve.
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-                - dataid: User ID tensor.
-                - timeseries: Time series data tensor.
-                - pv: Binary PV flag tensor.
-                - ev: Binary EV flag tensor.
-        """
-        sample = self.data.iloc[idx]
-        dataid = sample["dataid"]
-        timeseries = sample["timeseries"]
-        ev_flag = float(sample["ev_flag"])  # Binary flag: 1.0 or 0.0
-
-        # Determine PV flag based on timeseries shape
-        if isinstance(timeseries, np.ndarray):
-            if timeseries.ndim == 1:
-                # User does not have PV; timeseries is 1D (only grid_import)
-                pv = torch.tensor(0.0, dtype=torch.float32)
-            elif timeseries.ndim == 2 and timeseries.shape[1] == 2:
-                # User has PV; timeseries is 2D (grid_import + pv)
-                pv = torch.tensor(1.0, dtype=torch.float32)
-            else:
-                raise ValueError(f"Unexpected timeseries shape: {timeseries.shape}")
-        else:
-            raise ValueError("timeseries must be a NumPy array")
-
-        # Convert timeseries to tensor
-        timeseries_tensor = torch.tensor(timeseries, dtype=torch.float32)
-
-        # EV flag is already a separate binary value
-        ev = torch.tensor(ev_flag, dtype=torch.float32)
-
-        return timeseries_tensor, pv, ev
-
-    def _merge_columns_into_timeseries(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Merges grid and solar columns back into a single time series column.
-
-        Args:
-            df (pd.DataFrame): DataFrame containing separate grid and solar columns.
-
-        Returns:
-            pd.DataFrame: DataFrame with merged time series column.
-        """
-        if "pv" in df.columns:
-            df["timeseries"] = df.apply(
-                lambda row: (
-                    row["grid_import"]
-                    if not isinstance(row["pv"], (np.ndarray, list))
-                    else np.column_stack((row["grid_import"], row["pv"]))
-                ),
-                axis=1,
-            )
-            df.drop(columns=["grid_import", "pv"], inplace=True)
-        else:
-            df["timeseries"] = df["grid_import"]
-            df.drop(columns=["grid_import"], inplace=True)
-        return df
