@@ -159,7 +159,9 @@ class OpenPowerDataset(TimeSeriesDataset):
         else:
             grouped_data = grouped_grid_data
 
-        return self._set_and_add_user_flags(grouped_data)
+        grouped_data = self._set_and_add_user_flags(grouped_data)
+        grouped_data = self._validate_time_series_lengths(grouped_data)
+        return grouped_data
 
     def _extract_user_ids(self, columns: List[str]) -> List[str]:
         """
@@ -211,3 +213,36 @@ class OpenPowerDataset(TimeSeriesDataset):
             data["dataid"].astype(str).map(lambda x: str(user_mapping[x]["ev"]))
         )
         return data
+
+    def _validate_time_series_lengths(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Validates that all entries in time series columns have the correct length
+        defined by cfg.seq_len. Drops rows with invalid lengths.
+
+        Args:
+            data (pd.DataFrame): The preprocessed data to validate.
+
+        Returns:
+            pd.DataFrame: The validated dataset with invalid rows removed.
+        """
+        valid_rows = []
+
+        for idx, row in data.iterrows():
+            is_valid = True
+            for col in self.time_series_column_names:
+                arr = row[col]
+                # Check that the shape is either (seq_len,) or (seq_len, 1)
+                if arr.ndim == 1 and len(arr) == self.cfg.seq_len:
+                    continue  # Shape is valid
+                elif arr.ndim == 2 and arr.shape == (self.cfg.seq_len, 1):
+                    continue  # Shape is valid
+                else:
+                    is_valid = False
+                    break
+
+            if is_valid:
+                valid_rows.append(row)
+
+        # Create a new DataFrame with only valid rows
+        validated_data = pd.DataFrame(valid_rows, columns=data.columns)
+        return validated_data

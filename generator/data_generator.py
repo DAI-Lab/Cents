@@ -35,9 +35,9 @@ class DataGenerator:
             model_name (str): The name of the generative model ('acgan', 'diffusion_ts', etc.).
         """
         self.model_name = model_name
-        self.dataset = dataset
         self.overrides = overrides
         self.cfg = self._load_config()
+        self.set_dataset(dataset)
         self.model = None
         self._initialize_model()
 
@@ -72,34 +72,16 @@ class DataGenerator:
         else:
             raise ValueError(f"Model {self.model_name} not recognized.")
 
-    def fit(self, dataset):
+    def fit(self):
         """
-        Train the model on the given dataset.
-
-        Args:
-            df (Any): Input data. Should be a compatible dataset object or pandas DataFrame.
+        Train the model.
         """
-        self.dataset = dataset
-        sample_timeseries, sample_cond_vars = dataset[0]
-        expected_seq_len = self.model.cfg.model.seq_len
-        assert (
-            sample_timeseries.shape[0] == expected_seq_len
-        ), f"Expected timeseries length {expected_seq_len}, but got {sample_timeseries.shape[0]}"
+        if not hasattr(self, "dataset") or not self.dataset:
+            raise ValueError(
+                "Dataset not specified or None. Set the generator dataset using set_dataset()."
+            )
 
-        if self.model.conditioning_vars:
-            for var in self.model.conditioning_vars:
-                assert (
-                    var in sample_cond_vars.keys()
-                ), f"Set conditioning variable '{var}' specified in model.conditioning_vars not found in dataset"
-
-        expected_input_dim = self.model.cfg.model.input_dim
-
-        assert sample_timeseries.shape == (
-            expected_seq_len,
-            expected_input_dim,
-        ), f"Expected timeseries shape ({expected_seq_len}, {expected_input_dim}), but got {sample_timeseries.shape}"
-
-        self.model.train_model(dataset)
+        self.model.train_model(self.dataset)
 
     def get_model_conditioning_vars(self):
         """
@@ -176,10 +158,36 @@ class DataGenerator:
                 ):
                     pecanstreet_cfg = compose(config_name="pecanstreet", overrides=None)
                     self.cfg.dataset = pecanstreet_cfg
+
+            elif self.dataset.name == "openpower":
+                with initialize_config_dir(
+                    config_dir=os.path.join(ROOT_DIR, "config/dataset"),
+                    version_base=None,
+                ):
+                    openpower_cfg = compose(config_name="openpower", overrides=None)
+                    self.cfg.dataset = openpower_cfg
             else:
-                print(
-                    f"Warning: No cfg found for dataset {self.dataset.name}, setting default dataset config."
-                )
+                if dataset.cfg:
+                    self.cfg.dataset = dataset.cfg
+                else:
+                    print(
+                        f"Warning: No cfg found for dataset {self.dataset.name}, setting default dataset config."
+                    )
+                    with initialize_config_dir(
+                        config_dir=os.path.join(ROOT_DIR, "config/dataset"),
+                        version_base=None,
+                    ):
+                        default_cfg = compose(config_name="default", overrides=None)
+                        self.cfg.dataset = default_cfg
+
+                if (
+                    self.dataset.conditioning_vars
+                    and not self.cfg.dataset.conditioning_vars
+                ):
+                    if not self.cfg.conditioning_vars:
+                        print(
+                            f"Warning: Found conditioning_vars {self.dataset.conditioning_vars} but dataset config conditioning_vars are not set."
+                        )
 
         self._initialize_model()  # re init with dataset update
 

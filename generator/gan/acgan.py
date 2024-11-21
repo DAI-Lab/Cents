@@ -156,7 +156,7 @@ class ACGAN(nn.Module):
         self.input_dim = cfg.input_dim
         self.lr_gen = cfg.model.lr_gen
         self.lr_discr = cfg.model.lr_discr
-        self.seq_len = cfg.seq_len
+        self.seq_len = cfg.dataset.seq_len
         self.noise_dim = cfg.noise_dim
         self.cond_emb_dim = cfg.cond_emb_dim
         self.categorical_dims = cfg.dataset.conditioning_vars
@@ -238,7 +238,7 @@ class ACGAN(nn.Module):
                         batch_embeddings
                     )
 
-                    if self.cfgfreeze_cond_after_warmup:
+                    if self.cfg.freeze_cond_after_warmup:
                         for param in self.generator.conditioning_module.parameters():
                             param.requires_grad = False  # if specified, freeze conditioning module training
 
@@ -349,14 +349,8 @@ class ACGAN(nn.Module):
                 )
 
             if (epoch + 1) % self.cfg.model.save_cycle == 0:
-                os.mkdir(os.path.join(self.cfg.results_folder, self.train_timestamp))
 
-                checkpoint_path = os.path.join(
-                    os.path.join(self.cfg.results_folder, self.train_timestamp),
-                    f"acgan_checkpoint_{epoch + 1}.pt",
-                )
-
-                self.save(checkpoint_path, self.current_epoch)
+                self.save(epoch=self.current_epoch)
 
         # self.writer.close()
 
@@ -387,14 +381,21 @@ class ACGAN(nn.Module):
             generated_data = self.generator(noise, conditioning_vars)
         return generated_data
 
-    def save(self, path: str, epoch: int = None):
+    def save(self, path: str = None, epoch: int = None):
         """
         Save the generator and discriminator models, optimizers, and epoch number.
 
         Args:
-            path (str): The file path to save the checkpoint to.
+            path (str, optional): The file path to save the checkpoint to.
             epoch (int, optional): The current epoch number. Defaults to None.
         """
+        if path is None:
+            hydra_output_dir = os.getcwd()
+            path = os.path.join(
+                hydra_output_dir,
+                f"acgan_checkpoint_{epoch if epoch else self.current_epoch}.pt",
+            )
+
         checkpoint = {
             "epoch": epoch if epoch is not None else self.current_epoch,
             "generator_state_dict": self.generator.state_dict(),
