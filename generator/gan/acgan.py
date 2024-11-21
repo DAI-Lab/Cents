@@ -164,7 +164,7 @@ class ACGAN(nn.Module):
         self.warm_up_epochs = cfg.model.warm_up_epochs
         self.sparse_conditioning_loss_weight = cfg.sparse_conditioning_loss_weight
 
-        self.writer = SummaryWriter(log_dir=os.path.join("runs", "acgan"))
+        # self.writer = SummaryWriter(log_dir=os.path.join("runs", "acgan"))
 
         assert (
             self.seq_len % 8 == 0
@@ -334,13 +334,13 @@ class ACGAN(nn.Module):
             # End of epoch logging
             if epoch > self.warm_up_epochs:
 
-                self.generator.conditioning_module.log_embedding_statistics(
-                    epoch,
-                    self.writer,
-                    previous_mean_embedding,
-                    previous_embedding_covariance,
-                    batch_embeddings,
-                )
+                # self.generator.conditioning_module.log_embedding_statistics(
+                #     epoch,
+                #     self.writer,
+                #     previous_mean_embedding,
+                #     previous_embedding_covariance,
+                #     batch_embeddings,
+                # )
                 previous_mean_embedding = (
                     self.generator.conditioning_module.mean_embedding.clone()
                 )
@@ -358,7 +358,7 @@ class ACGAN(nn.Module):
 
                 self.save(checkpoint_path, self.current_epoch)
 
-        self.writer.close()
+        # self.writer.close()
 
     def sample_conditioning_vars(self, dataset, batch_size, random=False):
         conditioning_vars = {}

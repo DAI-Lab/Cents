@@ -10,11 +10,9 @@ from dtaidistance import dtw
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-from eval.loss import gaussian_kernel_matrix
-from eval.loss import maximum_mean_discrepancy
+from eval.loss import gaussian_kernel_matrix, maximum_mean_discrepancy
 from eval.t2vec.t2vec import TS2Vec
-from eval.utils import get_hourly_ticks
-from eval.utils import get_month_weekday_names
+from eval.utils import get_hourly_ticks, get_month_weekday_names
 
 
 def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float]:
@@ -360,7 +358,6 @@ def plot_range_with_syn_values(
         label="kWh load range of real data",
     )
 
-    # Plot all synthetic time series with transparency to reduce clutter
     for index in range(syn_values.shape[0]):
         if index == 0:
             plt.plot(

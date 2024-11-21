@@ -58,7 +58,7 @@ class TimeSeriesDataset(Dataset, ABC):
         pass
 
     def __len__(self):
-        return len(self.processed_data)
+        return len(self.data)
 
     def __getitem__(self, idx):
         sample = self.processed_data.iloc[idx]
@@ -316,4 +316,4 @@ class TimeSeriesDataset(Dataset, ABC):
         """
         Returns the integer mappings for conditioning variables.
         """
-        pass
+        return self.conditioning_codes
