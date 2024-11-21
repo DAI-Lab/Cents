@@ -54,7 +54,6 @@ def cosine_beta_schedule(timesteps, device, s=0.004):
 class Diffusion_TS(nn.Module):
     def __init__(self, cfg: DictConfig):
         super(Diffusion_TS, self).__init__()
-        print(cfg.keys())
         self.cfg = cfg
         self.eta, self.use_ff = cfg.model.eta, cfg.model.use_ff
         self.seq_len = cfg.seq_len

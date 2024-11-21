@@ -153,7 +153,11 @@ class DataGenerator:
                 (num_samples,), code, dtype=torch.long, device=self.cfg.device
             )
         data = self.model.generate(conditioning_vars)
-        return convert_generated_data_to_df(data, self.conditioning_var_buffer)
+        return convert_generated_data_to_df(
+            data,
+            self.conditioning_var_buffer,
+            mapping=self.dataset.get_conditioning_var_codes(),
+        )
 
     def set_dataset(self, dataset: TimeSeriesDataset):
         """

@@ -3,7 +3,7 @@ geography: null
 normalize: True
 scale: True
 threshold: 6 # int, bounds values within +-threshold stds
-include_generation: True
+include_generation: False
 seq_len: 96
 path: "./data/pecanstreet"
 data_columns: ["dataid","local_15min","car1","grid","solar"]
@@ -11,7 +11,7 @@ metadata_columns: ["dataid","building_type","solar","car1","city","state","total
 
 
 user_id: null
-user_group: pv_users # non_pv_users, all
+user_group: all # non_pv_users, all
 
 conditioning_vars: # for each desired conditioning variable, add the name and number of categories
   month: 12
