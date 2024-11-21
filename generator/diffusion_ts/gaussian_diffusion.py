@@ -56,9 +56,11 @@ class Diffusion_TS(nn.Module):
         super(Diffusion_TS, self).__init__()
         self.cfg = cfg
         self.eta, self.use_ff = cfg.model.eta, cfg.model.use_ff
-        self.seq_len = cfg.seq_len
+        self.seq_len = cfg.dataset.seq_len
         self.input_dim = cfg.input_dim
-        self.ff_weight = default(cfg.model.reg_weight, math.sqrt(cfg.seq_len) / 5)
+        self.ff_weight = default(
+            cfg.model.reg_weight, math.sqrt(cfg.dataset.seq_len) / 5
+        )
         self.device = cfg.device
         self.embedding_dim = cfg.cond_emb_dim
         self.categorical_dims = cfg.dataset.conditioning_vars
@@ -505,15 +507,7 @@ class Diffusion_TS(nn.Module):
             self.scheduler.step(total_loss)
 
         if (epoch + 1) % self.cfg.model.save_cycle == 0:
-            os.mkdir(os.path.join(self.cfg.results_folder, self.train_timestamp))
-
-            checkpoint_path = os.path.join(
-                os.path.join(self.cfg.results_folder, self.train_timestamp),
-                f"diffusion_ts_checkpoint_{epoch + 1}.pt",
-            )
-            self.save(checkpoint_path, self.current_epoch)
-
-            print(f"Saved checkpoint at {checkpoint_path}.")
+            self.save(epoch=self.current_epoch)
 
         print("Training complete")
 
@@ -558,7 +552,15 @@ class Diffusion_TS(nn.Module):
             self.ema.ema_model.to(self.device)
         print(f"Model and EMA model moved to {self.device}.")
 
-    def save(self, path: str, epoch: int = None):
+    def save(self, path: str = None, epoch: int = None):
+
+        if path is None:
+            hydra_output_dir = os.getcwd()
+            path = os.path.join(
+                hydra_output_dir,
+                f"diffusion_ts_checkpoint_{epoch if epoch else self.current_epoch}.pt",
+            )
+
         model_state_dict_cpu = {k: v.cpu() for k, v in self.state_dict().items()}
         optimizer_state_dict_cpu = {
             k: v.cpu() if isinstance(v, torch.Tensor) else v

@@ -1,14 +1,17 @@
-# timeseries_dataset.py
-
+import json
+import os
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
+from hydra import compose, initialize_config_dir
 from torch.utils.data import Dataset
 
 from datasets.utils import encode_conditioning_variables
+
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class TimeSeriesDataset(Dataset, ABC):
@@ -34,6 +37,23 @@ class TimeSeriesDataset(Dataset, ABC):
         )
         self.conditioning_vars = conditioning_var_column_names or []
         self.seq_len = seq_len
+
+        if not hasattr(self, "cfg"):
+            with initialize_config_dir(
+                config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
+            ):
+                conditioning_vars = self._get_conditioning_var_dict(data)
+                overrides = [f"+seq_len={seq_len}"]
+                cfg = compose(config_name="default", overrides=overrides)
+                cfg.conditioning_vars = conditioning_vars
+                self.cfg = cfg
+
+        if not hasattr(self, "threshold"):
+            self.threshold = (-self.cfg.threshold, self.cfg.threshold)
+
+        if not hasattr(self, "name"):
+            self.name = "custom"
+
         self.normalize = normalize
         self.scale = scale
         self.normalization_stats = {}
@@ -48,6 +68,7 @@ class TimeSeriesDataset(Dataset, ABC):
             self.data, self.conditioning_codes = self.encode_conditioning_vars(
                 self.data
             )
+        self.data = self.merge_timeseries_columns(self.data)
 
     @abstractmethod
     def _preprocess_data(self):
@@ -61,7 +82,7 @@ class TimeSeriesDataset(Dataset, ABC):
         return len(self.data)
 
     def __getitem__(self, idx):
-        sample = self.processed_data.iloc[idx]
+        sample = self.data.iloc[idx]
         timeseries = torch.tensor(sample["timeseries"], dtype=torch.float32)
         conditioning_vars_dict = {
             var: torch.tensor(sample[var], dtype=torch.long)
@@ -118,17 +139,18 @@ class TimeSeriesDataset(Dataset, ABC):
                 f"The following time series columns are missing from the DataFrame: {missing_cols}"
             )
         for col_name in self.time_series_column_names:
-            for idx, arr in df[col_name].iteritems():
+            for idx, arr in df[col_name].items():
                 if not isinstance(arr, np.ndarray):
                     arr = np.array(arr)
-                    df.at[idx, col_name] = arr  # Update in case it was a list
-                # Handle arrays with shape (seq_len,) and (seq_len, 1)
+                    df.at[idx, col_name] = arr
                 if arr.ndim == 1:
                     arr = arr.reshape(-1, 1)
-                    df.at[idx, col_name] = arr  # Update with reshaped array
+                    df.at[idx, col_name] = arr
+                elif arr.ndim == 2:
+                    continue
                 else:
                     raise ValueError(
-                        f"Array in column '{col_name}' at index {idx} must have shape (seq_len,) or (seq_len, 1), "
+                        f"Array in column '{col_name}' at index {idx} must have shape {(self.seq_len,)} or {(self.seq_len, 1)}, "
                         f"but has shape {arr.shape}."
                     )
                 assert arr.shape[0] == self.seq_len, (
@@ -138,7 +160,7 @@ class TimeSeriesDataset(Dataset, ABC):
 
         def merge_row(row):
             arrays = [row[col_name] for col_name in self.time_series_column_names]
-            merged_array = np.hstack(arrays)  # Shape: (seq_len, n_dim)
+            merged_array = np.hstack(arrays)
             return merged_array
 
         df["timeseries"] = df.apply(merge_row, axis=1)
@@ -305,6 +327,25 @@ class TimeSeriesDataset(Dataset, ABC):
             bins=numeric_conditioning_bins,
         )
         return encoded_data, conditioning_codes
+
+    def _get_conditioning_var_dict(self, data: pd.DataFrame) -> Dict[str, int]:
+        """
+        Extracts the name and number of unique categories from the conditioning variables specified in the data.
+        For numerical variables, bins the data into 5 categories.
+        """
+        conditioning_var_dict = {}
+        numeric_bins = 5
+
+        for var_name in self.conditioning_vars:
+            if pd.api.types.is_numeric_dtype(data[var_name]):
+                binned = pd.cut(data[var_name], bins=numeric_bins, include_lowest=True)
+                num_categories = binned.nunique()
+                conditioning_var_dict[var_name] = num_categories
+            else:
+                num_categories = data[var_name].astype("category").nunique()
+                conditioning_var_dict[var_name] = num_categories
+
+        return conditioning_var_dict
 
     def normalize(self, data: pd.DataFrame) -> pd.DataFrame:
         """

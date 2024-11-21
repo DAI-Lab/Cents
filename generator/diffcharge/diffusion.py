@@ -171,7 +171,7 @@ class DDPM(nn.Module):
 
         # Initialize tracking variables
         self.current_epoch = 0
-        self.writer = SummaryWriter(log_dir=os.path.join("runs", "ddpm"))
+        # self.writer = SummaryWriter(log_dir=os.path.join("runs", "ddpm"))
 
         # Sparse conditioning loss weight
         self.sparse_conditioning_loss_weight = cfg.sparse_conditioning_loss_weight
@@ -258,7 +258,7 @@ class DDPM(nn.Module):
         Returns:
             torch.Tensor: Computed loss.
         """
-        c = c.unsqueeze(1).repeat(1, self.cfg.seq_len, 1)
+        c = c.unsqueeze(1).repeat(1, self.cfg.dataset.seq_len, 1)
         batch_size = x0.shape[0]
         t = torch.randint(0, self.n_steps, (batch_size,), device=self.device)
         noise = torch.randn_like(x0)
@@ -373,17 +373,10 @@ class DDPM(nn.Module):
             self.lr_scheduler.step(epoch_mean_loss)
 
             if (epoch + 1) % self.cfg.model.save_cycle == 0:
-                os.mkdir(os.path.join(self.cfg.results_folder, self.train_timestamp))
-
-                checkpoint_path = os.path.join(
-                    os.path.join(self.cfg.results_folder, self.train_timestamp),
-                    f"diffcharge_checkpoint_{epoch + 1}.pt",
-                )
-
-                self.save(checkpoint_path, self.current_epoch)
+                self.save(epoch=self.current_epoch)
 
         print("Training complete")
-        self.writer.close()
+        # self.writer.close()
 
     def save(self, path: str, epoch: int = None):
         """
@@ -393,6 +386,14 @@ class DDPM(nn.Module):
             path (str): The file path to save the checkpoint to.
             epoch (int, optional): The current epoch number. Defaults to None.
         """
+        if path is None:
+            # Get the current Hydra run directory
+            hydra_output_dir = os.getcwd()
+            path = os.path.join(
+                hydra_output_dir,
+                f"acgan_checkpoint_{epoch if epoch else self.current_epoch}.pt",
+            )
+
         checkpoint = {
             "epoch": epoch if epoch is not None else self.current_epoch,
             "eps_model_state_dict": self.eps_model.state_dict(),
@@ -501,7 +502,7 @@ class DDPM(nn.Module):
             torch.Tensor: Generated synthetic time series data.
         """
         num_samples = conditioning_vars[next(iter(conditioning_vars))].shape[0]
-        shape = (num_samples, self.cfg.seq_len, self.cfg.input_dim)
+        shape = (num_samples, self.cfg.dataset.seq_len, self.cfg.input_dim)
 
         if use_ema_sampling:
             print("Generating using EMA model parameters.")

@@ -1,12 +1,11 @@
 defaults:
-  - model: diffusion_ts
+  - model: acgan
   - dataset: openpower
   - evaluator: default
   - _self_
 
 device: 0 # 0, cpu
-seq_len: 96 # should not be changed for the current datasets
-input_dim: 1 # or more depending on dataset
+input_dim: 2 # or more depending on dataset
 noise_dim: 256
 cond_emb_dim: 64
 shuffle: True
