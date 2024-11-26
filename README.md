@@ -99,45 +99,27 @@ To get started, define a DataGenerator and specify the name of the model you wou
 generator = DataGenerator(model_name="diffusion_ts")
 ```
 
-We provide pre-trained model checkpoints that were trained on the [PecanStreet Dataport](https://www.pecanstreet.org/dataport/) dataset. You can use these checkpoints to load a trained model as follows:
+We provide pre-trained model checkpoints that were trained on the [PecanStreet Dataport](https://www.pecanstreet.org/dataport/) dataset. You can use these checkpoints to load a trained model. The first step is to assign the `DataGenerator` a `TimeSeriesDataset`instance. We are using the `PecanStreetDataset` class here, which is an extension of `TimeSeriesDataset`.
 
 ```python
-generator.load_trained_model()
+dataset = PecanStreetDataset()
+generator.set_dataset(dataset)
 ```
 
-These pre-trained models are conditional models, meaning they require a set of conditioning variables to generate synthetic time series data. If you want to generate samples for a random set of conditioning variables (among those present in the dataset the model was trained on), you can do so as follows:
+Once a dataset has been assigned, we can load a pre-trained model for that dataset as follows:
 
 ```python
-conditioning_variables = generator.sample_conditioning_variables(random=True)
+generator.load_model()
+```
+
+These pre-trained models are conditional models, meaning they require a set of conditioning variables to generate synthetic time series data. If you want to generate data for a random set of conditioning variables, you can do so as follows:
+
+```python
+conditioning_variables = generator.sample_random_conditioning_variables()
 synthetic_data = generator.generate(conditioning_variables)
 ```
 
-## Training
-
-If you are interested in training a model from scratch on your own dataset, you need to start by creating a time series dataset object:
-
-```python
-your_dataset = TimeSeriesDataset(
-    dataframe=your_custom_df,
-    time_series_column_name="your_custom_timeseries_column_name,
-    conditioning_vars="your_custom_conditioning_dict"
-)
-```
-
-This TimeSeriesDataset takes a [pandas](https://pandas.pydata.org/) `pd.DataFrame` object as input, and ensures compatability with EnData models. You can optionally define a dictionary of conditioning variables, where the keys correspond to the conditioning variable column names, and the values correspond to the number of discrete categories for that variable. Note that variables should already be Integer encoded. The following line of code starts model training:
-
-```python
-generator.fit(your_dataset, "your_custom_timeseries_column_name")
-```
-
-Once the model is trained, synthetic data can be created as before:
-
-```python
-my_custom_conditioning_variables = generator.sample_conditioning_variables(random=True)
-synthetic_data = generator.generate(conditioning_variables)
-```
-
-Please refer to our [documentation]() or to the [tutorials]() for more details.
+For a more in-depth tutorial, please refer to the tutorial notebooks in the `tutorials` directory.
 
 ## Datasets
 

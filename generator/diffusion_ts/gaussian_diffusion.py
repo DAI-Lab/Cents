@@ -555,7 +555,7 @@ class Diffusion_TS(nn.Module):
     def save(self, path: str = None, epoch: int = None):
 
         if path is None:
-            hydra_output_dir = os.getcwd()
+            hydra_output_dir = os.path.join(self.cfg.wandb.dir, "checkpoints")
             path = os.path.join(
                 hydra_output_dir,
                 f"diffusion_ts_checkpoint_{epoch if epoch else self.current_epoch}.pt",
