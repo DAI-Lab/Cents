@@ -1,13 +1,14 @@
 import datetime
+import logging
 import os
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
+import wandb
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.tensorboard import SummaryWriter
 
 from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
@@ -25,6 +26,8 @@ from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+logger = logging.getLogger(__name__)
 
 
 class Evaluator:
@@ -54,6 +57,13 @@ class Evaluator:
             "predictive": [],
         }
 
+        wandb.init(
+            config=OmegaConf.to_container(cfg, resolve=True),
+            project=cfg.wandb.project,
+            entity=cfg.wandb.entity,
+            dir=cfg.run_dir,
+        )
+
     def evaluate_model(
         self,
         user_id: int = None,
@@ -76,10 +86,10 @@ class Evaluator:
             model = self.get_trained_model(dataset)
 
         if user_id is not None:
-            print(f"Starting evaluation for user {user_id}")
+            logger.info(f"Starting evaluation for user {user_id}")
         else:
-            print("Starting evaluation for all users")
-        print("----------------------")
+            logger.info("Starting evaluation for all users")
+        logger.info("----------------------")
 
         # Pass data_label to run_evaluation
         self.run_evaluation(dataset, model, distinguish_rare)
@@ -102,11 +112,10 @@ class Evaluator:
                 dataset,
                 model,
                 non_rare_indices,
-                data_type="non_rare",
             )
         else:
             all_indices = dataset.data.index.to_numpy()
-            self.evaluate_subset(dataset, model, all_indices, data_type="all")
+            self.evaluate_subset(dataset, model, all_indices)
 
     def identify_rare_combinations(
         self, dataset: Any, model: Any
@@ -147,7 +156,6 @@ class Evaluator:
         dataset: Any,
         model: Any,
         indices: np.ndarray,
-        data_type: str,
     ):
         """
         Evaluate the model on a subset of the data.
@@ -156,12 +164,7 @@ class Evaluator:
             dataset: The dataset containing real data.
             model: The trained model to generate data.
             indices (np.ndarray): Indices of data to use.
-            data_type (str): Label for the data subset ("rare", "non_rare", or "all").
         """
-        # Generate the timestamp here to create a unique subdirectory under data_type
-        timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        log_dir = os.path.join(self.base_log_dir, data_type, timestamp)
-        writer = SummaryWriter(log_dir=log_dir)
 
         real_data_subset = dataset.data.iloc[indices].reset_index(drop=True)
         conditioning_vars = {
@@ -188,21 +191,16 @@ class Evaluator:
         syn_data_array = np.stack(syn_data_inv["timeseries"])
 
         # Compute metrics
-        self.compute_metrics(real_data_array, syn_data_array, real_data_subset, writer)
+        self.compute_metrics(real_data_array, syn_data_array, real_data_subset)
 
         # Generate plots
-        self.create_visualizations(real_data_inv, syn_data_inv, dataset, model, writer)
-
-        # Close the writer
-        writer.flush()
-        writer.close()
+        self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
 
     def compute_metrics(
         self,
         real_data: np.ndarray,
         syn_data: np.ndarray,
         real_data_subset: pd.DataFrame,
-        writer: SummaryWriter,
     ):
         """
         Compute evaluation metrics and log them.
@@ -211,40 +209,54 @@ class Evaluator:
             real_data (np.ndarray): Real data array.
             syn_data (np.ndarray): Synthetic data array.
             real_data_subset (pd.DataFrame): Real data subset DataFrame.
-            writer (SummaryWriter): TensorBoard writer for logging results.
         """
         # DTW
+        logger.info(f"--- Starting DTW distance computation ---")
         dtw_mean, dtw_std = dynamic_time_warping_dist(real_data, syn_data)
-        writer.add_scalar("DTW/mean", dtw_mean)
-        writer.add_scalar("DTW/std", dtw_std)
+        wandb.log({"DTW/mean": dtw_mean, "DTW/std": dtw_std})
         self.metrics["dtw"].append((dtw_mean, dtw_std))
+        logger.info(f"--- DTW distance computation complete ---")
+        logger.info("----------------------")
 
         # MMD
+        logger.info(f"--- Starting MMD computation ---")
         mmd_mean, mmd_std = calculate_mmd(real_data, syn_data)
-        writer.add_scalar("MMD/mean", mmd_mean)
-        writer.add_scalar("MMD/std", mmd_std)
+        wandb.log({"MMD/mean": mmd_mean, "MMD/std": mmd_std})
         self.metrics["mmd"].append((mmd_mean, mmd_std))
+        logger.info(f"--- MMD computation complete ---")
+        logger.info("----------------------")
 
         # MSE
+        logger.info(f"--- Starting Bounded MSE computation ---")
         mse_mean, mse_std = calculate_period_bound_mse(real_data_subset, syn_data)
-        writer.add_scalar("MSE/mean", mse_mean)
-        writer.add_scalar("MSE/std", mse_std)
+        wandb.log({"MSE/mean": mse_mean, "MSE/std": mse_std})
         self.metrics["mse"].append((mse_mean, mse_std))
+        logger.info(f"--- Bounded MSE computation complete ---")
+        logger.info("----------------------")
 
         # FID
+        logger.info(f"--- Starting Context FID computation ---")
         fid_score = Context_FID(real_data, syn_data)
-        writer.add_scalar("FID/score", fid_score)
+        wandb.log({"Context_FID": fid_score})
         self.metrics["fid"].append(fid_score)
+        logger.info(f"--- Context FID computation complete ---")
+        logger.info("----------------------")
 
         # Discriminative Score
+        logger.info(f"--- Starting Discriminative Score computation ---")
         discr_score, _, _ = discriminative_score_metrics(real_data, syn_data)
-        writer.add_scalar("Discriminative/score", discr_score)
+        wandb.log({"Disc_Score": discr_score})
         self.metrics["discriminative"].append(discr_score)
+        logger.info(f"--- Discriminative Score computation complete ---")
+        logger.info("----------------------")
 
         # Predictive Score
+        logger.info(f"--- Starting Predictive Score computation ---")
         pred_score = predictive_score_metrics(real_data, syn_data)
-        writer.add_scalar("Predictive/score", pred_score)
+        wandb.log({"Pred_Score": pred_score})
         self.metrics["predictive"].append(pred_score)
+        logger.info(f"--- Predictive Score computation complete ---")
+        logger.info("----------------------")
 
     def create_visualizations(
         self,
@@ -252,7 +264,6 @@ class Evaluator:
         syn_data_df: pd.DataFrame,
         dataset: Any,
         model: Any,
-        writer: SummaryWriter,
         num_samples: int = 100,
         num_runs: int = 3,
     ):
@@ -264,12 +275,10 @@ class Evaluator:
             syn_data_df (pd.DataFrame): Inverse-transformed synthetic data.
             dataset (Any): The dataset object.
             model (Any): The trained model.
-            writer (SummaryWriter): TensorBoard writer for logging visualizations.
             num_samples (int): Number of samples to generate for visualization.
             num_runs (int): Number of visualization runs.
         """
         for i in range(num_runs):
-            # Sample a conditioning variable combination from real data
             sample_row = real_data_df.sample(n=1).iloc[0]
             conditioning_vars_sample = {
                 var_name: torch.tensor(
@@ -307,21 +316,21 @@ class Evaluator:
                 real_data_df, generated_samples_df, month, weekday
             )
             if range_plot is not None:
-                writer.add_figure(f"Visualizations/Range_Plot_{i}", range_plot)
+                wandb.log({f"Range_Plot_{i}": wandb.Image(range_plot)})
 
             # Visualization 2: Plot closest real signals with synthetic values
             closest_plot = plot_syn_with_closest_real_ts(
                 real_data_df, generated_samples_df, month, weekday
             )
             if closest_plot is not None:
-                writer.add_figure(f"Visualizations/Closest_Real_TS_{i}", closest_plot)
+                wandb.log({f"Closest_Real_TS_{i}": wandb.Image(closest_plot)})
 
         # Visualization 3: KDE plots for real and synthetic data
         real_data_array = np.stack(real_data_df["timeseries"])
         syn_data_array = np.stack(syn_data_df["timeseries"])
         kde_plot = visualization(real_data_array, syn_data_array, "kernel")
         if kde_plot is None:
-            writer.add_figure(f"Visualizations/KDE", kde_plot)
+            wandb.log({f"KDE": wandb.Image(kde_plot)})
 
     def get_trained_model(self, dataset: Any) -> Any:
         """
@@ -343,7 +352,6 @@ class Evaluator:
             "acgan": ACGAN,
             "diffcharge": DDPM,
             "diffusion_ts": Diffusion_TS,
-            # TODO: Add LLMs potentially
         }
 
         if self.model_name in model_dict:

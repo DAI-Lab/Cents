@@ -387,8 +387,7 @@ class DDPM(nn.Module):
             epoch (int, optional): The current epoch number. Defaults to None.
         """
         if path is None:
-            # Get the current Hydra run directory
-            hydra_output_dir = os.getcwd()
+            hydra_output_dir = os.path.join(self.cfg.wandb.dir, "checkpoints")
             path = os.path.join(
                 hydra_output_dir,
                 f"acgan_checkpoint_{epoch if epoch else self.current_epoch}.pt",

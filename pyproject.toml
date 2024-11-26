@@ -42,6 +42,7 @@ dependencies = [
     "sentencepiece",
     "omegaconf",
     "hydra-core",
+    "wandb"
 ]
 
 [project.optional-dependencies]

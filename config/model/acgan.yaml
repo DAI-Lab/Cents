@@ -1,6 +1,6 @@
 _target_: generator.gan.acgan.ACGAN
 name: acgan
-batch_size: 32
+batch_size: 21
 n_epochs: 200
 lr_gen: 3e-4
 lr_discr: 1e-4

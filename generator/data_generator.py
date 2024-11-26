@@ -202,7 +202,10 @@ class DataGenerator:
         Returns:
             conditioning_vars: Dictionary of conditioning variables.
         """
-        return self.model.sample_conditioning_vars(self.dataset, num_samples, random)
+        if not self.dataset:
+            raise ValueError("Dataset has not yet been set.")
+
+        return self.dataset.sample_random_conditioning_vars()
 
     def load_model(self):
         """

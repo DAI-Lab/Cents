@@ -60,15 +60,17 @@ class TimeSeriesDataset(Dataset, ABC):
         self.normalization_group_keys = normalization_group_keys or []
         self.data = self._preprocess_data(data)
 
-        if self.normalize:
-            self._calculate_and_store_statistics(self.data)
-            self.data = self._normalize_and_scale(self.data)
-
         if self.conditioning_vars:
             self.data, self.conditioning_codes = self.encode_conditioning_vars(
                 self.data
             )
+
+        if self.normalize:
+            self._calculate_and_store_statistics(self.data)
+            self.data = self._normalize_and_scale(self.data)
+
         self.data = self.merge_timeseries_columns(self.data)
+        self.data = self.data.reset_index()
 
     @abstractmethod
     def _preprocess_data(self):
@@ -283,7 +285,7 @@ class TimeSeriesDataset(Dataset, ABC):
         return unnormalized
 
     def inverse_transform(
-        self, data: pd.DataFrame, merged: bool = False
+        self, data: pd.DataFrame, merged: bool = True
     ) -> pd.DataFrame:
         """
         Reverts normalization on the data.
@@ -358,3 +360,18 @@ class TimeSeriesDataset(Dataset, ABC):
         Returns the integer mappings for conditioning variables.
         """
         return self.conditioning_codes
+
+    def sample_random_conditioning_vars(self):
+        """
+        Samples a random set of conditioning_vars.
+        """
+        conditioning_vars = {}
+        conditioning_var_dict = self._get_conditioning_var_dict(self.data)
+        for var_name, num_categories in conditioning_var_dict.items():
+            conditioning_vars[var_name] = torch.randint(
+                0,
+                num_categories,
+                dtype=torch.long,
+                device=self.device,
+            )
+        return conditioning_vars
