@@ -1,9 +1,17 @@
 _target_: generator.gan.acgan.ACGAN
 name: acgan
-batch_size: 21
+
+input_dim: 1 # or more depending on dataset
+noise_dim: 256
+cond_emb_dim: 64
+shuffle: True
+sparse_conditioning_loss_weight: 0.5 # sparse conditioning training sample weight for loss computation [0, 1]
+freeze_cond_after_warmup: False # specify whether to freeze conditioning module parameters after warmup epoch
+
+batch_size: 32
 n_epochs: 200
 lr_gen: 3e-4
 lr_discr: 1e-4
-warm_up_epochs: 100
-include_auxiliary_losses: False
+warm_up_epochs: 2
+include_auxiliary_losses: True
 save_cycle: 200

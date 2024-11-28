@@ -57,16 +57,16 @@ class Diffusion_TS(nn.Module):
         self.cfg = cfg
         self.eta, self.use_ff = cfg.model.eta, cfg.model.use_ff
         self.seq_len = cfg.dataset.seq_len
-        self.input_dim = cfg.input_dim
+        self.input_dim = cfg.model.input_dim
         self.ff_weight = default(
             cfg.model.reg_weight, math.sqrt(cfg.dataset.seq_len) / 5
         )
         self.device = cfg.device
-        self.embedding_dim = cfg.cond_emb_dim
+        self.embedding_dim = cfg.model.cond_emb_dim
         self.categorical_dims = cfg.dataset.conditioning_vars
         self.warm_up_epochs = cfg.model.warm_up_epochs  # Number of warm-up epochs
         self.sparse_conditioning_loss_weight = (
-            cfg.sparse_conditioning_loss_weight
+            cfg.model.sparse_conditioning_loss_weight
         )  # Weight for rare samples
 
         self.conditioning_module = ConditioningModule(
@@ -77,14 +77,14 @@ class Diffusion_TS(nn.Module):
         # Update model to accept the new input dimension
         self.model = Transformer(
             n_feat=self.input_dim + self.embedding_dim,
-            n_channel=cfg.seq_len,
+            n_channel=cfg.dataset.seq_len,
             n_layer_enc=cfg.model.n_layer_enc,
             n_layer_dec=cfg.model.n_layer_dec,
             n_heads=cfg.model.n_heads,
             attn_pdrop=cfg.model.attn_pd,
             resid_pdrop=cfg.model.resid_pd,
             mlp_hidden_times=cfg.model.mlp_hidden_times,
-            max_len=cfg.seq_len,
+            max_len=cfg.dataset.seq_len,
             n_embd=cfg.model.d_model,
             conv_params=[cfg.model.kernel_size, cfg.model.padding_size],
         )
@@ -555,9 +555,13 @@ class Diffusion_TS(nn.Module):
     def save(self, path: str = None, epoch: int = None):
 
         if path is None:
-            hydra_output_dir = os.path.join(self.cfg.wandb.dir, "checkpoints")
+            hydra_output_dir = os.path.join(self.cfg.run_dir)
+
+            if not os.path.exists(os.path.join(hydra_output_dir, "checkpoints")):
+                os.mkdir(os.path.join(hydra_output_dir, "checkpoints"))
+
             path = os.path.join(
-                hydra_output_dir,
+                os.path.join(hydra_output_dir, "checkpoints"),
                 f"diffusion_ts_checkpoint_{epoch if epoch else self.current_epoch}.pt",
             )
 

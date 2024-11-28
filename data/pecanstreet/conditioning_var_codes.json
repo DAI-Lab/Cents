@@ -1,0 +1,66 @@
+{
+    "month": {
+        "0": "April",
+        "1": "August",
+        "2": "December",
+        "3": "February",
+        "4": "January",
+        "5": "July",
+        "6": "June",
+        "7": "March",
+        "8": "May",
+        "9": "November",
+        "10": "October",
+        "11": "September"
+    },
+    "weekday": {
+        "0": "Friday",
+        "1": "Monday",
+        "2": "Saturday",
+        "3": "Sunday",
+        "4": "Thursday",
+        "5": "Tuesday",
+        "6": "Wednesday"
+    },
+    "building_type": {
+        "0": "Apartment",
+        "1": "Single-Family Home 001 (Master)",
+        "2": "Town Home"
+    },
+    "has_solar": {
+        "0": "no",
+        "1": "yes"
+    },
+    "car1": {
+        "0": "no",
+        "1": "yes"
+    },
+    "city": {
+        "0": "Austin",
+        "1": "Brooktondale",
+        "2": "Groton",
+        "3": "Ithaca",
+        "4": "Lansing",
+        "5": "San Diego",
+        "6": "Trumansburg"
+    },
+    "state": {
+        "0": "California",
+        "1": "New York",
+        "2": "Texas"
+    },
+    "total_square_footage": {
+        "0": "(1070.324, 2010.0]",
+        "1": "(2010.0, 2945.0]",
+        "2": "(2945.0, 3880.0]",
+        "3": "(3880.0, 4815.0]",
+        "4": "(4815.0, 5750.0]"
+    },
+    "house_construction_year": {
+        "0": "(1796.7830000000001, 1840.2]",
+        "1": "(1840.2, 1883.4]",
+        "2": "(1883.4, 1926.6]",
+        "3": "(1926.6, 1969.8]",
+        "4": "(1969.8, 2013.0]"
+    }
+}

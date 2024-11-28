@@ -7,7 +7,7 @@ include_generation: False
 user_group: all #pv_users, all
 seq_len: 96
 
-path: "./data/openpower/"
+path: "./data/openpower/csv"
 data_columns: ["utc_timestamp",
   "DE_KN_residential1_pv",
   "DE_KN_residential1_grid_import",
@@ -22,8 +22,11 @@ data_columns: ["utc_timestamp",
   ]
 user_flags: [True, False, True, True, False, True]
 ev_flags: [False, False, True, True, False, False]
+
+numeric_conditioning_bins: 5
 conditioning_vars:
   month: 12
   weekday: 7
+  year: 5
   ev: 2
   pv: 2

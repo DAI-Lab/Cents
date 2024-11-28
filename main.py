@@ -7,8 +7,8 @@ from omegaconf import DictConfig, OmegaConf
 from datasets.openpower import OpenPowerDataset
 from datasets.pecanstreet import PecanStreetDataset
 from datasets.timeseries_dataset import TimeSeriesDataset
+from endata.data_generator import DataGenerator
 from eval.evaluator import Evaluator
-from generator.data_generator import DataGenerator
 
 
 def evaluate_single_dataset_model(cfg: DictConfig):

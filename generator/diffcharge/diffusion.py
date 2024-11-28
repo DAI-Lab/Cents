@@ -113,7 +113,7 @@ class DDPM(nn.Module):
         # Initialize the conditioning module
         self.conditioning_module = ConditioningModule(
             categorical_dims=cfg.dataset.conditioning_vars,
-            embedding_dim=cfg.cond_emb_dim,
+            embedding_dim=cfg.model.cond_emb_dim,
             device=cfg.device,
         ).to(self.device)
 
@@ -387,10 +387,14 @@ class DDPM(nn.Module):
             epoch (int, optional): The current epoch number. Defaults to None.
         """
         if path is None:
-            hydra_output_dir = os.path.join(self.cfg.wandb.dir, "checkpoints")
+            hydra_output_dir = os.path.join(self.cfg.run_dir)
+
+            if not os.path.exists(os.path.join(hydra_output_dir, "checkpoints")):
+                os.mkdir(os.path.join(hydra_output_dir, "checkpoints"))
+
             path = os.path.join(
-                hydra_output_dir,
-                f"acgan_checkpoint_{epoch if epoch else self.current_epoch}.pt",
+                os.path.join(hydra_output_dir, "checkpoints"),
+                f"diffcharge_checkpoint_{epoch if epoch else self.current_epoch}.pt",
             )
 
         checkpoint = {
@@ -501,7 +505,7 @@ class DDPM(nn.Module):
             torch.Tensor: Generated synthetic time series data.
         """
         num_samples = conditioning_vars[next(iter(conditioning_vars))].shape[0]
-        shape = (num_samples, self.cfg.dataset.seq_len, self.cfg.input_dim)
+        shape = (num_samples, self.cfg.dataset.seq_len, self.cfg.model.input_dim)
 
         if use_ema_sampling:
             print("Generating using EMA model parameters.")

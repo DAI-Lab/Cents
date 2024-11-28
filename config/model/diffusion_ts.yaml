@@ -1,5 +1,13 @@
 _target_: generator.diffusion_ts.gaussian_diffusion.Diffusion_TS
 name: diffusion_ts
+
+input_dim: 1 # or more depending on dataset
+noise_dim: 256
+cond_emb_dim: 64
+shuffle: True
+sparse_conditioning_loss_weight: 0.5 # sparse conditioning training sample weight for loss computation [0, 1]
+freeze_cond_after_warmup: False # specify whether to freeze conditioning module parameters after warmup epoch
+
 batch_size: 64
 n_epochs: 1000
 n_steps: 1000

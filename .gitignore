@@ -106,7 +106,7 @@ ENV/
 .*.swp
 
 # Repository Specific
-data/*
+data/csv/*
 .DS_Store
 .ipynb_checkpoints
 runs/*

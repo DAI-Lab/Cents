@@ -152,17 +152,17 @@ class ACGAN(nn.Module):
     def __init__(self, cfg: DictConfig):
         super(ACGAN, self).__init__()
         self.cfg = cfg
-        self.code_size = cfg.noise_dim
-        self.input_dim = cfg.input_dim
+        self.code_size = cfg.model.noise_dim
+        self.input_dim = cfg.model.input_dim
         self.lr_gen = cfg.model.lr_gen
         self.lr_discr = cfg.model.lr_discr
         self.seq_len = cfg.dataset.seq_len
-        self.noise_dim = cfg.noise_dim
-        self.cond_emb_dim = cfg.cond_emb_dim
+        self.noise_dim = cfg.model.noise_dim
+        self.cond_emb_dim = cfg.model.cond_emb_dim
         self.categorical_dims = cfg.dataset.conditioning_vars
         self.device = cfg.device
         self.warm_up_epochs = cfg.model.warm_up_epochs
-        self.sparse_conditioning_loss_weight = cfg.sparse_conditioning_loss_weight
+        self.sparse_conditioning_loss_weight = cfg.model.sparse_conditioning_loss_weight
 
         # self.writer = SummaryWriter(log_dir=os.path.join("runs", "acgan"))
 
@@ -390,9 +390,13 @@ class ACGAN(nn.Module):
             epoch (int, optional): The current epoch number. Defaults to None.
         """
         if path is None:
-            hydra_output_dir = os.path.join(self.cfg.wandb.dir, "checkpoints")
+            hydra_output_dir = os.path.join(self.cfg.run_dir)
+
+            if not os.path.exists(os.path.join(hydra_output_dir, "checkpoints")):
+                os.mkdir(os.path.join(hydra_output_dir, "checkpoints"))
+
             path = os.path.join(
-                hydra_output_dir,
+                os.path.join(hydra_output_dir, "checkpoints"),
                 f"acgan_checkpoint_{epoch if epoch else self.current_epoch}.pt",
             )
 
