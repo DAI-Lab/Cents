@@ -107,15 +107,14 @@ def encode_conditioning_variables(
 def convert_generated_data_to_df(
     data: torch.Tensor,
     conditioning_vars: Dict[str, Any],
-    mapping: Dict[str, Any] = None,
+    mapping: Dict[str, Any],
 ) -> pd.DataFrame:
     n_timeseries, _, _ = data.shape
     data_np = data.cpu().numpy()
 
     decoded_conditioning_vars = {}
-    if mapping:
-        for var_name, code in conditioning_vars.items():
-            decoded_conditioning_vars[var_name] = mapping[var_name][code.item()]
+    for var_name, code in conditioning_vars.items():
+        decoded_conditioning_vars[var_name] = mapping[var_name][code.item()]
 
     records = []
     for i in range(n_timeseries):

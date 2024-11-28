@@ -47,7 +47,6 @@ class Evaluator:
         self.real_dataset = real_dataset
         self.cfg = cfg
         self.model_name = cfg.model.name
-        self.base_log_dir = os.getcwd()
         self.metrics: Dict[str, List] = {
             "dtw": [],
             "mmd": [],
@@ -278,6 +277,7 @@ class Evaluator:
             num_samples (int): Number of samples to generate for visualization.
             num_runs (int): Number of visualization runs.
         """
+        logger.info(f"--- Starting Visualizations ---")
         for i in range(num_runs):
             sample_row = real_data_df.sample(n=1).iloc[0]
             conditioning_vars_sample = {
@@ -331,6 +331,7 @@ class Evaluator:
         kde_plot = visualization(real_data_array, syn_data_array, "kernel")
         if kde_plot is None:
             wandb.log({f"KDE": wandb.Image(kde_plot)})
+        logger.info(f"--- Visualizations complete! ---")
 
     def get_trained_model(self, dataset: Any) -> Any:
         """
@@ -342,12 +343,6 @@ class Evaluator:
         Returns:
             Any: The trained model.
         """
-        input_dim = (
-            int(dataset.include_generation) + 1
-        )  # 2 if generation is included, otherwise 1
-
-        self.cfg.input_dim = input_dim
-
         model_dict = {
             "acgan": ACGAN,
             "diffcharge": DDPM,

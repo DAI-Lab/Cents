@@ -1,0 +1,40 @@
+{
+    "month": {
+        "0": "April",
+        "1": "August",
+        "2": "December",
+        "3": "February",
+        "4": "January",
+        "5": "July",
+        "6": "June",
+        "7": "March",
+        "8": "May",
+        "9": "November",
+        "10": "October",
+        "11": "September"
+    },
+    "weekday": {
+        "0": "Friday",
+        "1": "Monday",
+        "2": "Saturday",
+        "3": "Sunday",
+        "4": "Thursday",
+        "5": "Tuesday",
+        "6": "Wednesday"
+    },
+    "year": {
+        "0": "2015",
+        "1": "2016",
+        "2": "2017",
+        "3": "2018",
+        "4": "2019"
+    },
+    "ev": {
+        "0": "False",
+        "1": "True"
+    },
+    "pv": {
+        "0": "False",
+        "1": "True"
+    }
+}

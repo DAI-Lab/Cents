@@ -48,6 +48,8 @@ class TimeSeriesDataset(Dataset, ABC):
                 cfg.conditioning_vars = conditioning_vars
                 self.cfg = cfg
 
+        self.numeric_conditioning_bins = self.cfg.numeric_conditioning_bins
+
         if not hasattr(self, "threshold"):
             self.threshold = (-self.cfg.threshold, self.cfg.threshold)
 
@@ -61,9 +63,11 @@ class TimeSeriesDataset(Dataset, ABC):
         self.data = self._preprocess_data(data)
 
         if self.conditioning_vars:
-            self.data, self.conditioning_codes = self.encode_conditioning_vars(
-                self.data
+            self.data, self.conditioning_var_codes = self._encode_conditioning_vars(
+                self.data,
             )
+
+        self._save_conditioning_var_codes()
 
         if self.normalize:
             self._calculate_and_store_statistics(self.data)
@@ -309,15 +313,15 @@ class TimeSeriesDataset(Dataset, ABC):
 
         return data
 
-    def encode_conditioning_vars(
-        self, data: pd.DataFrame, numeric_conditioning_bins=5
+    def _encode_conditioning_vars(
+        self,
+        data: pd.DataFrame,
     ) -> pd.DataFrame:
         """
         Handles integer encoding of static and numeric conditioning variables. Bins numeric conditioning vars before encoding.
 
         Args:
             data (pd.DataFrame): DataFrame containing the decoded data.
-            numeric_conditioning_bins (int): Parameter specifying the number of bins for numeric conditioning variables.
 
         Returns:
             The input dataframe with integer encoded conditioning variables.
@@ -326,7 +330,7 @@ class TimeSeriesDataset(Dataset, ABC):
         encoded_data, conditioning_codes = encode_conditioning_variables(
             data=data,
             columns_to_encode=columns_to_encode,
-            bins=numeric_conditioning_bins,
+            bins=self.numeric_conditioning_bins,
         )
         return encoded_data, conditioning_codes
 
@@ -336,11 +340,14 @@ class TimeSeriesDataset(Dataset, ABC):
         For numerical variables, bins the data into 5 categories.
         """
         conditioning_var_dict = {}
-        numeric_bins = 5
 
         for var_name in self.conditioning_vars:
             if pd.api.types.is_numeric_dtype(data[var_name]):
-                binned = pd.cut(data[var_name], bins=numeric_bins, include_lowest=True)
+                binned = pd.cut(
+                    data[var_name],
+                    bins=self.numeric_conditioning_bins,
+                    include_lowest=True,
+                )
                 num_categories = binned.nunique()
                 conditioning_var_dict[var_name] = num_categories
             else:
@@ -359,7 +366,26 @@ class TimeSeriesDataset(Dataset, ABC):
         """
         Returns the integer mappings for conditioning variables.
         """
-        return self.conditioning_codes
+        return self.conditioning_var_codes
+
+    def _save_conditioning_var_codes(self):
+        """
+        Saves the self.conditioning_var_codes dictionary to a JSON file in ROOT_DIR/data/{dataset_name} directory.
+        If the directory doesn't exist, it creates one.
+        """
+        if not hasattr(self, "name"):
+            raise ValueError(
+                "Dataset name is not set. Please set 'self.name' to the dataset name."
+            )
+
+        dataset_dir = os.path.join(ROOT_DIR, "data", self.name)
+        os.makedirs(dataset_dir, exist_ok=True)
+        conditioning_codes_path = os.path.join(
+            dataset_dir, "conditioning_var_codes.json"
+        )
+
+        with open(conditioning_codes_path, "w") as f:
+            json.dump(self.conditioning_var_codes, f, indent=4)
 
     def sample_random_conditioning_vars(self):
         """

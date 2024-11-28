@@ -5,12 +5,6 @@ defaults:
   - _self_
 
 device: 0 # 0, cpu
-input_dim: 2 # or more depending on dataset
-noise_dim: 256
-cond_emb_dim: 64
-shuffle: True
-sparse_conditioning_loss_weight: 0.5 # sparse conditioning training sample weight for loss computation [0, 1]
-freeze_cond_after_warmup: False # specify whether to freeze conditioning module parameters after warmup epoch
 
 job_name: ${model.name}_${dataset.name}_${dataset.user_group}
 run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}
