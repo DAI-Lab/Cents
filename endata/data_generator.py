@@ -3,12 +3,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import pandas as pd
 import torch
+import torch.nn as nn
 from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
-from datasets.timeseries_dataset import TimeSeriesDataset
 from datasets.utils import convert_generated_data_to_df
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
@@ -25,6 +24,9 @@ class DataGenerator:
     def __init__(
         self,
         model_name: str,
+        cfg: DictConfig = None,
+        model: nn.Module = None,
+        conditioning_var_codes: dict = None,
         overrides: Optional[List[str]] = [],
     ):
         """
@@ -36,10 +38,19 @@ class DataGenerator:
         """
         self.model_name = model_name
         self.overrides = overrides
-        self.cfg = self._load_config()
-        self.model = None
-        self._initialize_model()
+        if cfg:
+            self.cfg = cfg
+            self._set_dataset_config(self.cfg.dataset.name, cfg.dataset)
+        else:
+            self._load_config()
+        if model:
+            self.model = model
+        else:
+            self._initialize_model()
         self.conditioning_var_buffer = {}
+        self.conditioning_var_codes = (
+            conditioning_var_codes if conditioning_var_codes is not None else {}
+        )
 
     def _load_config(self) -> DictConfig:
         """
@@ -72,13 +83,19 @@ class DataGenerator:
         else:
             raise ValueError(f"Model {self.model_name} not recognized.")
 
-    def _set_dataset_config(self, dataset_name: str):
+    def _set_dataset_config(self, dataset_name: str, cfg: DictConfig = None):
         """
         Set the dataset configuration based on the dataset name without loading the actual data.
 
         Args:
             dataset_name (str): The name of the dataset ('pecanstreet', 'openpower', etc.).
+            cfg (DictConfig): Optionally directly takes a config object that is set.
         """
+        if cfg:
+            self.cfg.dataset = cfg
+            self.dataset_name = dataset_name
+            return
+
         config_dir = os.path.join(ROOT_DIR, "config/dataset")
         dataset_config_path = os.path.join(config_dir, f"{dataset_name}.yaml")
         if os.path.exists(dataset_config_path):
@@ -105,6 +122,9 @@ class DataGenerator:
             raise ValueError(
                 "Dataset name not set. Please set 'self.dataset_name' to the dataset name or call self.set_dataset_config()."
             )
+
+        if self.conditioning_var_codes:
+            return self.conditioning_var_codes
 
         conditioning_codes_path = os.path.join(
             ROOT_DIR, "data", self.dataset_name, "conditioning_var_codes.json"
@@ -150,7 +170,6 @@ class DataGenerator:
                     f"Invalid code '{code}' for conditioning variable '{var_name}'. Possible values: {possible_values}"
                 )
 
-        # Set the conditioning variable buffer
         self.conditioning_var_buffer = {
             key: torch.tensor(value, dtype=torch.long, device=self.cfg.device)
             for key, value in conditioning_vars.items()

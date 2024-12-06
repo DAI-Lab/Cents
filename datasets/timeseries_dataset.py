@@ -20,11 +20,11 @@ class TimeSeriesDataset(Dataset, ABC):
         data: pd.DataFrame,
         entity_column_name: str,
         time_series_column_names: Any,
+        seq_len: int,
+        normalization_group_keys: List = [],
         conditioning_var_column_names: Any = None,
-        seq_len: int = None,
         normalize: bool = True,
         scale: bool = True,
-        normalization_group_keys: List = [],
         **kwargs,
     ):
         """
@@ -42,9 +42,13 @@ class TimeSeriesDataset(Dataset, ABC):
             with initialize_config_dir(
                 config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
             ):
-                conditioning_vars = self._get_conditioning_var_dict(data)
-                overrides = [f"+seq_len={seq_len}"]
+                overrides = [
+                    f"seq_len={seq_len}",
+                    f"input_dim={len(time_series_column_names)}",
+                ]
                 cfg = compose(config_name="default", overrides=overrides)
+                self.numeric_conditioning_bins = cfg.numeric_conditioning_bins
+                conditioning_vars = self._get_conditioning_var_dict(data)
                 cfg.conditioning_vars = conditioning_vars
                 self.cfg = cfg
 

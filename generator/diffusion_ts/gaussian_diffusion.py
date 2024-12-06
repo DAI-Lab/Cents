@@ -57,7 +57,7 @@ class Diffusion_TS(nn.Module):
         self.cfg = cfg
         self.eta, self.use_ff = cfg.model.eta, cfg.model.use_ff
         self.seq_len = cfg.dataset.seq_len
-        self.input_dim = cfg.model.input_dim
+        self.input_dim = cfg.dataset.input_dim
         self.ff_weight = default(
             cfg.model.reg_weight, math.sqrt(cfg.dataset.seq_len) / 5
         )
@@ -393,11 +393,9 @@ class Diffusion_TS(nn.Module):
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.cfg.model.batch_size,
-            shuffle=self.cfg.shuffle,
+            shuffle=self.cfg.dataset.shuffle,
             drop_last=True,
         )
-
-        os.makedirs(self.cfg.results_folder, exist_ok=True)
 
         self.optimizer = Adam(
             filter(lambda p: p.requires_grad, self.parameters()),
@@ -434,7 +432,7 @@ class Diffusion_TS(nn.Module):
                 if epoch > self.warm_up_epochs:
                     with torch.no_grad():
 
-                        if self.cfg.freeze_cond_after_warmup:
+                        if self.cfg.model.freeze_cond_after_warmup:
                             for param in self.conditioning_module.parameters():
                                 param.requires_grad = False  # if specified, freeze conditioning module training
 
@@ -558,7 +556,9 @@ class Diffusion_TS(nn.Module):
             hydra_output_dir = os.path.join(self.cfg.run_dir)
 
             if not os.path.exists(os.path.join(hydra_output_dir, "checkpoints")):
-                os.mkdir(os.path.join(hydra_output_dir, "checkpoints"))
+                os.makedirs(
+                    os.path.join(hydra_output_dir, "checkpoints"), exist_ok=True
+                )
 
             path = os.path.join(
                 os.path.join(hydra_output_dir, "checkpoints"),
