@@ -5,6 +5,8 @@ scale: True
 threshold: 6 # int, clips values within +-threshold stds
 include_generation: False
 seq_len: 96
+input_dim: 1
+shuffle: True
 path: "./data/pecanstreet/csv"
 data_columns: ["dataid","local_15min","car1","grid","solar"]
 metadata_columns: ["dataid","building_type","solar","car1","city","state","total_square_footage","house_construction_year"]

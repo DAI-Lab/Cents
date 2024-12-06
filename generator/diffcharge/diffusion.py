@@ -390,7 +390,9 @@ class DDPM(nn.Module):
             hydra_output_dir = os.path.join(self.cfg.run_dir)
 
             if not os.path.exists(os.path.join(hydra_output_dir, "checkpoints")):
-                os.mkdir(os.path.join(hydra_output_dir, "checkpoints"))
+                os.makedirs(
+                    os.path.join(hydra_output_dir, "checkpoints"), exist_ok=True
+                )
 
             path = os.path.join(
                 os.path.join(hydra_output_dir, "checkpoints"),
@@ -505,7 +507,7 @@ class DDPM(nn.Module):
             torch.Tensor: Generated synthetic time series data.
         """
         num_samples = conditioning_vars[next(iter(conditioning_vars))].shape[0]
-        shape = (num_samples, self.cfg.dataset.seq_len, self.cfg.model.input_dim)
+        shape = (num_samples, self.cfg.dataset.seq_len, self.cfg.dataset.input_dim)
 
         if use_ema_sampling:
             print("Generating using EMA model parameters.")

@@ -4,8 +4,10 @@ normalize: True
 scale: True
 threshold: 6 # int, bounds values within +-threshold stds
 include_generation: False
+input_dim: 1
 user_group: all #pv_users, all
 seq_len: 96
+shuffle: True
 
 path: "./data/openpower/csv"
 data_columns: ["utc_timestamp",

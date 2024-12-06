@@ -114,3 +114,5 @@ Checkpoints_syn
 logs/*
 outputs/*
 checkpoints/*
+data/custom
+tutorials/outputs
