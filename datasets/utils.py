@@ -79,14 +79,61 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
     return train_dataset, val_dataset
 
 
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
+
+
 def encode_conditioning_variables(
-    data: pd.DataFrame, columns_to_encode: List, bins: int
+    data: pd.DataFrame, columns_to_encode: List[str], bins: int
 ) -> Tuple[pd.DataFrame, Dict[str, Dict[int, Any]]]:
+    """
+    Encodes specified columns in the DataFrame either by binning numeric columns
+    or by converting categorical/string columns to integer codes. For 'weekday'
+    and 'month' columns, encoding follows chronological order.
+
+    Args:
+        data (pd.DataFrame): The input DataFrame containing the data.
+        columns_to_encode (List[str]): List of column names to encode.
+        bins (int): Number of bins for numeric columns.
+
+    Returns:
+        Tuple[pd.DataFrame, Dict[str, Dict[int, Any]]]:
+            - Encoded DataFrame.
+            - Mapping dictionary for each encoded column.
+    """
     encoded_data = data.copy()
     mapping: Dict[str, Dict[int, Any]] = {}
 
+    # Define the chronological order for weekdays and months
+    weekdays_order = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
+    months_order = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ]
+
     for col in columns_to_encode:
         if pd.api.types.is_numeric_dtype(encoded_data[col]):
+            # Numeric column: Perform binning
             binned = pd.cut(encoded_data[col], bins=bins, include_lowest=True)
             encoded_data[col] = binned.cat.codes  # Assign integer codes starting from 0
             bin_intervals = binned.cat.categories
@@ -96,10 +143,37 @@ def encode_conditioning_variables(
             }
             mapping[col] = bin_mapping
         else:
-            encoded_data[col] = encoded_data[col].astype("category").cat.codes
-            categories = data[col].astype("category").cat.categories
-            category_mapping = {i: category for i, category in enumerate(categories)}
-            mapping[col] = category_mapping
+            # Categorical/String column
+            if col.lower() == "weekday":
+                # Ensure consistent capitalization
+                encoded_data[col] = encoded_data[col].str.capitalize()
+                # Define categorical type with specified order
+                encoded_data[col] = pd.Categorical(
+                    encoded_data[col], categories=weekdays_order, ordered=True
+                )
+                encoded_data[col] = encoded_data[col].cat.codes
+                # Create the mapping from code to weekday
+                weekday_mapping = {code: day for code, day in enumerate(weekdays_order)}
+                mapping[col] = weekday_mapping
+            elif col.lower() == "month":
+                # Ensure consistent capitalization
+                encoded_data[col] = encoded_data[col].str.capitalize()
+                # Define categorical type with specified order
+                encoded_data[col] = pd.Categorical(
+                    encoded_data[col], categories=months_order, ordered=True
+                )
+                encoded_data[col] = encoded_data[col].cat.codes
+                # Create the mapping from code to month
+                month_mapping = {code: month for code, month in enumerate(months_order)}
+                mapping[col] = month_mapping
+            else:
+                # For other categorical/string columns, perform standard encoding
+                encoded_data[col] = encoded_data[col].astype("category").cat.codes
+                categories = data[col].astype("category").cat.categories
+                category_mapping = {
+                    i: category for i, category in enumerate(categories)
+                }
+                mapping[col] = category_mapping
 
     return encoded_data, mapping
 

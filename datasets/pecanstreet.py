@@ -136,6 +136,7 @@ class PecanStreetDataset(TimeSeriesDataset):
         data = pd.merge(filtered_data, self.metadata, on="dataid", how="left")
         data = self._get_user_group_data(data)
         data = self._handle_missing_data(data)
+        grouped_data.sort_values(by=["month", "weekday", "date_day"], inplace=True)
         return data
 
     def _preprocess_solar(self, data: pd.DataFrame) -> pd.DataFrame:

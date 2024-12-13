@@ -33,7 +33,7 @@ Feel free to look at our [tutorial notebooks]() to get started.
 
 ## Requirements
 
-**EnData** has been developed and tested on [Python 3.8](https://www.python.org/downloads/), [Python 3.9]((https://www.python.org/downloads/)) and [Python 3.10]((https://www.python.org/downloads/))
+**EnData** has been developed and tested on [Python 3.9]((https://www.python.org/downloads/)), [Python 3.10]((https://www.python.org/downloads/)) and [Python 3.11]((https://www.python.org/downloads/)).
 
 Also, although it is not strictly required, the usage of a [virtualenv](https://virtualenv.pypa.io/en/latest/)
 is highly recommended in order to avoid interfering with other software installed in the system
@@ -54,7 +54,7 @@ source EnData-venv/bin/activate
 
 Remember to execute it every time you start a new console to work on **EnData**!
 
-## Install from PyPI
+<!-- ## Install from PyPI
 
 After creating the virtualenv and activating it, we recommend using
 [pip](https://pip.pypa.io/en/stable/) in order to install **EnData**:
@@ -66,7 +66,7 @@ pip install EnData
 This will pull and install the latest stable release from [PyPI](https://pypi.org/).
 -->
 
-## Install from source
+<!-- ## Install from source
 
 With your virtualenv activated, you can clone the repository and install it from
 source by running `make install` on the `stable` branch:
@@ -76,15 +76,15 @@ git clone git@github.com:michael-fuest/EnData.git
 cd EnData
 git checkout stable
 make install
-```
+``` -->
 
-## Install for Development
+<!-- ## Install for Development
 
 If you want to contribute to the project, a few more steps are required to make the project ready
 for development.
 
 Please head to the [Contributing Guide](https://michael-fuest.github.io/EnData/contributing.html#get-started)
-for more details about this process.
+for more details about this process. -->
 
 # Quickstart
 
@@ -134,12 +134,8 @@ If you want to train models using the [Open Power Systems dataset](https://data.
 
 - household_data_15min_singleindex.csv
 
-and again place it under the path specified in `data_config.yaml`.
+and again place it under the path specified in `data_config.yaml`. For instructions and dataset usage terms, please refer to the data provider's websites.
 
 # What's next?
-
-For more details about **EnData** and all its possibilities
-and features, please check the [documentation site](
-https://michael-fuest.github.io/EnData/).
 
 New models, new evaluation functionality and new datasets coming soon!

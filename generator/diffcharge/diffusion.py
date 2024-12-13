@@ -24,7 +24,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from omegaconf import DictConfig
-from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
 from datasets.utils import prepare_dataloader
@@ -171,7 +170,6 @@ class DDPM(nn.Module):
 
         # Initialize tracking variables
         self.current_epoch = 0
-        # self.writer = SummaryWriter(log_dir=os.path.join("runs", "ddpm"))
 
         # Sparse conditioning loss weight
         self.sparse_conditioning_loss_weight = cfg.sparse_conditioning_loss_weight
