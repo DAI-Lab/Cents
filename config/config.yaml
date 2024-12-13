@@ -1,6 +1,6 @@
 defaults:
   - model: acgan
-  - dataset: default
+  - dataset: openpower
   - evaluator: default
   - _self_
 

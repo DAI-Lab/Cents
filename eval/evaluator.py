@@ -42,7 +42,6 @@ class Evaluator:
         Args:
             real_dataset: The real dataset used for evaluation.
             model_name (str): The name of the generative model being evaluated.
-            log_dir (str): Base directory for storing TensorBoard logs.
         """
         self.real_dataset = real_dataset
         self.cfg = cfg
@@ -133,7 +132,7 @@ class Evaluator:
             name: torch.tensor(
                 dataset.data[name].values, dtype=torch.long, device=device
             )
-            for name in model.categorical_dims.keys()
+            for name in model.conditioning_var_n_categories.keys()
         }
 
         with torch.no_grad():
@@ -170,7 +169,7 @@ class Evaluator:
             name: torch.tensor(
                 real_data_subset[name].values, dtype=torch.long, device=device
             )
-            for name in model.categorical_dims.keys()
+            for name in model.conditioning_var_n_categories.keys()
         }
 
         generated_ts = model.generate(conditioning_vars).cpu().numpy()
@@ -190,16 +189,13 @@ class Evaluator:
         syn_data_array = np.stack(syn_data_inv["timeseries"])
 
         # Compute metrics
-        self.compute_metrics(real_data_array, syn_data_array, real_data_subset)
+        self.compute_metrics(real_data_array, syn_data_array, real_data_inv)
 
         # Generate plots
         self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
 
     def compute_metrics(
-        self,
-        real_data: np.ndarray,
-        syn_data: np.ndarray,
-        real_data_subset: pd.DataFrame,
+        self, real_data: np.ndarray, syn_data: np.ndarray, real_data_frame: pd.DataFrame
     ):
         """
         Compute evaluation metrics and log them.
@@ -227,7 +223,7 @@ class Evaluator:
 
         # MSE
         logger.info(f"--- Starting Bounded MSE computation ---")
-        mse_mean, mse_std = calculate_period_bound_mse(real_data_subset, syn_data)
+        mse_mean, mse_std = calculate_period_bound_mse(real_data_frame, syn_data)
         wandb.log({"MSE/mean": mse_mean, "MSE/std": mse_std})
         self.metrics["mse"].append((mse_mean, mse_std))
         logger.info(f"--- Bounded MSE computation complete ---")
@@ -264,7 +260,7 @@ class Evaluator:
         dataset: Any,
         model: Any,
         num_samples: int = 100,
-        num_runs: int = 3,
+        num_runs: int = 1,
     ):
         """
         Create various visualizations for the evaluation results.
@@ -279,35 +275,66 @@ class Evaluator:
         """
         logger.info(f"--- Starting Visualizations ---")
         for i in range(num_runs):
-            sample_row = real_data_df.sample(n=1).iloc[0]
+            # Randomly select a sample from real_data_df
+            sample_index = np.random.randint(low=0, high=real_data_df.shape[0])
+            sample_row = real_data_df.iloc[sample_index]
+
+            # Prepare conditioning variables for the model
             conditioning_vars_sample = {
                 var_name: torch.tensor(
                     [sample_row[var_name]] * num_samples,
                     dtype=torch.long,
                     device=device,
                 )
-                for var_name in model.categorical_dims.keys()
+                for var_name in model.conditioning_var_n_categories.keys()
             }
 
+            # Generate synthetic samples
             generated_samples = model.generate(conditioning_vars_sample).cpu().numpy()
             if generated_samples.ndim == 2:
                 generated_samples = generated_samples.reshape(
                     generated_samples.shape[0], -1, generated_samples.shape[1]
                 )
 
+            # Create DataFrame for generated samples
             generated_samples_df = pd.DataFrame(
                 {
                     var_name: [sample_row[var_name]] * num_samples
-                    for var_name in model.categorical_dims.keys()
+                    for var_name in model.conditioning_var_n_categories.keys()
                 }
             )
             generated_samples_df["timeseries"] = list(generated_samples)
             generated_samples_df["dataid"] = sample_row[
                 "dataid"
             ]  # required for inverse transform
+
+            # **Check and fill missing normalization group keys**
+            normalization_keys = dataset.normalization_group_keys
+            missing_keys = [
+                key
+                for key in normalization_keys
+                if key not in generated_samples_df.columns
+            ]
+
+            if missing_keys:
+                logger.warning(
+                    f"Missing normalization group keys: {missing_keys}. Filling with sample_row values."
+                )
+                for key in missing_keys:
+                    if key in sample_row:
+                        generated_samples_df[key] = sample_row[key]
+                        logger.info(
+                            f"Filled missing key '{key}' with value '{sample_row[key]}'."
+                        )
+                    else:
+                        raise ValueError(
+                            f"Sample row does not contain required key: '{key}'."
+                        )
+
+            # Perform inverse transformation now that all keys are present
             generated_samples_df = dataset.inverse_transform(generated_samples_df)
 
-            # Extract month and weekday for plotting
+            # Extract month and weekday for plotting, if present
             month = sample_row.get("month", None)
             weekday = sample_row.get("weekday", None)
 
@@ -329,7 +356,7 @@ class Evaluator:
         real_data_array = np.stack(real_data_df["timeseries"])
         syn_data_array = np.stack(syn_data_df["timeseries"])
         kde_plot = visualization(real_data_array, syn_data_array, "kernel")
-        if kde_plot is None:
+        if kde_plot is not None:
             wandb.log({f"KDE": wandb.Image(kde_plot)})
         logger.info(f"--- Visualizations complete! ---")
 

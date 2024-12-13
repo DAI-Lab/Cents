@@ -176,8 +176,6 @@ class ACGAN(nn.Module):
         self.warm_up_epochs = cfg.model.warm_up_epochs
         self.sparse_conditioning_loss_weight = cfg.model.sparse_conditioning_loss_weight
 
-        # self.writer = SummaryWriter(log_dir=os.path.join("runs", "acgan"))
-
         assert (
             self.seq_len % 8 == 0
         ), "window_length must be a multiple of 8 in this architecture!"
@@ -345,36 +343,9 @@ class ACGAN(nn.Module):
 
                 g_loss.backward()
                 self.optimizer_G.step()
-                # -------------------
-                # TensorBoard Loss Logging
-                # -------------------
-                # global_step = epoch * len(train_loader) + batch_index
-
-                # Log overall losses for both generator and discriminator
-                # self.writer.add_scalars('Losses', {'Discriminator': d_loss.item(), 'Generator': g_loss.item()}, global_step)
-
-            # End of epoch logging
-            if epoch > self.warm_up_epochs:
-
-                # self.generator.conditioning_module.log_embedding_statistics(
-                #     epoch,
-                #     self.writer,
-                #     previous_mean_embedding,
-                #     previous_embedding_covariance,
-                #     batch_embeddings,
-                # )
-                previous_mean_embedding = (
-                    self.generator.conditioning_module.mean_embedding.clone()
-                )
-                previous_embedding_covariance = (
-                    self.generator.conditioning_module.cov_embedding.clone()
-                )
 
             if (epoch + 1) % self.cfg.model.save_cycle == 0:
-
                 self.save(epoch=self.current_epoch)
-
-        # self.writer.close()
 
     def sample_conditioning_vars(self, dataset, batch_size, random=False):
         conditioning_vars = {}

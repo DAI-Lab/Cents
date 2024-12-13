@@ -74,7 +74,8 @@ class TimeSeriesDataset(Dataset, ABC):
         self._save_conditioning_var_codes()
 
         if self.normalize:
-            self._calculate_and_store_statistics(self.data)
+            # self._calculate_and_store_statistics(self.data)
+            self._load_or_compute_normalization_stats()
             self.data = self._normalize_and_scale(self.data)
 
         self.data = self.merge_timeseries_columns(self.data)
@@ -207,6 +208,69 @@ class TimeSeriesDataset(Dataset, ABC):
             else:
                 stats = calculate_stats(data, column)
                 self.normalization_stats[column] = stats.to_dict()
+
+    def _load_or_compute_normalization_stats(self):
+        """
+        Loads normalization statistics from a JSON file if it exists.
+        Otherwise, computes the statistics and saves them to a JSON file.
+        """
+        stats_path = os.path.join(
+            ROOT_DIR, "data", self.name, "normalization_stats.json"
+        )
+
+        if os.path.exists(stats_path):
+            # Load existing normalization stats
+            with open(stats_path, "r") as f:
+                loaded_stats = json.load(f)
+            # Convert string keys back to lists
+            self.normalization_stats = self._convert_keys_from_json(loaded_stats)
+            print(f"Loaded normalization stats from {stats_path}")
+        else:
+            # Compute normalization stats
+            self._calculate_and_store_statistics(self.data)
+            # Prepare stats for JSON serialization by converting list keys to strings
+            serializable_stats = self._convert_keys_to_json(self.normalization_stats)
+            # Save to JSON
+            os.makedirs(os.path.dirname(stats_path), exist_ok=True)
+            with open(stats_path, "w") as f:
+                json.dump(serializable_stats, f, indent=4)
+            print(f"Saved normalization stats to {stats_path}")
+
+    def _convert_keys_to_json(self, stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Converts list keys in the normalization_stats dictionary to JSON-compatible string representations.
+        """
+        if self.normalization_group_keys:
+            converted_stats = {}
+            for column, group_stats in stats.items():
+                converted_stats[column] = {
+                    json.dumps(k): v for k, v in group_stats.items()
+                }
+            return converted_stats
+        else:
+            return stats
+
+    def _convert_keys_from_json(self, stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Converts string keys back to list keys in the normalization_stats dictionary.
+        """
+        if self.normalization_group_keys:
+            converted_stats = {}
+            for column, group_stats in stats.items():
+                converted_stats[column] = {}
+                for k, v in group_stats.items():
+                    try:
+                        # Convert JSON string back to list
+                        group_key = json.loads(k)
+                    except json.JSONDecodeError:
+                        # Fallback to original key if JSON decoding fails
+                        group_key = k
+                    converted_stats[column][
+                        tuple(group_key)
+                    ] = v  # Use tuple for immutable keys
+            return converted_stats
+        else:
+            return stats
 
     def _normalize_and_scale(self, data: pd.DataFrame) -> pd.DataFrame:
         """

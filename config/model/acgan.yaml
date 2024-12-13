@@ -9,6 +9,6 @@ batch_size: 32
 n_epochs: 200
 lr_gen: 3e-4
 lr_discr: 1e-4
-warm_up_epochs: 2
+warm_up_epochs: 1
 include_auxiliary_losses: True
 save_cycle: 200
