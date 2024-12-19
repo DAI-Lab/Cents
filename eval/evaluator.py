@@ -9,6 +9,7 @@ import torch
 import wandb
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
+from sklearn.metrics import f1_score, precision_score, recall_score
 
 from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
@@ -16,8 +17,7 @@ from eval.metrics import (
     calculate_mmd,
     calculate_period_bound_mse,
     dynamic_time_warping_dist,
-    plot_range_with_syn_values,
-    plot_syn_with_closest_real_ts,
+    plot_syn_and_real_comparison,
     visualization,
 )
 from eval.predictive_metric import predictive_score_metrics
@@ -189,10 +189,13 @@ class Evaluator:
         syn_data_array = np.stack(syn_data_inv["timeseries"])
 
         # Compute metrics
-        self.compute_metrics(real_data_array, syn_data_array, real_data_inv)
+        # self.compute_metrics(real_data_array, syn_data_array, real_data_inv)
 
         # Generate plots
-        self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
+        # self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
+
+        # Evaluate conditioning module rarity predictions
+        self.evaluate_conditioning_module(model)
 
     def compute_metrics(
         self, real_data: np.ndarray, syn_data: np.ndarray, real_data_frame: pd.DataFrame
@@ -260,7 +263,7 @@ class Evaluator:
         dataset: Any,
         model: Any,
         num_samples: int = 100,
-        num_runs: int = 1,
+        num_runs: int = 10,
     ):
         """
         Create various visualizations for the evaluation results.
@@ -304,11 +307,9 @@ class Evaluator:
                 }
             )
             generated_samples_df["timeseries"] = list(generated_samples)
-            generated_samples_df["dataid"] = sample_row[
-                "dataid"
-            ]  # required for inverse transform
+            generated_samples_df["dataid"] = sample_row["dataid"]
 
-            # **Check and fill missing normalization group keys**
+            # Check and fill missing normalization group keys
             normalization_keys = dataset.normalization_group_keys
             missing_keys = [
                 key
@@ -334,30 +335,27 @@ class Evaluator:
             # Perform inverse transformation now that all keys are present
             generated_samples_df = dataset.inverse_transform(generated_samples_df)
 
-            # Extract month and weekday for plotting, if present
-            month = sample_row.get("month", None)
-            weekday = sample_row.get("weekday", None)
+            # Extract conditioning vars for visualization
+            cond_vars_for_vis = {
+                name: tensor[0].item()
+                for name, tensor in conditioning_vars_sample.items()
+            }
 
-            # Visualization 1: Plot range with synthetic values
-            range_plot = plot_range_with_syn_values(
-                real_data_df, generated_samples_df, month, weekday
+            # Visualization: Combined range and closest real time series plot
+            comparison_plot = plot_syn_and_real_comparison(
+                real_data_df, generated_samples_df, cond_vars_for_vis
             )
-            if range_plot is not None:
-                wandb.log({f"Range_Plot_{i}": wandb.Image(range_plot)})
-
-            # Visualization 2: Plot closest real signals with synthetic values
-            closest_plot = plot_syn_with_closest_real_ts(
-                real_data_df, generated_samples_df, month, weekday
-            )
-            if closest_plot is not None:
-                wandb.log({f"Closest_Real_TS_{i}": wandb.Image(closest_plot)})
+            if comparison_plot is not None:
+                wandb.log({f"Comparison_Plot_{i}": wandb.Image(comparison_plot)})
 
         # Visualization 3: KDE plots for real and synthetic data
         real_data_array = np.stack(real_data_df["timeseries"])
         syn_data_array = np.stack(syn_data_df["timeseries"])
-        kde_plot = visualization(real_data_array, syn_data_array, "kernel")
-        if kde_plot is not None:
-            wandb.log({f"KDE": wandb.Image(kde_plot)})
+        kde_plots = visualization(real_data_array, syn_data_array, "kernel")
+        if kde_plots is not None:
+            for i, plot in enumerate(kde_plots):
+                wandb.log({f"KDE_Dim_{i}": wandb.Image(plot)})
+
         logger.info(f"--- Visualizations complete! ---")
 
     def get_trained_model(self, dataset: Any) -> Any:
@@ -405,3 +403,49 @@ class Evaluator:
                 metrics_summary[metric_name] = None
 
         return metrics_summary
+
+    def evaluate_conditioning_module(self, model: Any) -> Dict[str, float]:
+        """
+        Evaluate the computed rarities of conditional embeddings against frequency based ground truth rarity.
+        """
+        comb_rarity_df = self.real_dataset.get_conditioning_var_combination_rarities(
+            coverage_threshold=0.8
+        )
+        conditioning_vars_list = list(self.cfg.dataset.conditioning_vars.keys())
+
+        true_labels = []
+        pred_labels = []
+
+        for _, row in comb_rarity_df.iterrows():
+
+            conditioning_vars = {
+                var_name: torch.tensor(
+                    [row[var_name]], dtype=torch.long, device=self.cfg.device
+                )
+                for var_name in conditioning_vars_list
+            }
+
+            with torch.no_grad():
+                z, mu, logvar = model.conditioning_module(
+                    conditioning_vars, sample=False
+                )
+
+                # Determine predicted rarity (True/False)
+                pred_rare_mask = model.conditioning_module.is_rare(mu)
+                pred_rare = pred_rare_mask.item()
+
+            true_rare = bool(row["rare"])
+            true_labels.append(true_rare)
+            pred_labels.append(pred_rare)
+
+        # 4. Compute classification metrics
+        precision = precision_score(true_labels, pred_labels, zero_division=0)
+        recall = recall_score(true_labels, pred_labels, zero_division=0)
+        f1 = f1_score(true_labels, pred_labels, zero_division=0)
+
+        metrics = {"precision": precision, "recall": recall, "f1_score": f1}
+
+        wandb.log(
+            {"Rarity_Precision": precision, "Rarity_Recall": recall, "Rarity_F1": f1}
+        )
+        return metrics

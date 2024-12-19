@@ -469,3 +469,19 @@ class TimeSeriesDataset(Dataset, ABC):
                 device=self.device,
             )
         return conditioning_vars
+
+    def get_conditioning_var_combination_rarities(self, coverage_threshold=0.9):
+        """
+        Groups the dataset by all conditioning variables, counting the number of daily load profiles per combination.
+        Computes rarity based on cumulative coverage in the data.
+
+            args: coverage_threshold (float): The threshold used to determine binary rarity.
+            returns: dataframe with combinations and rarity codes.
+        """
+        grouped = (
+            self.data.groupby(self.conditioning_vars).size().reset_index(name="count")
+        )
+        grouped = grouped.sort_values(by="count", ascending=False)
+        grouped["coverage"] = grouped["count"].cumsum() / self.data.shape[0]
+        grouped["rare"] = grouped["coverage"] > coverage_threshold
+        return grouped

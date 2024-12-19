@@ -83,17 +83,18 @@ class Generator(nn.Module):
         ).to(self.device)
 
     def forward(self, noise, conditioning_vars):
+        mu, logvar = None, None
         if conditioning_vars:
-            conditioning_vector = self.conditioning_module(conditioning_vars)
-            x = torch.cat((noise, conditioning_vector), dim=1)
+            z, mu, logvar = self.conditioning_module(conditioning_vars, sample=True)
+            x = torch.cat((noise, z), dim=1)
         else:
             x = noise
         x = self.fc(x)
         x = x.view(-1, self.base_channels, self.final_window_length)
         x = self.conv_transpose_layers(x)
-        x = x.permute(0, 2, 1)  # Permute to (batch_size, seq_length, n_dim)
+        x = x.permute(0, 2, 1)  # (batch_size, seq_length, n_dim)
 
-        return x
+        return x, mu, logvar
 
 
 class Discriminator(nn.Module):
@@ -175,6 +176,7 @@ class ACGAN(nn.Module):
         self.device = cfg.device
         self.warm_up_epochs = cfg.model.warm_up_epochs
         self.sparse_conditioning_loss_weight = cfg.model.sparse_conditioning_loss_weight
+        self.kl_weight = cfg.model.kl_weight
 
         assert (
             self.seq_len % 8 == 0
@@ -193,6 +195,7 @@ class ACGAN(nn.Module):
             self.device,
             self.conditioning_var_n_categories,
         ).to(self.device)
+
         self.discriminator = Discriminator(
             self.seq_len,
             self.input_dim,
@@ -216,12 +219,13 @@ class ACGAN(nn.Module):
         num_epoch = self.cfg.model.n_epochs
         train_loader = prepare_dataloader(dataset, batch_size)
 
-        previous_mean_embedding = None
-        previous_embedding_covariance = None
-
         for epoch in range(num_epoch):
             self.current_epoch = epoch + 1
-            for batch_index, (time_series_batch, conditioning_vars_batch) in enumerate(
+            if self.current_epoch >= self.warm_up_epochs:
+                for param in self.generator.conditioning_module.parameters():
+                    param.requires_grad = False  # Freeze conditioning module
+
+            for _, (time_series_batch, conditioning_vars_batch) in enumerate(
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
                 time_series_batch = time_series_batch.to(self.device)
@@ -234,36 +238,14 @@ class ACGAN(nn.Module):
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
                 )
-                generated_time_series = self.generator(
+                # Generator forward now returns (generated_time_series, mu, logvar) of batch cond embeddings
+                generated_time_series, mu, logvar = self.generator(
                     noise, conditioning_vars_batch
-                ).to(self.device)
-
-                soft_zero, soft_one = 0, 0.95
-
-                rare_mask = torch.zeros((current_batch_size,)).to(self.device)
-
-                if epoch > self.warm_up_epochs:
-
-                    batch_embeddings = self.generator.conditioning_module(
-                        conditioning_vars_batch
-                    )
-                    self.generator.conditioning_module.update_running_statistics(
-                        batch_embeddings
-                    )
-
-                    if self.cfg.model.freeze_cond_after_warmup:
-                        for param in self.generator.conditioning_module.parameters():
-                            param.requires_grad = False  # if specified, freeze conditioning module training
-
-                    rare_mask = (
-                        self.generator.conditioning_module.is_rare(batch_embeddings)
-                        .to(self.device)
-                        .float()
-                    )
-
+                )
                 # ---------------------
                 #  Train Discriminator
                 # ---------------------
+                soft_zero, soft_one = 0, 0.95
                 self.optimizer_D.zero_grad()
 
                 real_pred, aux_outputs_real = self.discriminator(time_series_batch)
@@ -275,6 +257,7 @@ class ACGAN(nn.Module):
                 d_fake_loss = self.adversarial_loss(
                     fake_pred, torch.ones_like(fake_pred) * soft_zero
                 )
+
                 if self.cfg.model.include_auxiliary_losses:
                     for var_name in self.conditioning_var_n_categories.keys():
                         labels = conditioning_vars_batch[var_name].to(self.device)
@@ -292,6 +275,7 @@ class ACGAN(nn.Module):
                 # -----------------
                 #  Train Generator
                 # -----------------
+
                 self.optimizer_G.zero_grad()
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
@@ -299,26 +283,42 @@ class ACGAN(nn.Module):
                 gen_categorical_vars = self.sample_conditioning_vars(
                     dataset, current_batch_size, random=True
                 )
-                generated_time_series = self.generator(noise, gen_categorical_vars)
+                generated_time_series, mu_g, logvar_g = self.generator(
+                    noise, gen_categorical_vars
+                )
                 validity, aux_outputs = self.discriminator(generated_time_series)
 
+                # Compute rarity mask for generated conditioning vars
+                if self.current_epoch >= self.warm_up_epochs:
+
+                    gen_batch_embeddings = mu_g.detach()
+                    rare_mask_gen = (
+                        self.generator.conditioning_module.is_rare(gen_batch_embeddings)
+                        .float()
+                        .to(self.device)
+                    )
+                else:
+                    rare_mask_gen = torch.zeros((current_batch_size,)).to(self.device)
+                    self.generator.conditioning_module.update_running_statistics(mu_g)
+
+                # Adversarial Loss for Generator
                 g_loss_rare = self.adversarial_loss(
-                    validity.squeeze() * rare_mask,
-                    torch.ones_like(validity.squeeze()) * rare_mask * soft_one,
+                    validity.squeeze() * rare_mask_gen,
+                    torch.ones_like(validity.squeeze()) * rare_mask_gen * soft_one,
                 )
 
                 g_loss_non_rare = self.adversarial_loss(
-                    validity.squeeze() * (torch.logical_not(rare_mask)),
+                    validity.squeeze() * (1 - rare_mask_gen),
                     torch.ones_like(validity.squeeze())
-                    * torch.logical_not(rare_mask)
+                    * (1 - rare_mask_gen)
                     * soft_one,
                 )
 
                 if self.cfg.model.include_auxiliary_losses:
                     for var_name in self.conditioning_var_n_categories.keys():
                         labels = gen_categorical_vars[var_name]
-                        rare_indices = rare_mask.bool()
-                        non_rare_indices = ~rare_mask.bool()
+                        rare_indices = rare_mask_gen.bool()
+                        non_rare_indices = ~rare_mask_gen.bool()
 
                         if rare_indices.any():
                             g_loss_rare += self.auxiliary_loss(
@@ -333,13 +333,24 @@ class ACGAN(nn.Module):
                             )
 
                 _lambda = self.sparse_conditioning_loss_weight
-                N_r = rare_mask.sum().item()
-                N_nr = (torch.logical_not(rare_mask)).sum().item()
+                N_r = rare_mask_gen.sum().item()
+                N_nr = (1 - rare_mask_gen).sum().item()
                 N = current_batch_size
-                g_loss = (
+                g_loss_main = (
                     _lambda * (N_r / N) * g_loss_rare
                     + (1 - _lambda) * (N_nr / N) * g_loss_non_rare
                 )
+
+                # Only apply KL if we have conditioning variables (mu_g and logvar_g not None)
+                if (
+                    mu_g is not None
+                    and logvar_g is not None
+                    and self.current_epoch < self.warm_up_epochs
+                ):
+                    kl_loss = self.conditioning_module.kl_divergence(mu_g, logvar_g)
+                    g_loss = g_loss_main + self.kl_weight * kl_loss
+                else:
+                    g_loss = g_loss_main
 
                 g_loss.backward()
                 self.optimizer_G.step()
@@ -371,7 +382,7 @@ class ACGAN(nn.Module):
         num_samples = next(iter(conditioning_vars.values())).shape[0]
         noise = torch.randn((num_samples, self.code_size)).to(self.device)
         with torch.no_grad():
-            generated_data = self.generator(noise, conditioning_vars)
+            generated_data, mu, logvar = self.generator(noise, conditioning_vars)
         return generated_data
 
     def save(self, path: str = None, epoch: int = None):
@@ -401,6 +412,7 @@ class ACGAN(nn.Module):
             "discriminator_state_dict": self.discriminator.state_dict(),
             "optimizer_G_state_dict": self.optimizer_G.state_dict(),
             "optimizer_D_state_dict": self.optimizer_D.state_dict(),
+            "conditioning_module_state_dict": self.conditioning_module.state_dict(),
         }
         torch.save(checkpoint, path)
         print(f"Saved ACGAN checkpoint to {path}")
@@ -437,6 +449,14 @@ class ACGAN(nn.Module):
             print("Loaded discriminator optimizer state.")
         else:
             print("No discriminator optimizer state found in checkpoint.")
+
+        if "conditioning_module_state_dict" in checkpoint:
+            self.conditioning_module.load_state_dict(
+                checkpoint["conditioning_module_state_dict"]
+            )
+            print("Loaded conditioning module state.")
+        else:
+            print("No conditioning module state found in checkpoint.")
 
         if "epoch" in checkpoint:
             self.current_epoch = checkpoint["epoch"]
