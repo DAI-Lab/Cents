@@ -19,6 +19,7 @@ from datetime import datetime
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import wandb
 from omegaconf import DictConfig
 from tqdm import tqdm
 
@@ -213,6 +214,13 @@ class ACGAN(nn.Module):
             self.discriminator.parameters(), lr=self.lr_discr, betas=(0.5, 0.999)
         )
 
+        wandb.init(
+            project=cfg.wandb.project,
+            entity=cfg.wandb.entity,
+            config=cfg,
+            dir=cfg.run_dir,
+        )
+
     def train_model(self, dataset):
         self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         batch_size = self.cfg.model.batch_size
@@ -257,6 +265,8 @@ class ACGAN(nn.Module):
                 d_fake_loss = self.adversarial_loss(
                     fake_pred, torch.ones_like(fake_pred) * soft_zero
                 )
+
+                wandb.log({"Loss/discr_adv": d_real_loss.item() + d_fake_loss.item()})
 
                 if self.cfg.model.include_auxiliary_losses:
                     for var_name in self.conditioning_var_n_categories.keys():
@@ -314,6 +324,8 @@ class ACGAN(nn.Module):
                     * soft_one,
                 )
 
+                wandb.log({"Loss/gen_adv": g_loss_rare.item() + g_loss_non_rare.item()})
+
                 if self.cfg.model.include_auxiliary_losses:
                     for var_name in self.conditioning_var_n_categories.keys():
                         labels = gen_categorical_vars[var_name]
@@ -349,6 +361,7 @@ class ACGAN(nn.Module):
                 ):
                     kl_loss = self.conditioning_module.kl_divergence(mu_g, logvar_g)
                     g_loss = g_loss_main + self.kl_weight * kl_loss
+                    wandb.log({"Loss/KL": kl_loss.item()})
                 else:
                     g_loss = g_loss_main
 
