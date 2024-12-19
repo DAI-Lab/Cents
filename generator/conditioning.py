@@ -127,10 +127,6 @@ class ConditioningModule(nn.Module):
         )
         self.inverse_cov_embedding = torch.inverse(cov_embedding_reg)
 
-        # Update effective sample count (optional, based on EWMA)
-        # In pure EWMA, sample counts are not tracked, but can be approximated if needed
-        # self.n_samples = self.alpha * self.n_samples + (1 - self.alpha) * batch_size
-
     def compute_mahalanobis_distance(self, embeddings):
         """
         Compute Mahalanobis distance for the given embeddings.
@@ -157,49 +153,3 @@ class ConditioningModule(nn.Module):
             threshold = torch.quantile(mahalanobis_distance, percentile)
         rare_mask = mahalanobis_distance > threshold
         return rare_mask
-
-    def log_embedding_statistics(
-        self,
-        epoch,
-        writer,
-        previous_mean_embedding,
-        previous_cov_embedding,
-        batch_embeddings,
-    ):
-        """
-        Log embedding statistics to TensorBoard.
-        """
-        # Log current mean norm and covariance norm
-
-        if previous_mean_embedding is not None:
-            mean_embedding_norm = torch.norm(self.mean_embedding).item()
-            cov_embedding_norm = torch.norm(self.cov_embedding).item()
-        else:
-            mean_embedding_norm = 0
-            cov_embedding_norm = 0
-
-        writer.add_scalar("Embedding/Mean_Norm", mean_embedding_norm, epoch)
-        writer.add_scalar("Embedding/Covariance_Norm", cov_embedding_norm, epoch)
-
-        # Log changes in mean and covariance norms
-        if previous_mean_embedding is not None:
-            mean_diff = torch.norm(self.mean_embedding - previous_mean_embedding).item()
-            writer.add_scalar("Embedding/Mean_Difference", mean_diff, epoch)
-        if previous_cov_embedding is not None:
-            cov_diff = torch.norm(self.cov_embedding - previous_cov_embedding).item()
-            writer.add_scalar("Embedding/Covariance_Difference", cov_diff, epoch)
-
-        # Compute Mahalanobis distances for logging
-        sample_embeddings = batch_embeddings
-        if sample_embeddings.size(0) > 0:
-            mahalanobis_distances = self.compute_mahalanobis_distance(
-                sample_embeddings.to(self.device)
-            )
-            writer.add_histogram(
-                "Embedding/Mahalanobis_Distances", mahalanobis_distances.cpu(), epoch
-            )
-
-            # Log rarity threshold
-            percentile = 0.8  # Same as used in is_rare()
-            threshold = torch.quantile(mahalanobis_distances, percentile).item()
-            writer.add_scalar("Embedding/Rarity_Threshold", threshold, epoch)

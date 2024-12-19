@@ -189,10 +189,10 @@ class Evaluator:
         syn_data_array = np.stack(syn_data_inv["timeseries"])
 
         # Compute metrics
-        # self.compute_metrics(real_data_array, syn_data_array, real_data_inv)
+        self.compute_metrics(real_data_array, syn_data_array, real_data_inv)
 
         # Generate plots
-        # self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
+        self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
 
         # Evaluate conditioning module rarity predictions
         self.evaluate_conditioning_module(model)
@@ -278,11 +278,9 @@ class Evaluator:
         """
         logger.info(f"--- Starting Visualizations ---")
         for i in range(num_runs):
-            # Randomly select a sample from real_data_df
             sample_index = np.random.randint(low=0, high=real_data_df.shape[0])
             sample_row = real_data_df.iloc[sample_index]
 
-            # Prepare conditioning variables for the model
             conditioning_vars_sample = {
                 var_name: torch.tensor(
                     [sample_row[var_name]] * num_samples,
@@ -404,48 +402,53 @@ class Evaluator:
 
         return metrics_summary
 
-    def evaluate_conditioning_module(self, model: Any) -> Dict[str, float]:
+    def evaluate_conditioning_module(
+        self, model: Any, batch_size: int = 128
+    ) -> Dict[str, float]:
         """
-        Evaluate the computed rarities of conditional embeddings against frequency based ground truth rarity.
+        Evaluate the computed rarities of conditional embeddings against frequency-based ground truth rarity.
+
+        Args:
+            model (Any): The trained model containing the conditioning module.
+            batch_size (int): The number of samples to process in each batch.
+
+        Returns:
+            Dict[str, float]: Precision, recall, and F1 score of the rarity prediction.
         """
         comb_rarity_df = self.real_dataset.get_conditioning_var_combination_rarities(
             coverage_threshold=0.8
         )
         conditioning_vars_list = list(self.cfg.dataset.conditioning_vars.keys())
 
-        true_labels = []
+        true_labels = comb_rarity_df["rare"].astype(bool).tolist()
+        num_samples = len(comb_rarity_df)
         pred_labels = []
 
-        for _, row in comb_rarity_df.iterrows():
+        for start_idx in range(0, num_samples, batch_size):
+            end_idx = min(start_idx + batch_size, num_samples)
+            batch_df = comb_rarity_df.iloc[start_idx:end_idx]
 
-            conditioning_vars = {
+            conditioning_vars_batch = {
                 var_name: torch.tensor(
-                    [row[var_name]], dtype=torch.long, device=self.cfg.device
+                    batch_df[var_name].values, dtype=torch.long, device=self.cfg.device
                 )
                 for var_name in conditioning_vars_list
             }
 
             with torch.no_grad():
-                z, mu, logvar = model.conditioning_module(
-                    conditioning_vars, sample=False
+                _, mu_batch, _ = model.conditioning_module(
+                    conditioning_vars_batch, sample=False
                 )
+                pred_rare_mask = model.conditioning_module.is_rare(mu_batch)
+                pred_labels.extend(pred_rare_mask.cpu().tolist())
 
-                # Determine predicted rarity (True/False)
-                pred_rare_mask = model.conditioning_module.is_rare(mu)
-                pred_rare = pred_rare_mask.item()
-
-            true_rare = bool(row["rare"])
-            true_labels.append(true_rare)
-            pred_labels.append(pred_rare)
-
-        # 4. Compute classification metrics
         precision = precision_score(true_labels, pred_labels, zero_division=0)
         recall = recall_score(true_labels, pred_labels, zero_division=0)
         f1 = f1_score(true_labels, pred_labels, zero_division=0)
 
         metrics = {"precision": precision, "recall": recall, "f1_score": f1}
-
         wandb.log(
             {"Rarity_Precision": precision, "Rarity_Recall": recall, "Rarity_F1": f1}
         )
+
         return metrics
