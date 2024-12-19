@@ -2,13 +2,13 @@ _target_: generator.gan.acgan.ACGAN
 name: acgan
 noise_dim: 256
 cond_emb_dim: 64
-sparse_conditioning_loss_weight: 0.5 # sparse conditioning training sample weight for loss computation [0, 1]
-freeze_cond_after_warmup: False # specify whether to freeze conditioning module parameters after warmup epoch
+sparse_conditioning_loss_weight: 0.8
+kl_weight: 0.01
 
-batch_size: 32
-n_epochs: 200
+batch_size: 1024
+n_epochs: 100
 lr_gen: 3e-4
 lr_discr: 1e-4
-warm_up_epochs: 1
+warm_up_epochs: 50
 include_auxiliary_losses: True
-save_cycle: 200
+save_cycle: 100

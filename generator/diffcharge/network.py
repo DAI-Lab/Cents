@@ -35,7 +35,7 @@ class Attention(nn.Module):
         self.cfg = cfg
 
         self.input_projector = nn.LSTM(
-            cfg.input_dim + cfg.cond_emb_dim,
+            cfg.dataset.input_dim + cfg.cond_emb_dim,
             cfg.model.hidden_dim,
             num_layers=4,
             batch_first=True,
@@ -49,7 +49,7 @@ class Attention(nn.Module):
         )
         self.trans_encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=5)
         self.output_projector = self.conv1d_with_init(
-            cfg.model.hidden_dim, cfg.input_dim, 1
+            cfg.model.hidden_dim, cfg.dataset.input_dim, 1
         )
 
     def conv1d_with_init(self, in_channels, out_channels, kernel_size):
@@ -71,7 +71,7 @@ class Attention(nn.Module):
         hid_enc, _ = self.input_projector(x)  # (B, L, hidden_dim)
 
         time_emb = time_embedding(
-            t, self.cfg.model.hidden_dim, self.cfg.seq_len, self.cfg.device
+            t, self.cfg.model.hidden_dim, self.cfg.dataset.seq_len, self.cfg.device
         )
         hid_enc = hid_enc + time_emb  # (B, L, hidden_dim)
 
@@ -121,7 +121,7 @@ class CNN(nn.Module):
         super(CNN, self).__init__()
         self.cfg = cfg
         self.input_projector = nn.LSTM(
-            cfg.input_dim + cfg.cond_emb_dim,
+            cfg.dataset.input_dim + cfg.model.cond_emb_dim,
             cfg.model.hidden_dim,
             num_layers=4,
             batch_first=True,
@@ -129,7 +129,7 @@ class CNN(nn.Module):
         self.output_projector = nn.Sequential(
             nn.Conv1d(cfg.model.hidden_dim, cfg.model.hidden_dim, kernel_size=1),
             nn.BatchNorm1d(cfg.model.hidden_dim),
-            nn.Conv1d(cfg.model.hidden_dim, cfg.input_dim, kernel_size=1),
+            nn.Conv1d(cfg.model.hidden_dim, cfg.dataset.input_dim, kernel_size=1),
         )
 
     def forward(self, x, t):
@@ -148,7 +148,7 @@ class CNN(nn.Module):
 
         # Add time embeddings
         time_emb = time_embedding(
-            t, self.cfg.model.hidden_dim, self.cfg.seq_len, self.cfg.device
+            t, self.cfg.model.hidden_dim, self.cfg.dataset.seq_len, self.cfg.device
         )
         hid_enc = hid_enc + time_emb  # (B, L, hidden_dim)
 

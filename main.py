@@ -12,6 +12,7 @@ def evaluate_single_dataset_model(cfg: DictConfig):
     elif cfg.dataset.name == "openpower":
         dataset = OpenPowerDataset(cfg.dataset)
 
+    rarity = dataset.get_conditioning_var_combination_rarities()
     non_pv_user_evaluator = Evaluator(cfg, dataset)
     non_pv_user_evaluator.evaluate_model()
 
@@ -19,8 +20,6 @@ def evaluate_single_dataset_model(cfg: DictConfig):
 @hydra.main(version_base=None, config_path="config", config_name="config")
 def main(cfg: DictConfig):
     evaluate_single_dataset_model(cfg=cfg)
-    # with open("config_used.yaml", "w") as f:
-    #     OmegaConf.save(cfg, f)
 
 
 if __name__ == "__main__":

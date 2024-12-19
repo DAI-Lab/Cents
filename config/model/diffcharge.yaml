@@ -4,9 +4,10 @@ noise_dim: 256
 cond_emb_dim: 64
 sparse_conditioning_loss_weight: 0.5 # sparse conditioning training sample weight for loss computation [0, 1]
 freeze_cond_after_warmup: False # specify whether to freeze conditioning module parameters after warmup epoch
+kl_weight: 0.01
 
 
-batch_size: 64
+batch_size: 1024
 n_epochs: 1000
 init_lr: 3e-5
 network: cnn # attention

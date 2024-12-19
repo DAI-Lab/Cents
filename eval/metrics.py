@@ -12,7 +12,7 @@ from sklearn.manifold import TSNE
 
 from eval.loss import gaussian_kernel_matrix, maximum_mean_discrepancy
 from eval.t2vec.t2vec import TS2Vec
-from eval.utils import get_hourly_ticks, get_month_weekday_names
+from eval.utils import generate_title, get_hourly_ticks, get_month_weekday_names
 
 
 def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float]:
@@ -202,8 +202,8 @@ def visualization(
         analysis: 'pca', 'tsne', or 'kernel' for PCA, t-SNE, or KDE visualization.
         compare: Number of samples to compare.
     """
-    anal_sample_no = min([compare, ori_data.shape[0]])
-    idx = np.random.permutation(ori_data.shape[0])[:anal_sample_no]
+    analysis_sample_no = min([compare, ori_data.shape[0]])
+    idx = np.random.permutation(ori_data.shape[0])[:analysis_sample_no]
 
     ori_data = ori_data[idx]
     generated_data = generated_data[idx]
@@ -212,13 +212,13 @@ def visualization(
     plots = []
 
     for d in range(dim):
-        prep_data = np.array([ori_data[i, :, d] for i in range(anal_sample_no)])
+        prep_data = np.array([ori_data[i, :, d] for i in range(analysis_sample_no)])
         prep_data_hat = np.array(
-            [generated_data[i, :, d] for i in range(anal_sample_no)]
+            [generated_data[i, :, d] for i in range(analysis_sample_no)]
         )
 
         # Visualization
-        colors = ["red"] * anal_sample_no + ["blue"] * anal_sample_no
+        colors = ["red"] * analysis_sample_no + ["blue"] * analysis_sample_no
 
         if analysis == "pca":
             pca = PCA(n_components=2)
@@ -229,14 +229,14 @@ def visualization(
             ax.scatter(
                 pca_results[:, 0],
                 pca_results[:, 1],
-                c=colors[:anal_sample_no],
+                c=colors[:analysis_sample_no],
                 alpha=0.2,
                 label="Original",
             )
             ax.scatter(
                 pca_hat_results[:, 0],
                 pca_hat_results[:, 1],
-                c=colors[anal_sample_no:],
+                c=colors[analysis_sample_no:],
                 alpha=0.2,
                 label="Synthetic",
             )
@@ -262,16 +262,16 @@ def visualization(
 
             f, ax = plt.subplots(1)
             ax.scatter(
-                tsne_results[:anal_sample_no, 0],
-                tsne_results[:anal_sample_no, 1],
-                c=colors[:anal_sample_no],
+                tsne_results[:analysis_sample_no, 0],
+                tsne_results[:analysis_sample_no, 1],
+                c=colors[:analysis_sample_no],
                 alpha=0.2,
                 label="Original",
             )
             ax.scatter(
-                tsne_results[anal_sample_no:, 0],
-                tsne_results[anal_sample_no:, 1],
-                c=colors[anal_sample_no:],
+                tsne_results[analysis_sample_no:, 0],
+                tsne_results[analysis_sample_no:, 1],
+                c=colors[analysis_sample_no:],
                 alpha=0.2,
                 label="Synthetic",
             )
@@ -305,124 +305,44 @@ def visualization(
     return plots
 
 
-def plot_range_with_syn_values(
-    df: pd.DataFrame, syn_df: pd.DataFrame, month: int, weekday: int, dimension: int = 0
+def plot_syn_and_real_comparison(
+    df: pd.DataFrame, syn_df: pd.DataFrame, conditioning_vars: dict, dimension: int = 0
 ):
     """
-    Plot the range of real data and compare with synthetic time series for a given month, weekday, and dimension.
+    Plot the range of real data and synthetic time series, along with the closest real time series using DTW.
     The x-axis will display hourly timestamps instead of every 15 minutes.
 
     Args:
         df (pd.DataFrame): DataFrame containing real time series data.
         syn_df (pd.DataFrame): DataFrame containing synthetic time series data.
-        month (int): Month for filtering (0=January, ..., 11=December).
-        weekday (int): Weekday for filtering (0=Monday, ..., 6=Sunday).
+        conditioning_vars (dict): Dictionary of conditioning variables and their values for filtering.
         dimension (int, optional): Time series dimension to plot. Defaults to 0.
     """
-    assert 0 <= month <= 11, "Month must be between 0 (January) and 11 (December)"
-    assert 0 <= weekday <= 6, "Weekday must be between 0 (Monday) and 6 (Sunday)"
+    # Filter real data based on conditioning variables
+    condition = (
+        df[list(conditioning_vars.keys())].eq(pd.Series(conditioning_vars)).all(axis=1)
+    )
+    filtered_df = df[condition]
 
-    filtered_df = df[(df["month"] == month) & (df["weekday"] == weekday)]
     array_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
 
     if array_data.size == 0:
-        print(f"No real data for month={month}, weekday={weekday}")
+        print(f"No real data for conditioning variables: {conditioning_vars}")
         return
 
     min_values = np.min(array_data, axis=0)
     max_values = np.max(array_data, axis=0)
 
-    syn_filtered_df = syn_df[
-        (syn_df["month"] == month) & (syn_df["weekday"] == weekday)
-    ]
-    if syn_filtered_df.empty:
-        print(f"No synthetic data for month={month}, weekday={weekday}")
-        return
-
-    syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
-
-    timestamps = pd.date_range(start="00:00", end="23:45", freq="15min")
-
-    # Get hourly tick positions and labels
-    hourly_positions, hourly_labels = get_hourly_ticks(timestamps)
-    month_name, weekday_name = get_month_weekday_names(month, weekday)
-
-    f = plt.figure(figsize=(15, 7))
-
-    plt.fill_between(
-        range(len(timestamps)),
-        min_values,
-        max_values,
-        color="gray",
-        alpha=0.5,
-        label="kWh load range of real data",
+    # Filter synthetic data with the same conditioning variables
+    syn_condition = (
+        syn_df[list(conditioning_vars.keys())]
+        .eq(pd.Series(conditioning_vars))
+        .all(axis=1)
     )
+    syn_filtered_df = syn_df[syn_condition]
 
-    for index in range(syn_values.shape[0]):
-        if index == 0:
-            plt.plot(
-                range(len(timestamps)),
-                syn_values[index],
-                color="blue",
-                marker="o",
-                markersize=2,
-                linestyle="-",
-                label="Synthetic time series",
-                alpha=0.6,
-            )
-        else:
-            plt.plot(
-                range(len(timestamps)),
-                syn_values[index],
-                color="blue",
-                marker="o",
-                markersize=2,
-                linestyle="-",
-                alpha=0.6,
-            )
-
-    plt.title(f"Range of Values and Synthetic Data for {weekday_name}s in {month_name}")
-    plt.xlabel("Time of day")
-    plt.ylabel("Electric load in kWh")
-
-    plt.xticks(ticks=hourly_positions, labels=hourly_labels, rotation=45)
-
-    plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
-
-    plt.legend()
-    plt.tight_layout()
-    return plt.gcf()
-
-
-def plot_syn_with_closest_real_ts(
-    df: pd.DataFrame, syn_df: pd.DataFrame, month: int, weekday: int, dimension: int = 0
-):
-    """
-    Plot synthetic time series along with the closest real time series using DTW.
-    The x-axis will display hourly timestamps instead of every 15 minutes.
-
-    Args:
-        df (pd.DataFrame): DataFrame containing real time series data.
-        syn_df (pd.DataFrame): DataFrame containing synthetic time series data.
-        month (int): Month for filtering (0=January, ..., 11=December).
-        weekday (int): Weekday for filtering (0=Monday, ..., 6=Sunday).
-        dimension (int, optional): Time series dimension to plot. Defaults to 0.
-    """
-    assert 0 <= month <= 11, "Month must be between 0 (January) and 11 (December)"
-    assert 0 <= weekday <= 6, "Weekday must be between 0 (Monday) and 6 (Sunday)"
-
-    filtered_df = df[(df["month"] == month) & (df["weekday"] == weekday)]
-    real_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
-
-    if real_data.size == 0:
-        print(f"No real data for month={month}, weekday={weekday}")
-        return
-
-    syn_filtered_df = syn_df[
-        (syn_df["month"] == month) & (syn_df["weekday"] == weekday)
-    ]
     if syn_filtered_df.empty:
-        print(f"No synthetic data for month={month}, weekday={weekday}")
+        print(f"No synthetic data for conditioning variables: {conditioning_vars}")
         return
 
     syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
@@ -430,11 +350,42 @@ def plot_syn_with_closest_real_ts(
     # Generate timestamps at 15-minute intervals
     timestamps = pd.date_range(start="00:00", end="23:45", freq="15min")
 
-    hourly_positions, hourly_labels = get_hourly_ticks(timestamps)
-    month_name, weekday_name = get_month_weekday_names(month, weekday)
+    # Get hourly tick positions and labels
+    hourly_positions = np.arange(0, len(timestamps), 4)
+    hourly_labels = [timestamps[i].strftime("%H:%M") for i in hourly_positions]
 
-    # Create the plot
-    f = plt.figure(figsize=(15, 7))
+    # Generate plot title based on conditioning variables
+    title = ", ".join([f"{key}={value}" for key, value in conditioning_vars.items()])
+
+    # Create subplots
+    fig, axes = plt.subplots(2, 1, figsize=(15, 14), sharex=True)
+
+    # Plot 1: Real data range and synthetic time series
+    axes[0].fill_between(
+        range(len(timestamps)),
+        min_values,
+        max_values,
+        color="gray",
+        alpha=0.5,
+        label="kWh load range of real data",
+    )
+    for index in range(syn_values.shape[0]):
+        axes[0].plot(
+            range(len(timestamps)),
+            syn_values[index],
+            color="blue",
+            marker="o",
+            markersize=2,
+            linestyle="-",
+            alpha=0.6,
+            label="Synthetic time series" if index == 0 else None,
+        )
+    axes[0].set_title(f"Range of Real Data and Synthetic Time Series ({title})")
+    axes[0].set_ylabel("Electric load in kWh")
+    axes[0].legend()
+    axes[0].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
+
+    # Plot 2: Synthetic time series and closest real time series
     synthetic_plotted = False
     real_plotted = False
 
@@ -445,68 +396,48 @@ def plot_syn_with_closest_real_ts(
         min_dtw_distance = float("inf")
         closest_real_ts = None
 
-        for real_ts in real_data:
+        for real_ts in array_data:
             distance = dtw.distance(syn_ts, real_ts)
             if distance < min_dtw_distance:
                 min_dtw_distance = distance
                 closest_real_ts = real_ts
 
         # Plot synthetic time series
-        if not synthetic_plotted:
-            plt.plot(
-                range(len(timestamps)),
-                syn_ts,
-                color="blue",
-                marker="o",
-                markersize=2,
-                linestyle="-",
-                label="Synthetic time series",
-                alpha=0.6,
-            )
-            synthetic_plotted = True
-        else:
-            plt.plot(
-                range(len(timestamps)),
-                syn_ts,
-                color="blue",
-                marker="o",
-                markersize=2,
-                linestyle="-",
-                alpha=0.6,
-            )
+        axes[1].plot(
+            range(len(timestamps)),
+            syn_ts,
+            color="blue",
+            marker="o",
+            markersize=2,
+            linestyle="-",
+            alpha=0.6,
+            label="Synthetic time series" if not synthetic_plotted else None,
+        )
+        synthetic_plotted = True
 
         # Plot closest real time series
         if closest_real_ts is not None:
-            if not real_plotted:
-                plt.plot(
-                    range(len(timestamps)),
-                    closest_real_ts,
-                    color="red",
-                    marker="x",
-                    markersize=2,
-                    linestyle="--",
-                    label="Closest real time series",
-                )
-                real_plotted = True
-            else:
-                plt.plot(
-                    range(len(timestamps)),
-                    closest_real_ts,
-                    color="red",
-                    marker="x",
-                    markersize=2,
-                    linestyle="--",
-                )
+            axes[1].plot(
+                range(len(timestamps)),
+                closest_real_ts,
+                color="red",
+                marker="x",
+                markersize=2,
+                linestyle="--",
+                alpha=0.6,
+                label="Closest real time series" if not real_plotted else None,
+            )
+            real_plotted = True
 
-    plt.title(
-        f"Synthetic vs Closest Real Time Series for {weekday_name}s in {month_name}"
-    )
-    plt.xlabel("Time of day")
-    plt.ylabel("Electric load in kWh")
+    axes[1].set_title(f"Synthetic vs Closest Real Time Series ({title})")
+    axes[1].set_xlabel("Time of day")
+    axes[1].set_ylabel("Electric load in kWh")
+    axes[1].legend()
+    axes[1].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
 
-    plt.xticks(ticks=hourly_positions, labels=hourly_labels, rotation=45)
-    plt.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
+    # Set x-ticks for both plots
+    axes[1].set_xticks(hourly_positions)
+    axes[1].set_xticklabels(hourly_labels, rotation=45)
 
-    plt.legend()
     plt.tight_layout()
     return plt.gcf()

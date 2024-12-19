@@ -11,30 +11,53 @@ class ConditioningModule(nn.Module):
 
         self.category_embeddings = nn.ModuleDict(
             {
-                name: nn.Embedding(num_categories, embedding_dim).to(device)
+                name: nn.Embedding(num_categories, embedding_dim)
                 for name, num_categories in categorical_dims.items()
             }
-        )
+        ).to(device)
+
         total_dim = len(categorical_dims) * embedding_dim
+        # Output mean and logvar
         self.mlp = nn.Sequential(
             nn.Linear(total_dim, 128),
             nn.ReLU(),
-            nn.Linear(128, embedding_dim),
+            nn.Linear(128, 2 * embedding_dim),
         ).to(device)
 
         self.mean_embedding = None
         self.cov_embedding = None
-        self.inverse_cov_embedding = None  # For Mahalanobis distance
+        self.inverse_cov_embedding = None
         self.n_samples = 0
 
-    def forward(self, categorical_vars):
+    def forward(self, categorical_vars, sample=True):
         embeddings = []
         for name, embedding in self.category_embeddings.items():
             var = categorical_vars[name].to(self.device)
             embeddings.append(embedding(var))
         conditioning_matrix = torch.cat(embeddings, dim=1)
-        conditioning_vector = self.mlp(conditioning_matrix)
-        return conditioning_vector
+
+        stats = self.mlp(conditioning_matrix)
+        mu = stats[:, : self.embedding_dim]
+        logvar = stats[:, self.embedding_dim :]
+
+        if sample:
+            z = self.reparameterize(mu, logvar)
+        else:
+            z = mu
+
+        return z, mu, logvar
+
+    @staticmethod
+    def reparameterize(mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
+    def kl_divergence(self, mu, logvar):
+        # KL(q(z|x) || p(z)) where p(z)=N(0,I)
+        return -0.5 * torch.mean(
+            torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
+        )
 
     def initialize_statistics(self, embeddings):
         """
@@ -122,7 +145,7 @@ class ConditioningModule(nn.Module):
         Determine if the embeddings are rare based on Mahalanobis distance.
 
         Args:
-            embeddings (torch.Tensor): The embeddings to evaluate.
+            embeddings (torch.Tensor): The embeddings to evaluate. Shape is bs, hidden_size
             threshold (float, optional): Specific Mahalanobis distance threshold.
             percentile (float, optional): Percentile to define rarity if threshold is not provided.
 

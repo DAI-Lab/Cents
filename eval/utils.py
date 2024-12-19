@@ -5,6 +5,54 @@ import pandas as pd
 import torch
 
 
+def generate_title(conditioning_vars):
+    """
+    Generate a plot title based on the provided conditioning variables.
+
+    Args:
+        conditioning_vars (dict): Dictionary of conditioning variables and their values.
+
+    Returns:
+        str: Generated title string.
+    """
+    title_elements = []
+    for var_name, value in conditioning_vars.items():
+        # Convert variable names and values to readable format
+        if var_name == "month":
+            month_name = [
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
+            ][value]
+            title_elements.append(f"{month_name}")
+        elif var_name == "weekday":
+            weekday_name = [
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+            ][value]
+            title_elements.append(f"{weekday_name}s")
+        else:
+            # For other variables, display as "Variable: Value"
+            title_elements.append(f"{var_name.capitalize()}: {value}")
+
+    title = " | ".join(title_elements)
+    return title
+
+
 def get_month_weekday_names(month: int, weekday: int) -> Tuple[str, str]:
     """
     Map integer month and weekday to their respective names.
