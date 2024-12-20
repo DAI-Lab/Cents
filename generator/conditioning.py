@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class ConditioningModule(nn.Module):
-    def __init__(self, categorical_dims, embedding_dim, device, alpha=0.8):
+    def __init__(self, categorical_dims, embedding_dim, device, alpha=0.1):
         super(ConditioningModule, self).__init__()
         self.embedding_dim = embedding_dim
         self.device = device
