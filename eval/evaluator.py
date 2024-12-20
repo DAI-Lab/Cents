@@ -263,7 +263,7 @@ class Evaluator:
         dataset: Any,
         model: Any,
         num_samples: int = 100,
-        num_runs: int = 10,
+        num_runs: int = 3,
     ):
         """
         Create various visualizations for the evaluation results.
