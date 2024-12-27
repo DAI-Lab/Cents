@@ -475,7 +475,7 @@ class TimeSeriesDataset(Dataset, ABC):
         """
         if self.use_learned_normalizer:
             self._init_learned_normalizer()
-            return self.learned_normalizer.transform()
+            return self.learned_normalizer.transform(use_model=True)
         else:
             self._load_or_compute_normalization_stats()
             return self._normalize_and_scale(data)
@@ -657,7 +657,9 @@ class TimeSeriesDataset(Dataset, ABC):
         )
 
         normalizer_ckpt_path = os.path.join(
-            ROOT_DIR, "checkpoints/normalizer", f"{self.name}_normalizer.pt"
+            ROOT_DIR,
+            f"checkpoints/{self.name}/normalizer",
+            f"{self.name}_normalizer.pt",
         )
         if os.path.exists(normalizer_ckpt_path):
             print(f"Loading existing normalizer from {normalizer_ckpt_path}")
