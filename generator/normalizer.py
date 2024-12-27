@@ -6,82 +6,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from hydra import compose, initialize_config_dir
-from omegaconf import OmegaConf
-from torch.utils.data import DataLoader, Dataset
-
-from generator.conditioning import ConditioningModule
-
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-class StatsHead(nn.Module):
-    """
-    A small MLP that maps from the embedding z (from ConditioningModule)
-    to [pred_mu[dims], pred_log_sigma[dims]].
-    """
-
-    def __init__(self, embedding_dim: int, hidden_dim: int, n_dims: int):
-        super().__init__()
-        self.n_dims = n_dims
-        self.net = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 2 * n_dims),  # 2 per dimension => mu + log_sigma
-        )
-
-    def forward(self, z: torch.Tensor):
-        """
-        z: (batch_size, embedding_dim)
-
-        Returns:
-          pred_mu: shape (batch_size, n_dims)
-          pred_sigma: shape (batch_size, n_dims)
-        """
-        out = self.net(z)  # shape (batch_size, 2*n_dims)
-        batch_size = out.shape[0]
-        out = out.view(batch_size, 2, self.n_dims)  # (batch_size, 2, n_dims)
-
-        pred_mu = out[:, 0, :]  # (batch_size, n_dims)
-        pred_log_sigma = out[:, 1, :]  # (batch_size, n_dims)
-        pred_sigma = torch.exp(pred_log_sigma)
-        return pred_mu, pred_sigma
-
-
-class NormalizerModule(nn.Module):
-    """
-    ConditioningModule + StatsHead for multi-dimensional means/stds.
-    """
-
-    def __init__(self, cond_module: nn.Module, hidden_dim: int, n_dims: int):
-        super().__init__()
-        self.cond_module = cond_module
-        self.embedding_dim = cond_module.embedding_dim
-        self.n_dims = n_dims
-
-        self.stats_head = StatsHead(
-            embedding_dim=self.embedding_dim, hidden_dim=hidden_dim, n_dims=n_dims
-        )
-
-    def forward(self, cat_vars_dict: Dict[str, torch.Tensor]):
-        """
-        cat_vars_dict: {var_name -> LongTensor(batch_size,)}
-        Returns: pred_mu, pred_sigma each (batch_size, n_dims)
-        """
-        z, _, _ = self.cond_module(cat_vars_dict, sample=False)
-        pred_mu, pred_sigma = self.stats_head(z)  # (batch_size, n_dims)
-        return pred_mu, pred_sigma
-
-
-import os
-from typing import Dict, List, Optional
-
-import numpy as np
-import pandas as pd
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
@@ -412,7 +336,6 @@ class Normalizer:
         checkpoint = {
             "epoch": epoch if epoch is not None else 0,
             "normalizer_model_state": self.normalizer_model.state_dict(),
-            "optimizer_state": self.optim.state_dict() if self.optim else None,
         }
 
         torch.save(checkpoint, path)
@@ -421,12 +344,6 @@ class Normalizer:
     def load(self, path: str):
         checkpoint = torch.load(path, map_location=self.device)
         self.normalizer_model.load_state_dict(checkpoint["normalizer_model_state"])
-        if (
-            "optimizer_state" in checkpoint
-            and checkpoint["optimizer_state"] is not None
-            and self.optim
-        ):
-            self.optim.load_state_dict(checkpoint["optimizer_state"])
         print(f"Loaded Normalizer from {path}")
 
     def _init_normalizer_config(self):
