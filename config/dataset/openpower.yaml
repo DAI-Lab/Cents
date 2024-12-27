@@ -2,6 +2,7 @@ name: openpower
 geography: null
 normalize: True
 scale: True
+use_learned_normalizer: True
 threshold: 6 # int, bounds values within +-threshold stds
 include_generation: False
 input_dim: 1

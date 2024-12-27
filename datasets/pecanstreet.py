@@ -48,7 +48,9 @@ class PecanStreetDataset(TimeSeriesDataset):
             time_series_column_names.append("solar")
 
         conditioning_vars = list(self.cfg.conditioning_vars.keys())
-        normalization_group_keys = ["dataid", "month", "weekday"]
+        # normalization_group_keys = ["dataid", "month", "weekday"]
+        # normalization_group_keys = ["month", "weekday"]
+        normalization_group_keys = []
 
         super().__init__(
             data=self.data,

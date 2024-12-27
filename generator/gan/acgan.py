@@ -9,6 +9,7 @@ Modifications:
 - Hyperparameters and network structure
 - Training loop changes
 - Changes in conditioning logic
+- Integration of a single post–warm-up GMM fitting for rarity detection
 
 Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
 """
@@ -48,7 +49,6 @@ class Generator(nn.Module):
         self.device = device
 
         self.conditioning_var_category_dict = conditioning_var_category_dict
-
         self.conditioning_module = conditioning_module
 
         self.fc = nn.Linear(
@@ -86,7 +86,7 @@ class Generator(nn.Module):
     def forward(self, noise, conditioning_vars):
         mu, logvar = None, None
         if conditioning_vars:
-            z, mu, logvar = self.conditioning_module(conditioning_vars, sample=True)
+            z, mu, logvar = self.conditioning_module(conditioning_vars, sample=False)
             x = torch.cat((noise, z), dim=1)
         else:
             x = noise
@@ -214,12 +214,15 @@ class ACGAN(nn.Module):
             self.discriminator.parameters(), lr=self.lr_discr, betas=(0.5, 0.999)
         )
 
-        wandb.init(
-            project=cfg.wandb.project,
-            entity=cfg.wandb.entity,
-            config=cfg,
-            dir=cfg.run_dir,
-        )
+        self.gmm_fitted = False
+
+        if self.cfg.wandb_enabled:
+            wandb.init(
+                project=cfg.wandb.project,
+                entity=cfg.wandb.entity,
+                config=cfg,
+                dir=cfg.run_dir,
+            )
 
     def train_model(self, dataset):
         self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -229,10 +232,14 @@ class ACGAN(nn.Module):
 
         for epoch in range(num_epoch):
             self.current_epoch = epoch + 1
-            if self.current_epoch >= self.warm_up_epochs:
-                for param in self.generator.conditioning_module.parameters():
-                    param.requires_grad = False  # Freeze conditioning module
 
+            if self.current_epoch > self.warm_up_epochs:
+                for param in self.generator.conditioning_module.parameters():
+                    param.requires_grad = False
+
+            # ======================================================
+            # TRAINING LOOP
+            # ======================================================
             for _, (time_series_batch, conditioning_vars_batch) in enumerate(
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
@@ -246,15 +253,19 @@ class ACGAN(nn.Module):
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
                 )
-                # Generator forward now returns (generated_time_series, mu, logvar) of batch cond embeddings
+
+                # ---------------------
+                # Forward pass G
+                # ---------------------
                 generated_time_series, mu, logvar = self.generator(
                     noise, conditioning_vars_batch
                 )
+
                 # ---------------------
-                #  Train Discriminator
+                # Train Discriminator
                 # ---------------------
-                soft_zero, soft_one = 0, 0.95
                 self.optimizer_D.zero_grad()
+                soft_zero, soft_one = 0, 0.95
 
                 real_pred, aux_outputs_real = self.discriminator(time_series_batch)
                 fake_pred, aux_outputs_fake = self.discriminator(generated_time_series)
@@ -266,7 +277,12 @@ class ACGAN(nn.Module):
                     fake_pred, torch.ones_like(fake_pred) * soft_zero
                 )
 
-                wandb.log({"Loss/discr_adv": d_real_loss.item() + d_fake_loss.item()})
+                if self.cfg.wandb_enabled:
+                    wandb.log(
+                        {
+                            "Loss/Discr_adv": d_real_loss.item() + d_fake_loss.item(),
+                        }
+                    )
 
                 if self.cfg.model.include_auxiliary_losses:
                     for var_name in self.conditioning_var_n_categories.keys():
@@ -283,9 +299,8 @@ class ACGAN(nn.Module):
                 self.optimizer_D.step()
 
                 # -----------------
-                #  Train Generator
+                # Train Generator
                 # -----------------
-
                 self.optimizer_G.zero_grad()
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
@@ -298,9 +313,8 @@ class ACGAN(nn.Module):
                 )
                 validity, aux_outputs = self.discriminator(generated_time_series)
 
-                # Compute rarity mask for generated conditioning vars
-                if self.current_epoch >= self.warm_up_epochs:
-
+                # Only apply GMM-based rare logic if GMM is fitted
+                if self.gmm_fitted:
                     gen_batch_embeddings = mu_g.detach()
                     rare_mask_gen = (
                         self.generator.conditioning_module.is_rare(gen_batch_embeddings)
@@ -309,14 +323,12 @@ class ACGAN(nn.Module):
                     )
                 else:
                     rare_mask_gen = torch.zeros((current_batch_size,)).to(self.device)
-                    self.generator.conditioning_module.update_running_statistics(mu_g)
 
                 # Adversarial Loss for Generator
                 g_loss_rare = self.adversarial_loss(
                     validity.squeeze() * rare_mask_gen,
                     torch.ones_like(validity.squeeze()) * rare_mask_gen * soft_one,
                 )
-
                 g_loss_non_rare = self.adversarial_loss(
                     validity.squeeze() * (1 - rare_mask_gen),
                     torch.ones_like(validity.squeeze())
@@ -324,7 +336,12 @@ class ACGAN(nn.Module):
                     * soft_one,
                 )
 
-                wandb.log({"Loss/gen_adv": g_loss_rare.item() + g_loss_non_rare.item()})
+                if self.cfg.wandb_enabled:
+                    wandb.log(
+                        {
+                            "Loss/Gen_adv": g_loss_rare.item() + g_loss_non_rare.item(),
+                        }
+                    )
 
                 if self.cfg.model.include_auxiliary_losses:
                     for var_name in self.conditioning_var_n_categories.keys():
@@ -353,20 +370,64 @@ class ACGAN(nn.Module):
                     + (1 - _lambda) * (N_nr / N) * g_loss_non_rare
                 )
 
-                # Only apply KL if we have conditioning variables (mu_g and logvar_g not None)
+                # KL Divergence (only before warm-up ends)
                 if (
                     mu_g is not None
                     and logvar_g is not None
-                    and self.current_epoch < self.warm_up_epochs
+                    and self.current_epoch <= self.warm_up_epochs
                 ):
                     kl_loss = self.conditioning_module.kl_divergence(mu_g, logvar_g)
+
+                    if self.cfg.wandb_enabled:
+                        wandb.log(
+                            {
+                                "Loss/KL": kl_loss.item(),
+                            }
+                        )
+
                     g_loss = g_loss_main + self.kl_weight * kl_loss
-                    wandb.log({"Loss/KL": kl_loss.item()})
                 else:
                     g_loss = g_loss_main
 
                 g_loss.backward()
                 self.optimizer_G.step()
+
+                if self.cfg.wandb_enabled:
+                    wandb.log(
+                        {
+                            "Loss/discr_total": d_loss.item(),
+                            "Loss/gen_total": g_loss.item(),
+                        }
+                    )
+
+            # ======================================================
+            # After last warmup Epoch - Fit GMM if Warm-Up Just Ended
+            # ======================================================
+            if self.current_epoch == self.warm_up_epochs and not self.gmm_fitted:
+                all_embeddings = []
+                full_loader = prepare_dataloader(dataset, batch_size)
+                self.generator.conditioning_module.eval()
+
+                with torch.no_grad():
+                    for _, (ts_batch, cond_vars_batch) in enumerate(full_loader):
+                        cond_vars_batch = {
+                            name: cond_vars_batch[name].to(self.device)
+                            for name in self.conditioning_var_n_categories.keys()
+                        }
+                        _, mu_train, _ = self.generator.conditioning_module(
+                            cond_vars_batch, sample=False
+                        )
+                        all_embeddings.append(mu_train.cpu())
+
+                all_embeddings = torch.cat(
+                    all_embeddings, dim=0
+                )  # shape (N, cond_emb_dim)
+
+                self.generator.conditioning_module.fit_gmm(all_embeddings)
+                self.generator.conditioning_module.set_rare_threshold(
+                    all_embeddings, fraction=0.1
+                )
+                self.gmm_fitted = True
 
             if (epoch + 1) % self.cfg.model.save_cycle == 0:
                 self.save(epoch=self.current_epoch)
@@ -426,6 +487,7 @@ class ACGAN(nn.Module):
             "optimizer_G_state_dict": self.optimizer_G.state_dict(),
             "optimizer_D_state_dict": self.optimizer_D.state_dict(),
             "conditioning_module_state_dict": self.conditioning_module.state_dict(),
+            "gmm_fitted": self.gmm_fitted,
         }
         torch.save(checkpoint, path)
         print(f"Saved ACGAN checkpoint to {path}")
@@ -437,7 +499,7 @@ class ACGAN(nn.Module):
         Args:
             path (str): The file path to load the checkpoint from.
         """
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=self.device)
 
         if "generator_state_dict" in checkpoint:
             self.generator.load_state_dict(checkpoint["generator_state_dict"])
@@ -477,6 +539,12 @@ class ACGAN(nn.Module):
         else:
             print("No epoch information found in checkpoint.")
 
+        if "gmm_fitted" in checkpoint:
+            self.gmm_fitted = checkpoint["gmm_fitted"]
+        else:
+            self.gmm_fitted = False
+
         self.generator.to(self.device)
         self.discriminator.to(self.device)
+        self.conditioning_module.to(self.device)
         print(f"ACGAN models moved to {self.device}.")

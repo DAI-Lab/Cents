@@ -42,7 +42,8 @@ class DataGenerator:
             self.cfg = cfg
             self._set_dataset_config(self.cfg.dataset.name, cfg.dataset)
         else:
-            self._load_config()
+            self.cfg = self._load_config()
+
         if model:
             self.model = model
         else:
@@ -61,7 +62,10 @@ class DataGenerator:
         """
         config_dir = os.path.join(ROOT_DIR, "config")
 
-        self.overrides = [f"model={self.model_name}"] + self.overrides
+        self.overrides = [
+            f"model={self.model_name}",
+            "wandb_enabled=False",
+        ] + self.overrides
 
         with initialize_config_dir(config_dir=str(config_dir), version_base=None):
             cfg = compose(config_name="config", overrides=self.overrides)

@@ -2,9 +2,10 @@ defaults:
   - model: acgan
   - dataset: pecanstreet
   - evaluator: default
+  - normalizer: default
   - _self_
 
-device: 1 # 0, cpu
+device: 0 # 0, cpu
 
 job_name: ${model.name}_${dataset.name}_${dataset.user_group}
 run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}
@@ -26,6 +27,8 @@ hydra:
   run:
     dir: ${run_dir}
 
+
+wandb_enabled: True
 wandb:
   project: endata
   entity: michael-fuest-technical-university-of-munich

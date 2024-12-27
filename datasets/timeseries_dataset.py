@@ -7,9 +7,12 @@ import numpy as np
 import pandas as pd
 import torch
 from hydra import compose, initialize_config_dir
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset
 
 from datasets.utils import encode_conditioning_variables
+from generator.normalizer import Normalizer
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -18,17 +21,19 @@ class TimeSeriesDataset(Dataset, ABC):
     def __init__(
         self,
         data: pd.DataFrame,
-        entity_column_name: str,
         time_series_column_names: Any,
         seq_len: int,
         normalization_group_keys: List = [],
         conditioning_var_column_names: Any = None,
         normalize: bool = True,
         scale: bool = True,
+        cluster_n_clusters: int = 10,  # Number of clusters for K-Means
+        cluster_features: List[str] = None,  # Features to use for clustering
+        cluster_rarity_threshold: float = 0.1,  # Top 10% rare clusters
         **kwargs,
     ):
         """
-        Base class for time series datasets.
+        Base class for time series datasets with frequency and clustering-based rarity detection.
         """
         self.time_series_column_names = (
             time_series_column_names
@@ -37,6 +42,9 @@ class TimeSeriesDataset(Dataset, ABC):
         )
         self.conditioning_vars = conditioning_var_column_names or []
         self.seq_len = seq_len
+        self.cluster_n_clusters = cluster_n_clusters
+        self.cluster_features = cluster_features or ["mean", "std", "max", "min"]
+        self.cluster_rarity_threshold = cluster_rarity_threshold
 
         if not hasattr(self, "cfg"):
             with initialize_config_dir(
@@ -62,6 +70,7 @@ class TimeSeriesDataset(Dataset, ABC):
 
         self.normalize = normalize
         self.scale = scale
+        self.use_learned_normalizer = self.cfg.use_learned_normalizer
         self.normalization_stats = {}
         self.normalization_group_keys = normalization_group_keys or []
         self.data = self._preprocess_data(data)
@@ -74,12 +83,14 @@ class TimeSeriesDataset(Dataset, ABC):
         self._save_conditioning_var_codes()
 
         if self.normalize:
-            # self._calculate_and_store_statistics(self.data)
-            self._load_or_compute_normalization_stats()
-            self.data = self._normalize_and_scale(self.data)
+            self.data = self._normalize(self.data)
 
         self.data = self.merge_timeseries_columns(self.data)
         self.data = self.data.reset_index()
+
+        self.data = self.get_frequency_based_rarity()
+        self.data = self.get_clustering_based_rarity()
+        self.data = self.get_combined_rarity()
 
     @abstractmethod
     def _preprocess_data(self):
@@ -137,8 +148,7 @@ class TimeSeriesDataset(Dataset, ABC):
             pd.DataFrame: DataFrame with a new 'timeseries' column and the individual time series columns removed.
 
         Raises:
-            ValueError: If any required time series columns are missing.
-            AssertionError: If any arrays in the time series columns do not have the correct shape.
+            ValueError: If any required time series columns are missing or have inconsistent shapes.
         """
         missing_cols = [
             col_name
@@ -158,20 +168,25 @@ class TimeSeriesDataset(Dataset, ABC):
                     arr = arr.reshape(-1, 1)
                     df.at[idx, col_name] = arr
                 elif arr.ndim == 2:
-                    continue
+                    if arr.shape[0] != self.seq_len:
+                        raise ValueError(
+                            f"Array in column '{col_name}' at index {idx} has incorrect sequence length "
+                            f"({arr.shape[0]} instead of {self.seq_len})."
+                        )
+                    if arr.shape[1] != 1:
+                        raise ValueError(
+                            f"Array in column '{col_name}' at index {idx} has incorrect number of dimensions "
+                            f"({arr.shape[1]} instead of 1)."
+                        )
                 else:
                     raise ValueError(
-                        f"Array in column '{col_name}' at index {idx} must have shape {(self.seq_len,)} or {(self.seq_len, 1)}, "
+                        f"Array in column '{col_name}' at index {idx} must have shape ({self.seq_len}, 1), "
                         f"but has shape {arr.shape}."
                     )
-                assert arr.shape[0] == self.seq_len, (
-                    f"Array in column '{col_name}' at index {idx} must have length {self.seq_len}, "
-                    f"but has length {arr.shape[0]}."
-                )
 
         def merge_row(row):
             arrays = [row[col_name] for col_name in self.time_series_column_names]
-            merged_array = np.hstack(arrays)
+            merged_array = np.hstack(arrays)  # Shape: (seq_len, n_dim)
             return merged_array
 
         df["timeseries"] = df.apply(merge_row, axis=1)
@@ -194,10 +209,14 @@ class TimeSeriesDataset(Dataset, ABC):
 
             standardized = (all_values - mean) / (std + 1e-8)
 
-            z_min = np.min(standardized)
-            z_max = np.max(standardized)
-
-            return pd.Series({"mean": mean, "std": std, "z_min": z_min, "z_max": z_max})
+            if self.cfg.scale:
+                z_min = np.min(standardized)
+                z_max = np.max(standardized)
+                return pd.Series(
+                    {"mean": mean, "std": std, "z_min": z_min, "z_max": z_max}
+                )
+            else:
+                return pd.Series({"mean": mean, "std": std})
 
         for column in self.time_series_column_names:
             if self.normalization_group_keys:
@@ -219,22 +238,35 @@ class TimeSeriesDataset(Dataset, ABC):
         )
 
         if os.path.exists(stats_path):
-            # Load existing normalization stats
             with open(stats_path, "r") as f:
                 loaded_stats = json.load(f)
-            # Convert string keys back to lists
             self.normalization_stats = self._convert_keys_from_json(loaded_stats)
             print(f"Loaded normalization stats from {stats_path}")
         else:
-            # Compute normalization stats
             self._calculate_and_store_statistics(self.data)
-            # Prepare stats for JSON serialization by converting list keys to strings
             serializable_stats = self._convert_keys_to_json(self.normalization_stats)
-            # Save to JSON
             os.makedirs(os.path.dirname(stats_path), exist_ok=True)
             with open(stats_path, "w") as f:
                 json.dump(serializable_stats, f, indent=4)
             print(f"Saved normalization stats to {stats_path}")
+
+            global_stats = {}
+            for column in self.time_series_column_names:
+                all_values = np.concatenate(self.data[column].values)
+                mean = np.mean(all_values)
+                std = np.std(all_values)
+                if self.cfg.scale:
+                    z_min = np.min(all_values)
+                    z_max = np.max(all_values)
+                    global_stats[column] = {
+                        "mean": mean,
+                        "std": std,
+                        "z_min": z_min,
+                        "z_max": z_max,
+                    }
+                else:
+                    global_stats[column] = {"mean": mean, "std": std}
+            self.normalization_stats["global"] = global_stats
 
     def _convert_keys_to_json(self, stats: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -260,14 +292,10 @@ class TimeSeriesDataset(Dataset, ABC):
                 converted_stats[column] = {}
                 for k, v in group_stats.items():
                     try:
-                        # Convert JSON string back to list
                         group_key = json.loads(k)
                     except json.JSONDecodeError:
-                        # Fallback to original key if JSON decoding fails
                         group_key = k
-                    converted_stats[column][
-                        tuple(group_key)
-                    ] = v  # Use tuple for immutable keys
+                    converted_stats[column][tuple(group_key)] = v
             return converted_stats
         else:
             return stats
@@ -288,26 +316,28 @@ class TimeSeriesDataset(Dataset, ABC):
                 group_key = tuple(row[key] for key in self.normalization_group_keys)
                 stats = self.normalization_stats[column].get(group_key)
                 if not stats:
-                    raise ValueError(
-                        f"No stats found for group {group_key} in column {column}"
-                    )
+                    # Fallback to global stats
+                    stats = self.normalization_stats[column].get("global")
+                    if not stats:
+                        raise ValueError(
+                            f"No stats found for group {group_key} or global stats in column {column}"
+                        )
             else:
                 stats = self.normalization_stats[column]
 
             mean = stats["mean"]
             std = stats["std"]
-            z_min = stats["z_min"]
-            z_max = stats["z_max"]
 
             values = np.array(row[column])
             standardized = (values - mean) / (std + 1e-8)
 
-            if self.threshold:
+            if hasattr(self, "threshold") and self.threshold:
                 standardized = np.clip(standardized, *self.threshold)
 
-            scaled = (standardized - z_min) / (z_max - z_min + 1e-8)
-
-            if self.scale:
+            if self.cfg.scale:
+                z_min = stats["z_min"]
+                z_max = stats["z_max"]
+                scaled = (standardized - z_min) / (z_max - z_min + 1e-8)
                 return scaled
             else:
                 return standardized
@@ -335,20 +365,25 @@ class TimeSeriesDataset(Dataset, ABC):
             group_key = tuple(row[key] for key in self.normalization_group_keys)
             stats = self.normalization_stats[column].get(group_key)
             if not stats:
-                raise ValueError(
-                    f"No stats found for group {group_key} in column {column}"
-                )
+                # Fallback to global stats
+                stats = self.normalization_stats[column].get("global")
+                if not stats:
+                    raise ValueError(
+                        f"No stats found for group {group_key} or global stats in column {column}"
+                    )
         else:
             stats = self.normalization_stats[column]
 
         mean = stats["mean"]
         std = stats["std"]
-        z_min = stats["z_min"]
-        z_max = stats["z_max"]
+
+        if self.cfg.scale:
+            z_min = stats["z_min"]
+            z_max = stats["z_max"]
 
         values = np.array(row[column])
 
-        if self.scale:
+        if self.cfg.scale:
             scaled = values * (z_max - z_min + 1e-8) + z_min
             unnormalized = scaled * std + mean
         else:
@@ -369,12 +404,16 @@ class TimeSeriesDataset(Dataset, ABC):
         Returns:
             pd.DataFrame: DataFrame with the original (un-normalized and un-scaled) time series.
         """
+        if self.use_learned_normalizer:
+            data = self.learned_normalizer.inverse_transform(data, use_model=True)
+
         data = self.split_timeseries(data)
 
-        for column in self.time_series_column_names:
-            data[column] = data.apply(
-                lambda row: self.inverse_transform_column(row, column), axis=1
-            )
+        if not self.use_learned_normalizer:
+            for column in self.time_series_column_names:
+                data[column] = data.apply(
+                    lambda row: self.inverse_transform_column(row, column), axis=1
+                )
 
         if merged:
             data = self.merge_timeseries_columns(data)
@@ -405,7 +444,13 @@ class TimeSeriesDataset(Dataset, ABC):
     def _get_conditioning_var_dict(self, data: pd.DataFrame) -> Dict[str, int]:
         """
         Extracts the name and number of unique categories from the conditioning variables specified in the data.
-        For numerical variables, bins the data into 5 categories.
+        For numerical variables, bins the data into specified categories.
+
+        Args:
+            data (pd.DataFrame): The dataset.
+
+        Returns:
+            Dict[str, int]: Dictionary mapping variable names to number of categories.
         """
         conditioning_var_dict = {}
 
@@ -424,11 +469,16 @@ class TimeSeriesDataset(Dataset, ABC):
 
         return conditioning_var_dict
 
-    def normalize(self, data: pd.DataFrame) -> pd.DataFrame:
+    def _normalize(self, data: pd.DataFrame) -> pd.DataFrame:
         """
         Normalizes timeseries values according to dataset-specific groupings.
         """
-        return self._normalize_and_scale(data)
+        if self.use_learned_normalizer:
+            self._init_learned_normalizer()
+            return self.learned_normalizer.transform()
+        else:
+            self._load_or_compute_normalization_stats()
+            return self._normalize_and_scale(data)
 
     def get_conditioning_var_codes(self):
         """
@@ -470,7 +520,7 @@ class TimeSeriesDataset(Dataset, ABC):
             )
         return conditioning_vars
 
-    def get_conditioning_var_combination_rarities(self, coverage_threshold=0.9):
+    def get_conditioning_var_combination_rarities(self, coverage_threshold=0.95):
         """
         Groups the dataset by all conditioning variables, counting the number of daily load profiles per combination.
         Computes rarity based on cumulative coverage in the data.
@@ -485,3 +535,135 @@ class TimeSeriesDataset(Dataset, ABC):
         grouped["coverage"] = grouped["count"].cumsum() / self.data.shape[0]
         grouped["rare"] = grouped["coverage"] > coverage_threshold
         return grouped
+
+    def get_frequency_based_rarity(self) -> pd.DataFrame:
+        """
+        Labels samples as frequency-rare based on their conditioning variable combinations.
+
+        Returns:
+            pd.DataFrame: DataFrame with a new column 'is_frequency_rare'.
+        """
+        freq_counts = (
+            self.data.groupby(self.conditioning_vars).size().reset_index(name="count")
+        )
+
+        threshold = freq_counts["count"].quantile(self.cluster_rarity_threshold)
+
+        freq_counts["is_frequency_rare"] = freq_counts["count"] < threshold
+
+        self.data = self.data.merge(
+            freq_counts[self.conditioning_vars + ["is_frequency_rare"]],
+            on=self.conditioning_vars,
+            how="left",
+        )
+
+        return self.data
+
+    def get_clustering_based_rarity(self) -> pd.DataFrame:
+        """
+        Labels samples as pattern-rare based on clustering of their time series consumption profiles.
+
+        Returns:
+            pd.DataFrame: DataFrame with a new column 'is_pattern_rare'.
+        """
+        try:
+            time_series_data = np.stack(
+                self.data["timeseries"].values, axis=0
+            )  # Shape: (num_samples, seq_len, n_dim)
+        except ValueError as e:
+            raise ValueError(f"Error stacking 'timeseries' data: {e}")
+
+        num_samples, seq_len, n_dim = time_series_data.shape
+        expected_n_dim = len(self.time_series_column_names)
+        if n_dim != expected_n_dim:
+            raise ValueError(f"Expected n_dim={expected_n_dim}, but got n_dim={n_dim}.")
+
+        # Feature Extraction
+        features = self.extract_features(time_series_data)
+
+        # Standardize features
+        # scaler = StandardScaler()
+        # features_scaled = scaler.fit_transform(features)
+        features_scaled = features
+
+        kmeans = KMeans(n_clusters=self.cluster_n_clusters, random_state=42)
+        cluster_labels = kmeans.fit_predict(features_scaled)
+        self.data["cluster"] = cluster_labels
+
+        cluster_sizes = self.data["cluster"].value_counts().to_dict()
+
+        size_threshold = np.percentile(
+            list(cluster_sizes.values()), 100 * (1 - self.cluster_rarity_threshold)
+        )
+
+        self.data["is_pattern_rare"] = (
+            self.data["cluster"].map(cluster_sizes) < size_threshold
+        )
+
+        return self.data
+
+    def extract_features(self, time_series: np.ndarray) -> np.ndarray:
+        """
+        Extracts features from time series data for clustering.
+
+        Args:
+            time_series (np.ndarray): Shape (num_samples, seq_len, n_dim)
+
+        Returns:
+            np.ndarray: Shape (num_samples, num_features)
+        """
+        num_samples, seq_len, n_dim = time_series.shape
+        features = []
+
+        for ts in time_series:
+            # Statistical Features for each dimension
+            mean = np.mean(ts, axis=0)
+            std = np.std(ts, axis=0)
+            max_val = np.max(ts, axis=0)
+            min_val = np.min(ts, axis=0)
+            skew = pd.Series(ts[:, 0]).skew()
+            kurt = pd.Series(ts[:, 0]).kurtosis()
+
+            # Time-Domain Features
+            peak_indices = np.argmax(ts, axis=0)  # Index of peak per dimension
+
+            feature_vector = np.concatenate(
+                [mean, std, max_val, min_val, [skew], [kurt], peak_indices]
+            )
+            features.append(feature_vector)
+
+        features = np.array(features)  # Shape: (num_samples, features_dim)
+        return features
+
+    def get_combined_rarity(self) -> pd.DataFrame:
+        """
+        Combines frequency-based and clustering-based rarity to label samples as 'rare'.
+
+        Returns:
+            pd.DataFrame: DataFrame with a new column 'is_rare'.
+        """
+        self.data["is_rare"] = (
+            self.data["is_frequency_rare"] & self.data["is_pattern_rare"]
+        )
+        return self.data
+
+    def _init_learned_normalizer(self):
+        """
+        Sets up (or loads) the Normalizer which includes a ConditioningModule + StatsHead.
+        """
+        self.learned_normalizer = Normalizer(
+            dataset=self,
+            cfg=self.cfg,
+        )
+
+        normalizer_ckpt_path = os.path.join(
+            ROOT_DIR, "checkpoints/normalizer", f"{self.name}_normalizer.pt"
+        )
+        if os.path.exists(normalizer_ckpt_path):
+            print(f"Loading existing normalizer from {normalizer_ckpt_path}")
+            self.learned_normalizer.load(normalizer_ckpt_path)
+        else:
+            print("No learned normalizer checkpoint found, training new normalizer.")
+            self.learned_normalizer.compute_group_stats()
+            self.learned_normalizer.train_normalizer()
+            self.learned_normalizer.save(path=normalizer_ckpt_path)

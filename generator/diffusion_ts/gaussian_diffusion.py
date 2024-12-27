@@ -401,10 +401,7 @@ class Diffusion_TS(nn.Module):
             total_loss = 0.0
 
             # Freeze conditioning module after warm-up
-            if (
-                self.current_epoch > self.warm_up_epochs
-                and self.cfg.model.freeze_cond_after_warmup
-            ):
+            if self.current_epoch > self.warm_up_epochs:
                 for param in self.conditioning_module.parameters():
                     param.requires_grad = False
 
