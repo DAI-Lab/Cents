@@ -12,7 +12,6 @@ def evaluate_single_dataset_model(cfg: DictConfig):
     elif cfg.dataset.name == "openpower":
         dataset = OpenPowerDataset(cfg.dataset)
 
-    rarity = dataset.get_conditioning_var_combination_rarities()
     non_pv_user_evaluator = Evaluator(cfg, dataset)
     non_pv_user_evaluator.evaluate_model()
 

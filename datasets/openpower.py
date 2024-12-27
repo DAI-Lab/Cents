@@ -50,6 +50,7 @@ class OpenPowerDataset(TimeSeriesDataset):
 
         conditioning_vars = list(self.cfg.conditioning_vars.keys())
         normalization_group_keys = ["dataid", "year", "month", "weekday", "date_day"]
+        # normalization_group_keys = ["year", "month", "date_day"]
 
         super().__init__(
             data=self.data,

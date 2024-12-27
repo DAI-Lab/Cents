@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import torch
 import wandb
-from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from sklearn.metrics import f1_score, precision_score, recall_score
 
@@ -46,14 +45,6 @@ class Evaluator:
         self.real_dataset = real_dataset
         self.cfg = cfg
         self.model_name = cfg.model.name
-        self.metrics: Dict[str, List] = {
-            "dtw": [],
-            "mmd": [],
-            "mse": [],
-            "fid": [],
-            "discriminative": [],
-            "predictive": [],
-        }
 
         wandb.init(
             config=OmegaConf.to_container(cfg, resolve=True),
@@ -189,13 +180,16 @@ class Evaluator:
         syn_data_array = np.stack(syn_data_inv["timeseries"])
 
         # Compute metrics
-        self.compute_metrics(real_data_array, syn_data_array, real_data_inv)
+        if self.cfg.evaluator.eval_metrics:
+            self.compute_metrics(real_data_array, syn_data_array, real_data_inv)
 
         # Generate plots
-        self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
+        if self.cfg.evaluator.eval_vis:
+            self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
 
         # Evaluate conditioning module rarity predictions
-        self.evaluate_conditioning_module(model)
+        if self.cfg.evaluator.eval_cond:
+            self.evaluate_conditioning_module(model)
 
     def compute_metrics(
         self, real_data: np.ndarray, syn_data: np.ndarray, real_data_frame: pd.DataFrame
@@ -212,7 +206,6 @@ class Evaluator:
         logger.info(f"--- Starting DTW distance computation ---")
         dtw_mean, dtw_std = dynamic_time_warping_dist(real_data, syn_data)
         wandb.log({"DTW/mean": dtw_mean, "DTW/std": dtw_std})
-        self.metrics["dtw"].append((dtw_mean, dtw_std))
         logger.info(f"--- DTW distance computation complete ---")
         logger.info("----------------------")
 
@@ -220,7 +213,6 @@ class Evaluator:
         logger.info(f"--- Starting MMD computation ---")
         mmd_mean, mmd_std = calculate_mmd(real_data, syn_data)
         wandb.log({"MMD/mean": mmd_mean, "MMD/std": mmd_std})
-        self.metrics["mmd"].append((mmd_mean, mmd_std))
         logger.info(f"--- MMD computation complete ---")
         logger.info("----------------------")
 
@@ -228,7 +220,6 @@ class Evaluator:
         logger.info(f"--- Starting Bounded MSE computation ---")
         mse_mean, mse_std = calculate_period_bound_mse(real_data_frame, syn_data)
         wandb.log({"MSE/mean": mse_mean, "MSE/std": mse_std})
-        self.metrics["mse"].append((mse_mean, mse_std))
         logger.info(f"--- Bounded MSE computation complete ---")
         logger.info("----------------------")
 
@@ -236,7 +227,6 @@ class Evaluator:
         logger.info(f"--- Starting Context FID computation ---")
         fid_score = Context_FID(real_data, syn_data)
         wandb.log({"Context_FID": fid_score})
-        self.metrics["fid"].append(fid_score)
         logger.info(f"--- Context FID computation complete ---")
         logger.info("----------------------")
 
@@ -244,7 +234,6 @@ class Evaluator:
         logger.info(f"--- Starting Discriminative Score computation ---")
         discr_score, _, _ = discriminative_score_metrics(real_data, syn_data)
         wandb.log({"Disc_Score": discr_score})
-        self.metrics["discriminative"].append(discr_score)
         logger.info(f"--- Discriminative Score computation complete ---")
         logger.info("----------------------")
 
@@ -252,7 +241,6 @@ class Evaluator:
         logger.info(f"--- Starting Predictive Score computation ---")
         pred_score = predictive_score_metrics(real_data, syn_data)
         wandb.log({"Pred_Score": pred_score})
-        self.metrics["predictive"].append(pred_score)
         logger.info(f"--- Predictive Score computation complete ---")
         logger.info("----------------------")
 
@@ -380,27 +368,6 @@ class Evaluator:
 
         model.train_model(dataset)
         return model
-
-    def get_summary_metrics(self) -> Dict[str, float]:
-        """
-        Calculate the mean values for all metrics.
-
-        Returns:
-            Dict[str, float]: Mean values for each metric.
-        """
-        metrics_summary = {}
-        for metric_name, values in self.metrics.items():
-            if values:
-                if isinstance(values[0], tuple):
-                    # For metrics with mean and std
-                    metric_values = [value[0] for value in values]  # value[0] is mean
-                else:
-                    metric_values = values
-                metrics_summary[metric_name] = np.mean(metric_values)
-            else:
-                metrics_summary[metric_name] = None
-
-        return metrics_summary
 
     def evaluate_conditioning_module(
         self, model: Any, batch_size: int = 128

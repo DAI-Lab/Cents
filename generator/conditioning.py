@@ -1,13 +1,23 @@
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from sklearn.mixture import GaussianMixture
 
 
 class ConditioningModule(nn.Module):
-    def __init__(self, categorical_dims, embedding_dim, device, alpha=0.1):
-        super(ConditioningModule, self).__init__()
+    def __init__(self, categorical_dims, embedding_dim, device, n_components=10):
+        """
+        Args:
+            categorical_dims (dict): {var_name: num_categories} for each conditioning variable.
+            embedding_dim (int): Dimension of the latent embedding for each categorical variable.
+            device: Torch device (CPU or GPU).
+            n_components (int): Number of components for the Gaussian Mixture Model.
+            kl_alpha (float): Weight for KL regularization (hyperparam).
+        """
+        super().__init__()
         self.embedding_dim = embedding_dim
         self.device = device
-        self.alpha = alpha
 
         self.category_embeddings = nn.ModuleDict(
             {
@@ -17,25 +27,37 @@ class ConditioningModule(nn.Module):
         ).to(device)
 
         total_dim = len(categorical_dims) * embedding_dim
-        # Output mean and logvar
+
         self.mlp = nn.Sequential(
             nn.Linear(total_dim, 128),
             nn.ReLU(),
             nn.Linear(128, 2 * embedding_dim),
         ).to(device)
 
-        self.mean_embedding = None
-        self.cov_embedding = None
-        self.inverse_cov_embedding = None
-        self.n_samples = 0
+        # ====== GMM-Related Attributes ======
+        self.n_components = n_components
+        self.gmm = None  # Will hold a fitted GaussianMixture instance
+        self.log_prob_threshold = None  # Used to define rarity
 
     def forward(self, categorical_vars, sample=True):
-        embeddings = []
-        for name, embedding in self.category_embeddings.items():
-            var = categorical_vars[name].to(self.device)
-            embeddings.append(embedding(var))
-        conditioning_matrix = torch.cat(embeddings, dim=1)
+        """
+        Forward pass to compute mu and (optionally) sample z via reparameterization.
 
+        Args:
+            categorical_vars (dict): e.g. {var_name: Tensor[int64]}
+            sample (bool): If True, return z = mu + sigma*eps, else return mu.
+
+        Returns:
+            z (Tensor): The sampled embedding or just mu (shape: [batch_size, embedding_dim]).
+            mu (Tensor): The mean of the embedding distribution (shape: [batch_size, embedding_dim]).
+            logvar (Tensor): Log-variance (shape: [batch_size, embedding_dim]).
+        """
+        embeddings = []
+        for name, embedding_layer in self.category_embeddings.items():
+            cat_tensor = categorical_vars[name].to(self.device)
+            embeddings.append(embedding_layer(cat_tensor))
+
+        conditioning_matrix = torch.cat(embeddings, dim=1)
         stats = self.mlp(conditioning_matrix)
         mu = stats[:, : self.embedding_dim]
         logvar = stats[:, self.embedding_dim :]
@@ -49,107 +71,95 @@ class ConditioningModule(nn.Module):
 
     @staticmethod
     def reparameterize(mu, logvar):
+        """
+        Standard reparameterization trick: z = mu + sigma * eps
+        """
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
     def kl_divergence(self, mu, logvar):
-        # KL(q(z|x) || p(z)) where p(z)=N(0,I)
+        """
+        KL( q(z|x) || p(z) ), with p(z) = N(0, I).
+        """
         return -0.5 * torch.mean(
             torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
         )
 
-    def initialize_statistics(self, embeddings):
-        """
-        Initialize mean and covariance using the embeddings from the first batch after warm-up.
-        """
-        self.mean_embedding = torch.mean(embeddings, dim=0)
-        centered_embeddings = embeddings - self.mean_embedding.unsqueeze(0)
-        cov_matrix = torch.matmul(centered_embeddings.T, centered_embeddings) / (
-            embeddings.size(0) - 1
-        )
-        cov_matrix += (
-            torch.eye(cov_matrix.size(0)).to(self.device) * 1e-6
-        )  # For numerical stability
-        self.cov_embedding = cov_matrix
-        self.inverse_cov_embedding = torch.inverse(self.cov_embedding)
-        self.n_samples = embeddings.size(0)
+    # ====== GMM-BASED DENSITY & RARITY ======
 
-    def update_running_statistics(self, embeddings):
+    def fit_gmm(self, embeddings):
         """
-        Update mean and covariance using an EWMA algorithm.
+        Fit a Gaussian Mixture Model (GMM) to the provided embeddings (mu).
 
         Args:
-            embeddings (torch.Tensor): Batch of embedding vectors of shape (batch_size, embedding_dim).
+            embeddings (torch.Tensor or np.ndarray): shape (num_samples, embedding_dim)
         """
-        batch_size = embeddings.size(0)
+        if isinstance(embeddings, torch.Tensor):
+            embeddings = embeddings.cpu().numpy()
 
-        if self.n_samples == 0:
-            self.initialize_statistics(embeddings)
-            return
-
-        # Compute batch mean
-        batch_mean = torch.mean(embeddings, dim=0)
-
-        # Update mean using EWMA
-        # μ_t = α * μ_{t-1} + (1 - α) * μ_batch
-        self.mean_embedding = (
-            self.alpha * self.mean_embedding + (1 - self.alpha) * batch_mean
+        self.gmm = GaussianMixture(
+            n_components=self.n_components, covariance_type="full", random_state=42
         )
+        self.gmm.fit(embeddings)
 
-        # Compute batch covariance
-        centered_embeddings = embeddings - batch_mean.unsqueeze(0)
-        batch_cov = torch.matmul(centered_embeddings.T, centered_embeddings) / (
-            batch_size - 1
-        )
-        batch_cov += (
-            torch.eye(batch_cov.size(0)).to(self.device) * 1e-6
-        )  # Numerical stability
-
-        # Compute delta (change in mean)
-        delta = (
-            batch_mean - self.mean_embedding.detach()
-        )  # Detach to prevent gradients flowing
-
-        # Update covariance using EWMA
-        # Σ_t = α * Σ_{t-1} + (1 - α) * Σ_batch + (1 - α) * δ δ^T
-        delta_outer = torch.ger(delta, delta)  # Outer product δ δ^T
-        self.cov_embedding = (
-            self.alpha * self.cov_embedding
-            + (1 - self.alpha) * batch_cov
-            + (1 - self.alpha) * delta_outer
-        )
-
-        # Update inverse covariance
-        cov_embedding_reg = (
-            self.cov_embedding
-            + torch.eye(self.cov_embedding.size(0)).to(self.device) * 1e-6
-        )
-        self.inverse_cov_embedding = torch.inverse(cov_embedding_reg)
-
-    def compute_mahalanobis_distance(self, embeddings):
+    def set_rare_threshold(self, embeddings, fraction=0.1):
         """
-        Compute Mahalanobis distance for the given embeddings.
-        """
-        diff = embeddings - self.mean_embedding.unsqueeze(0)
-        left = torch.matmul(diff, self.inverse_cov_embedding)
-        mahalanobis_distance = torch.sqrt(torch.sum(left * diff, dim=1))
-        return mahalanobis_distance
-
-    def is_rare(self, embeddings, threshold=None, percentile=0.8):
-        """
-        Determine if the embeddings are rare based on Mahalanobis distance.
+        Compute a log-probability threshold so that approximately `fraction` of embeddings
+        lie below it -> define them as 'rare'.
 
         Args:
-            embeddings (torch.Tensor): The embeddings to evaluate. Shape is bs, hidden_size
-            threshold (float, optional): Specific Mahalanobis distance threshold.
-            percentile (float, optional): Percentile to define rarity if threshold is not provided.
+            embeddings (torch.Tensor or np.ndarray): shape (num_samples, embedding_dim)
+            fraction (float): fraction of samples considered 'rare'. e.g. 0.1 => 10%
+        """
+        if self.gmm is None:
+            raise ValueError("GMM is not fitted. Call `fit_gmm` first.")
+
+        if isinstance(embeddings, torch.Tensor):
+            embeddings = embeddings.cpu().numpy()
+
+        log_probs = self.gmm.score_samples(embeddings)
+        cutoff = np.percentile(log_probs, fraction * 100)
+        self.log_prob_threshold = cutoff
+
+    def compute_log_likelihood(self, embeddings):
+        """
+        Compute the log probability of each embedding under the GMM.
+
+        Args:
+            embeddings (torch.Tensor): shape (batch_size, embedding_dim)
 
         Returns:
-            rare_mask (torch.Tensor): A boolean mask indicating rare embeddings.
+            log_probs (torch.Tensor): shape (batch_size,)
         """
-        mahalanobis_distance = self.compute_mahalanobis_distance(embeddings)
-        if threshold is None:
-            threshold = torch.quantile(mahalanobis_distance, percentile)
-        rare_mask = mahalanobis_distance > threshold
+        if self.gmm is None:
+            raise ValueError("GMM is not fitted. Call `fit_gmm` first.")
+
+        if isinstance(embeddings, torch.Tensor):
+            embeddings_np = embeddings.cpu().numpy()
+        else:
+            embeddings_np = embeddings
+
+        # shape: (batch_size,)
+        log_probs_np = self.gmm.score_samples(embeddings_np)
+        return torch.from_numpy(log_probs_np).to(self.device)
+
+    def is_rare(self, embeddings):
+        """
+        Check if each embedding is 'rare' based on whether its log-likelihood
+        is below the configured threshold.
+
+        Args:
+            embeddings (torch.Tensor): shape (batch_size, embedding_dim)
+
+        Returns:
+            rare_mask (torch.BoolTensor): shape (batch_size,)
+        """
+        if self.log_prob_threshold is None:
+            raise ValueError(
+                "log_prob_threshold is not set. Call `set_rare_threshold` first."
+            )
+
+        log_probs = self.compute_log_likelihood(embeddings)
+        rare_mask = log_probs < self.log_prob_threshold
         return rare_mask
