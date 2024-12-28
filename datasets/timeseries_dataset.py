@@ -657,8 +657,8 @@ class TimeSeriesDataset(Dataset, ABC):
 
         normalizer_ckpt_path = os.path.join(
             ROOT_DIR,
-            f"checkpoints/{self.name}/scale_{self.cfg.scale}/normalizer",
-            f"{self.name}_normalizer.pt",
+            f"checkpoints/{self.name}/normalizer",
+            f"{self.name}_scale_{self.cfg.scale}_normalizer.pt",
         )
         if os.path.exists(normalizer_ckpt_path):
             print(f"Loading existing normalizer from {normalizer_ckpt_path}")
