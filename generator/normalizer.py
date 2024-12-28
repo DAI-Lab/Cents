@@ -17,61 +17,83 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class StatsHead(nn.Module):
     """
     A small MLP that maps from the embedding z (from ConditioningModule)
-    to [pred_mu[dims], pred_log_sigma[dims]] for n_dims dimensions.
+    to dimension-wise [mu, sigma] or [mu, sigma, z_min, z_max].
     """
 
-    def __init__(self, embedding_dim: int, hidden_dim: int, n_dims: int):
+    def __init__(
+        self, embedding_dim: int, hidden_dim: int, n_dims: int, do_scale: bool
+    ):
         super().__init__()
         self.n_dims = n_dims
-        # Final layer must produce 2*n_dims
+        self.do_scale = do_scale
+        out_dim = 4 * n_dims if do_scale else 2 * n_dims
+
         self.net = nn.Sequential(
             nn.Linear(embedding_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 2 * n_dims),  # 2 per dimension => mu + log_sigma
+            nn.Linear(hidden_dim, out_dim),
         )
 
     def forward(self, z: torch.Tensor):
         """
-        z: (batch_size, embedding_dim)
+        z: shape (batch_size, embedding_dim)
 
         Returns:
-          pred_mu: shape (batch_size, n_dims)
-          pred_sigma: shape (batch_size, n_dims)
+          pred_mu, pred_sigma (always shape (batch_size, n_dims))
+
+          If self.do_scale == True, also returns pred_z_min, pred_z_max
+          each (batch_size, n_dims). Otherwise, returns (None, None).
         """
-        out = self.net(z)  # shape (batch_size, 2*n_dims)
+        out = self.net(z)  # shape (batch_size, out_dim)
         batch_size = out.size(0)
 
-        # Split into mu and log_sigma
-        out = out.view(batch_size, 2, self.n_dims)  # (batch_size, 2, n_dims)
-        pred_mu = out[:, 0, :]  # (batch_size, n_dims)
-        pred_log_sigma = out[:, 1, :]  # (batch_size, n_dims)
+        if self.do_scale:
+            # 4 per dimension: [mu, log_sigma, z_min, z_max]
+            out = out.view(batch_size, 4, self.n_dims)
+            pred_mu = out[:, 0, :]  # (batch_size, n_dims)
+            pred_log_sigma = out[:, 1, :]
+            pred_z_min = out[:, 2, :]
+            pred_z_max = out[:, 3, :]
+        else:
+            # 2 per dimension: [mu, log_sigma]
+            out = out.view(batch_size, 2, self.n_dims)
+            pred_mu = out[:, 0, :]
+            pred_log_sigma = out[:, 1, :]
+            pred_z_min = None
+            pred_z_max = None
+
         pred_sigma = torch.exp(pred_log_sigma)
-        return pred_mu, pred_sigma
+
+        return pred_mu, pred_sigma, pred_z_min, pred_z_max
 
 
 class NormalizerModule(nn.Module):
     """
-    ConditioningModule + StatsHead for multi-dimensional means/stds.
+    ConditioningModule + multi-dim StatsHead for
+    [mu, sigma, (optionally) z_min, z_max].
     """
 
-    def __init__(self, cond_module: nn.Module, hidden_dim: int, n_dims: int):
+    def __init__(
+        self, cond_module: nn.Module, hidden_dim: int, n_dims: int, do_scale: bool
+    ):
         super().__init__()
         self.cond_module = cond_module
         self.embedding_dim = cond_module.embedding_dim
-        self.n_dims = n_dims
-
         self.stats_head = StatsHead(
-            embedding_dim=self.embedding_dim, hidden_dim=hidden_dim, n_dims=n_dims
+            embedding_dim=self.embedding_dim,
+            hidden_dim=hidden_dim,
+            n_dims=n_dims,
+            do_scale=do_scale,
         )
 
     def forward(self, cat_vars_dict: Dict[str, torch.Tensor]):
         """
-        cat_vars_dict: {var_name -> LongTensor(batch_size,)}
-        Returns: pred_mu, pred_sigma each (batch_size, n_dims)
+        Returns:
+          pred_mu, pred_sigma: always (batch_size, n_dims)
+          pred_z_min, pred_z_max: (batch_size, n_dims) if do_scale=True else (None, None)
         """
         z, _, _ = self.cond_module(cat_vars_dict, sample=False)
-        pred_mu, pred_sigma = self.stats_head(z)
-        return pred_mu, pred_sigma
+        return self.stats_head(z)
 
 
 class Normalizer:
@@ -96,6 +118,7 @@ class Normalizer:
         """
         self.dataset_cfg = cfg
         self.normalizer_cfg = self._init_normalizer_config()
+        self.do_scale = cfg.scale
         self.dataset = dataset
         self.context_vars = dataset.conditioning_vars  # e.g. ["month", "weekday", ...]
         self.time_series_cols = dataset.time_series_column_names  # multi-dim columns
@@ -116,211 +139,253 @@ class Normalizer:
             cond_module=cond_module,
             hidden_dim=self.normalizer_cfg.hidden_dim,
             n_dims=self.n_dims,
+            do_scale=self.do_scale,
         ).to(self.normalizer_cfg.device)
 
         self.optim = None
 
     def compute_group_stats(self):
         """
-        For each row, compute dimension-wise row_mean, row_std across
-        self.time_series_cols, then group by context -> average dimension-wise.
+        For each row, compute dimension-wise row_mean, row_std,
+        then compute row_z = (arr - row_mean)/row_std for each dimension
+        to find row_z_min, row_z_max if scale is True.
+        Finally, group-average them by context.
         """
         df = self.dataset.data.copy()
 
-        # Per-row dimension arrays
         row_means_list = []
         row_stds_list = []
+        row_z_min_list = []
+        row_z_max_list = []
 
-        for i, row in df.iterrows():
+        for _, row in df.iterrows():
             dims_mean = []
             dims_std = []
-            # Loop over each dimension column
+            dims_z_min = []
+            dims_z_max = []
+
             for col_name in self.time_series_cols:
                 arr = np.array(row[col_name], dtype=np.float32).flatten()
-                dims_mean.append(arr.mean())
-                dims_std.append(arr.std())
+                m = arr.mean()
+                s = arr.std() + 1e-8
+                dims_mean.append(m)
+                dims_std.append(s)
+                if self.do_scale:  # we only do z_min, z_max if scale=True
+                    z = (arr - m) / s
+                    dims_z_min.append(z.min())
+                    dims_z_max.append(z.max())
+
             row_means_list.append(np.array(dims_mean, dtype=np.float32))
             row_stds_list.append(np.array(dims_std, dtype=np.float32))
 
+            if self.do_scale:
+                row_z_min_list.append(np.array(dims_z_min, dtype=np.float32))
+                row_z_max_list.append(np.array(dims_z_max, dtype=np.float32))
+            else:
+                row_z_min_list.append(None)
+                row_z_max_list.append(None)
+
         df["row_means_array"] = row_means_list
         df["row_stds_array"] = row_stds_list
+        if self.do_scale:
+            df["row_z_min_array"] = row_z_min_list
+            df["row_z_max_array"] = row_z_max_list
 
-        # Group by context vars, average dimension arrays
+        # Now group by context and average dimension arrays
         grouped_stats = {}
         for group_vals, group_df in df.groupby(self.context_vars):
-            # shape (n_samples_in_group,) each an array of shape (n_dims,)
-            mean_arrays = list(group_df["row_means_array"])
-            std_arrays = list(group_df["row_stds_array"])
+            mean_arrays = np.stack(group_df["row_means_array"], axis=0)
+            std_arrays = np.stack(group_df["row_stds_array"], axis=0)
+            mu_array = mean_arrays.mean(axis=0)
+            sigma_array = std_arrays.mean(axis=0)
 
-            mean_arrays = np.stack(mean_arrays, axis=0)  # (n_group, n_dims)
-            std_arrays = np.stack(std_arrays, axis=0)  # (n_group, n_dims)
+            if self.do_scale:
+                z_min_arrays = np.stack(group_df["row_z_min_array"], axis=0)
+                z_max_arrays = np.stack(group_df["row_z_max_array"], axis=0)
+                z_min_array = z_min_arrays.mean(axis=0)
+                z_max_array = z_max_arrays.mean(axis=0)
+            else:
+                z_min_array = None
+                z_max_array = None
 
-            mu_array = mean_arrays.mean(axis=0)  # shape (n_dims,)
-            sigma_array = std_arrays.mean(axis=0)  # shape (n_dims,)
-
-            grouped_stats[tuple(group_vals)] = (mu_array, sigma_array)
+            grouped_stats[tuple(group_vals)] = (
+                mu_array,
+                sigma_array,
+                z_min_array,
+                z_max_array,
+            )
 
         self.group_stats = grouped_stats
 
     def create_training_dataset(self):
-        """
-        Yields (cat_vars_dict, mu_array, sigma_array) with shape (n_dims,).
-        """
-        if not self.group_stats:
-            raise ValueError(
-                "No group_stats found. Please run compute_group_stats() first."
-            )
-
         data_tuples = []
-        for ctx_tuple, (mu_arr, sigma_arr) in self.group_stats.items():
-            data_tuples.append((ctx_tuple, mu_arr, sigma_arr))
+        for ctx_tuple, (
+            mu_arr,
+            sigma_arr,
+            zmin_arr,
+            zmax_arr,
+        ) in self.group_stats.items():
+            # If scale=False, zmin_arr, zmax_arr could be None. We'll store zeros or something
+            if self.do_scale and zmin_arr is not None and zmax_arr is not None:
+                data_tuples.append((ctx_tuple, mu_arr, sigma_arr, zmin_arr, zmax_arr))
+            else:
+                data_tuples.append((ctx_tuple, mu_arr, sigma_arr, None, None))
 
         class _TrainSet(Dataset):
-            def __init__(self, data_tuples, context_vars, n_dims):
+            def __init__(self, samples, context_vars, n_dims, do_scale):
                 super().__init__()
-                self.samples = data_tuples
+                self.samples = samples
                 self.context_vars = context_vars
                 self.n_dims = n_dims
+                self.do_scale = do_scale
 
             def __len__(self):
                 return len(self.samples)
 
             def __getitem__(self, idx):
-                ctx_tuple, mu_array, sigma_array = self.samples[idx]
+                ctx_tuple, mu_arr, sigma_arr, zmin_arr, zmax_arr = self.samples[idx]
                 cat_vars_dict = {}
                 for i, var_name in enumerate(self.context_vars):
                     cat_vars_dict[var_name] = torch.tensor(
                         ctx_tuple[i], dtype=torch.long
                     )
-                # Convert dimension arrays to Tensors => shape (n_dims,)
-                mu_t = torch.from_numpy(mu_array).float()
-                sigma_t = torch.from_numpy(sigma_array).float()
-                return cat_vars_dict, mu_t, sigma_t
+                mu_t = torch.from_numpy(mu_arr).float()
+                sigma_t = torch.from_numpy(sigma_arr).float()
 
-        return _TrainSet(data_tuples, self.context_vars, self.n_dims)
+                if self.do_scale and (zmin_arr is not None) and (zmax_arr is not None):
+                    zmin_t = torch.from_numpy(zmin_arr).float()
+                    zmax_t = torch.from_numpy(zmax_arr).float()
+                else:
+                    # If scale=False or they're None
+                    zmin_t = None
+                    zmax_t = None
+
+                return cat_vars_dict, mu_t, sigma_t, zmin_t, zmax_t
+
+        return _TrainSet(self.samples, self.context_vars, self.n_dims, self.do_scale)
 
     def train_normalizer(self):
-        """
-        Train the normalizer model to predict (mu_array, sigma_array) for n_dims dims,
-        assuming the DataLoader already produces:
-        cat_vars_dict: {var_name -> LongTensor(batch_size,)}
-        mu_tensor: shape (batch_size, n_dims)
-        sigma_tensor: shape (batch_size, n_dims)
-        """
-        train_dataset = self.create_training_dataset()
-        # The DataLoader must be returning (cat_vars_dict, mu_tensor, sigma_tensor)
-        # with the shapes described above.
-        train_loader = DataLoader(
-            train_dataset, batch_size=self.normalizer_cfg.batch_size, shuffle=True
-        )
+        ds = self.create_training_dataset()
+        loader = DataLoader(ds, batch_size=self.normalizer_cfg.batch_size, shuffle=True)
 
         self.optim = torch.optim.Adam(
             self.normalizer_model.parameters(), lr=self.normalizer_cfg.lr
         )
-
         self.normalizer_model.train()
+
         for epoch in range(self.normalizer_cfg.n_epochs):
             epoch_loss = 0.0
+            for batch in loader:
+                cat_vars_dict, mu_t, sigma_t, zmin_t, zmax_t = batch
 
-            for cat_vars_dict, mu_tensor, sigma_tensor in train_loader:
+                # Move to device
                 for var_name in cat_vars_dict:
                     cat_vars_dict[var_name] = cat_vars_dict[var_name].to(self.device)
+                mu_t = mu_t.to(self.device)
+                sigma_t = sigma_t.to(self.device)
 
-                mu_tensor = mu_tensor.to(self.device)  # (batch_size, n_dims)
-                sigma_tensor = sigma_tensor.to(self.device)  # (batch_size, n_dims)
+                if self.do_scale and (zmin_t is not None) and (zmax_t is not None):
+                    zmin_t = zmin_t.to(self.device)
+                    zmax_t = zmax_t.to(self.device)
 
                 self.optim.zero_grad()
-                pred_mu, pred_sigma = self.normalizer_model(cat_vars_dict)
 
-                # 3) Compute losses
-                loss_mu = F.mse_loss(pred_mu, mu_tensor)
-                loss_sigma = F.mse_loss(pred_sigma, sigma_tensor)
-                loss = loss_mu + loss_sigma
-                loss.backward()
+                pred_mu, pred_sigma, pred_z_min, pred_z_max = self.normalizer_model(
+                    cat_vars_dict
+                )
+                # pred_mu, pred_sigma always shape (bs, n_dims)
+                # pred_z_min, pred_z_max either shape (bs, n_dims) or None
+
+                loss_mu = F.mse_loss(pred_mu, mu_t)
+                loss_sigma = F.mse_loss(pred_sigma, sigma_t)
+                total_loss = loss_mu + loss_sigma
+
+                if (
+                    self.do_scale
+                    and pred_z_min is not None
+                    and pred_z_max is not None
+                    and zmin_t is not None
+                    and zmax_t is not None
+                ):
+                    loss_z_min = F.mse_loss(pred_z_min, zmin_t)
+                    loss_z_max = F.mse_loss(pred_z_max, zmax_t)
+                    total_loss += loss_z_min + loss_z_max
+
+                total_loss.backward()
                 self.optim.step()
+                epoch_loss += total_loss.item()
 
-                epoch_loss += loss.item()
-            print(f"epoch {epoch}/{self.normalizer_cfg.n_epochs}: Loss: {epoch_loss}")
-
-    def transform(self, use_model: bool = False) -> pd.DataFrame:
-        """
-        For each row, dimension-wise:
-          - Build cat_vars_dict
-          - Get (mu_array, sigma_array) from model or group_stats
-          - For each dimension col, do (col_data - mu[d]) / sigma[d].
-        """
-        df = self.dataset.data.copy()
-        if use_model and (self.normalizer_model is None):
-            raise ValueError(
-                "No trained normalizer_model found. Did you call train_normalizer()?"
+            print(
+                f"Epoch {epoch+1}/{self.normalizer_cfg.n_epochs}: Loss={epoch_loss:.4f}"
             )
 
+    def transform(self, use_model: bool = False) -> pd.DataFrame:
+        df = self.dataset.data.copy()
         for i, row in df.iterrows():
-            # Build cat_vars
-            cat_vars_dict = {}
-            for var_name in self.context_vars:
-                cat_vars_dict[var_name] = torch.tensor(
-                    row[var_name], dtype=torch.long, device=self.device
+            cat_vars_dict = {
+                vn: torch.tensor(
+                    row[vn], dtype=torch.long, device=self.device
                 ).unsqueeze(0)
+                for vn in self.context_vars
+            }
 
-            if use_model and self.normalizer_model is not None:
+            if use_model:
                 with torch.no_grad():
-                    pred_mu, pred_sigma = self.normalizer_model(cat_vars_dict)
-                mu_arr = pred_mu[0].cpu().numpy()  # shape (n_dims,)
-                sigma_arr = pred_sigma[0].cpu().numpy()
-            else:
-                ctx_tuple = tuple(row[var] for var in self.context_vars)
-                if ctx_tuple in self.group_stats:
-                    mu_arr, sigma_arr = self.group_stats[ctx_tuple]
+                    pmu, psigma, pzmin, pzmax = self.normalizer_model(cat_vars_dict)
+                mu_arr = pmu[0].cpu().numpy()
+                sigma_arr = psigma[0].cpu().numpy()
+                if self.do_scale and pzmin is not None and pzmax is not None:
+                    zmin_arr = pzmin[0].cpu().numpy()
+                    zmax_arr = pzmax[0].cpu().numpy()
                 else:
-                    mu_arr = np.zeros(self.n_dims, dtype=np.float32)
-                    sigma_arr = np.ones(self.n_dims, dtype=np.float32)
+                    zmin_arr = None
+                    zmax_arr = None
+            else:
+                ctx_tuple = tuple(row[vn] for vn in self.context_vars)
+                mu_arr, sigma_arr, zmin_arr, zmax_arr = self.group_stats[ctx_tuple]
 
-            # Dimension-wise transform
-            for dim_idx, col_name in enumerate(self.time_series_cols):
+            for d, col_name in enumerate(self.time_series_cols):
                 arr = np.array(row[col_name], dtype=np.float32)
-                arr_norm = (arr - mu_arr[dim_idx]) / (sigma_arr[dim_idx] + 1e-8)
-                df.at[i, col_name] = arr_norm
-
+                z = (arr - mu_arr[d]) / (sigma_arr[d] + 1e-8)
+                if self.do_scale and (zmin_arr is not None) and (zmax_arr is not None):
+                    rng = (zmax_arr[d] - zmin_arr[d]) + 1e-8
+                    z = (z - zmin_arr[d]) / rng
+                df.at[i, col_name] = z
         return df
 
     def inverse_transform(
         self, df: pd.DataFrame, use_model: bool = True
     ) -> pd.DataFrame:
-        """
-        Inverse dimension-wise transform:
-          arr_orig = arr_norm * sigma[d] + mu[d].
-        """
-        if use_model and (self.normalizer_model is None):
-            raise ValueError(
-                "No trained normalizer_model found. Did you call train_normalizer()?"
-            )
-
         for i, row in df.iterrows():
-            cat_vars_dict = {}
-            for var_name in self.context_vars:
-                cat_vars_dict[var_name] = torch.tensor(
-                    row[var_name], dtype=torch.long, device=self.device
+            cat_vars_dict = {
+                vn: torch.tensor(
+                    row[vn], dtype=torch.long, device=self.device
                 ).unsqueeze(0)
+                for vn in self.context_vars
+            }
 
-            if use_model and self.normalizer_model is not None:
+            if use_model:
                 with torch.no_grad():
-                    pred_mu, pred_sigma = self.normalizer_model(cat_vars_dict)
-                mu_arr = pred_mu[0].cpu().numpy()
-                sigma_arr = pred_sigma[0].cpu().numpy()
-            else:
-                ctx_tuple = tuple(row[var] for var in self.context_vars)
-                if ctx_tuple in self.group_stats:
-                    mu_arr, sigma_arr = self.group_stats[ctx_tuple]
+                    pmu, psigma, pzmin, pzmax = self.normalizer_model(cat_vars_dict)
+                mu_arr = pmu[0].cpu().numpy()
+                sigma_arr = psigma[0].cpu().numpy()
+                if self.do_scale and pzmin is not None and pzmax is not None:
+                    zmin_arr = pzmin[0].cpu().numpy()
+                    zmax_arr = pzmax[0].cpu().numpy()
                 else:
-                    mu_arr = np.zeros(self.n_dims, dtype=np.float32)
-                    sigma_arr = np.ones(self.n_dims, dtype=np.float32)
+                    zmin_arr = None
+                    zmax_arr = None
+            else:
+                ctx_tuple = tuple(row[vn] for vn in self.context_vars)
+                mu_arr, sigma_arr, zmin_arr, zmax_arr = self.group_stats[ctx_tuple]
 
-            for dim_idx, col_name in enumerate(self.time_series_cols):
-                arr_norm = np.array(row[col_name], dtype=np.float32)
-                arr_orig = arr_norm * (sigma_arr[dim_idx] + 1e-8) + mu_arr[dim_idx]
+            for d, col_name in enumerate(self.time_series_cols):
+                z = np.array(row[col_name], dtype=np.float32)
+                if self.do_scale and (zmin_arr is not None) and (zmax_arr is not None):
+                    rng = (zmax_arr[d] - zmin_arr[d]) + 1e-8
+                    z = z * rng + zmin_arr[d]
+                arr_orig = z * (sigma_arr[d] + 1e-8) + mu_arr[d]
                 df.at[i, col_name] = arr_orig
-
         return df
 
     def save(self, path: str = None, epoch: int = None):
@@ -342,7 +407,9 @@ class Normalizer:
         print(f"Saved Normalizer checkpoint to {path}")
 
     def load(self, path: str):
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(
+            path, map_location=torch.device(self.normalizer_cfg.device)
+        )
         self.normalizer_model.load_state_dict(checkpoint["normalizer_model_state"])
         print(f"Loaded Normalizer from {path}")
 

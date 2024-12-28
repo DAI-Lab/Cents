@@ -8,7 +8,6 @@ import pandas as pd
 import torch
 from hydra import compose, initialize_config_dir
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 from torch.utils.data import Dataset
 
 from datasets.utils import encode_conditioning_variables
@@ -404,10 +403,10 @@ class TimeSeriesDataset(Dataset, ABC):
         Returns:
             pd.DataFrame: DataFrame with the original (un-normalized and un-scaled) time series.
         """
+        data = self.split_timeseries(data)
+
         if self.use_learned_normalizer:
             data = self.learned_normalizer.inverse_transform(data, use_model=True)
-
-        data = self.split_timeseries(data)
 
         if not self.use_learned_normalizer:
             for column in self.time_series_column_names:
@@ -658,7 +657,7 @@ class TimeSeriesDataset(Dataset, ABC):
 
         normalizer_ckpt_path = os.path.join(
             ROOT_DIR,
-            f"checkpoints/{self.name}/normalizer",
+            f"checkpoints/{self.name}/scale_{self.cfg.scale}/normalizer",
             f"{self.name}_normalizer.pt",
         )
         if os.path.exists(normalizer_ckpt_path):
