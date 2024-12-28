@@ -3,7 +3,7 @@ geography: null
 normalize: True
 scale: True
 use_learned_normalizer: True
-threshold: 20 # int, clips values within +-threshold stds
+threshold: 8 # int, clips values within +-threshold stds
 include_generation: False
 seq_len: 96
 input_dim: 1
