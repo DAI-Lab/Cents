@@ -94,6 +94,7 @@ class DDPM(nn.Module):
         self.beta_start = cfg.model.beta_start
         self.beta_end = cfg.model.beta_end
         self.current_epoch = 0
+        self.conditioning_var_n_categories = cfg.dataset.conditioning_vars
 
         self.conditioning_module = ConditioningModule(
             categorical_dims=cfg.dataset.conditioning_vars,
