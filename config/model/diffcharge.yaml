@@ -23,3 +23,4 @@ n_steps: 1000
 schedule: linear # quadratic, cosine
 warm_up_epochs: 100
 save_cycle: 200 # specify number of epochs to save model after
+sampling_batch_size: 1024

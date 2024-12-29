@@ -8,6 +8,8 @@ License: MIT License
 Modifications:
 - Conditioning and sampling logic
 - Added further functions and removed unused functionality
+- Warm-up logic for the conditioning module
+- GMM-based rarity detection after warm-up
 
 Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
 """
@@ -20,8 +22,10 @@ from functools import partial
 
 import torch
 import torch.nn.functional as F
+import wandb
 from einops import reduce
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
+from sklearn.mixture import GaussianMixture
 from torch import nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -53,48 +57,49 @@ def cosine_beta_schedule(timesteps, device, s=0.004):
 
 class Diffusion_TS(nn.Module):
     def __init__(self, cfg: DictConfig):
-        super(Diffusion_TS, self).__init__()
+        super().__init__()
         self.cfg = cfg
-        self.eta, self.use_ff = cfg.model.eta, cfg.model.use_ff
+        self.eta = cfg.model.eta
+        self.use_ff = cfg.model.use_ff
         self.seq_len = cfg.dataset.seq_len
         self.input_dim = cfg.dataset.input_dim
-        self.ff_weight = default(
-            cfg.model.reg_weight, math.sqrt(cfg.dataset.seq_len) / 5
-        )
+        self.ff_weight = default(cfg.model.reg_weight, math.sqrt(self.seq_len) / 5)
         self.device = cfg.device
         self.embedding_dim = cfg.model.cond_emb_dim
-        self.categorical_dims = cfg.dataset.conditioning_vars
+        self.conditioning_var_n_categories = cfg.dataset.conditioning_vars
         self.warm_up_epochs = cfg.model.warm_up_epochs
         self.sparse_conditioning_loss_weight = cfg.model.sparse_conditioning_loss_weight
-        self.kl_weight = cfg.model.kl_weight  # Ensure you have this in your config
+        self.kl_weight = cfg.model.kl_weight
+        self.gmm_fitted = False
+        self.current_epoch = 0
+        self.wandb_enabled = getattr(self.cfg, "wandb_enabled", False)
 
         self.conditioning_module = ConditioningModule(
-            self.categorical_dims, self.embedding_dim, self.device
+            self.conditioning_var_n_categories, self.embedding_dim, self.device
         ).to(self.device)
 
         self.fc = nn.Linear(self.input_dim + self.embedding_dim, self.input_dim)
 
         self.model = Transformer(
             n_feat=self.input_dim + self.embedding_dim,
-            n_channel=self.cfg.dataset.seq_len,
-            n_layer_enc=self.cfg.model.n_layer_enc,
-            n_layer_dec=self.cfg.model.n_layer_dec,
-            n_heads=self.cfg.model.n_heads,
-            attn_pdrop=self.cfg.model.attn_pd,
-            resid_pdrop=self.cfg.model.resid_pd,
-            mlp_hidden_times=self.cfg.model.mlp_hidden_times,
-            max_len=self.cfg.dataset.seq_len,
-            n_embd=self.cfg.model.d_model,
-            conv_params=[self.cfg.model.kernel_size, self.cfg.model.padding_size],
+            n_channel=cfg.dataset.seq_len,
+            n_layer_enc=cfg.model.n_layer_enc,
+            n_layer_dec=cfg.model.n_layer_dec,
+            n_heads=cfg.model.n_heads,
+            attn_pdrop=cfg.model.attn_pd,
+            resid_pdrop=cfg.model.resid_pd,
+            mlp_hidden_times=cfg.model.mlp_hidden_times,
+            max_len=cfg.dataset.seq_len,
+            n_embd=cfg.model.d_model,
+            conv_params=[cfg.model.kernel_size, cfg.model.padding_size],
         )
 
-        # Beta schedule
-        if self.cfg.model.beta_schedule == "linear":
-            betas = linear_beta_schedule(self.cfg.model.n_steps, self.device)
-        elif self.cfg.model.beta_schedule == "cosine":
-            betas = cosine_beta_schedule(self.cfg.model.n_steps, self.device)
+        if cfg.model.beta_schedule == "linear":
+            betas = linear_beta_schedule(cfg.model.n_steps, self.device)
+        elif cfg.model.beta_schedule == "cosine":
+            betas = cosine_beta_schedule(cfg.model.n_steps, self.device)
         else:
-            raise ValueError(f"unknown beta schedule {self.cfg.model.beta_schedule}")
+            raise ValueError(f"unknown beta schedule {cfg.model.beta_schedule}")
 
         alphas = 1.0 - betas
         alphas_cumprod = torch.cumprod(alphas, dim=0).to(self.device)
@@ -104,52 +109,30 @@ class Diffusion_TS(nn.Module):
 
         (timesteps,) = betas.shape
         self.num_timesteps = int(timesteps)
-        self.loss_type = self.cfg.model.loss_type
-
-        # Sampling timesteps
-        self.sampling_timesteps = default(self.cfg.model.sampling_timesteps, timesteps)
+        self.loss_type = cfg.model.loss_type
+        self.sampling_timesteps = default(cfg.model.sampling_timesteps, timesteps)
         self.fast_sampling = self.sampling_timesteps < timesteps
 
-        register_buffer = lambda name, val: self.register_buffer(
-            name, val.to(torch.float32)
-        )
+        def regbuf(name, val):
+            self.register_buffer(name, val.to(torch.float32))
 
-        register_buffer("betas", betas)
-        register_buffer("alphas_cumprod", alphas_cumprod)
-        register_buffer("alphas_cumprod_prev", alphas_cumprod_prev)
-
-        register_buffer("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod))
-        register_buffer(
-            "sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod)
-        )
-        register_buffer("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod))
-        register_buffer("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
-        register_buffer(
-            "sqrt_recipm1_alphas_cumprod",
-            torch.sqrt(1.0 / alphas_cumprod - 1),
-        )
-
-        posterior_variance = (
-            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
-        ).to(self.device)
-        register_buffer("posterior_variance", posterior_variance)
-        register_buffer(
-            "posterior_log_variance_clipped",
-            torch.log(posterior_variance.clamp(min=1e-20)),
-        )
-        register_buffer(
-            "posterior_mean_coef1",
-            betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod),
-        )
-        register_buffer(
-            "posterior_mean_coef2",
-            (1.0 - alphas_cumprod_prev) * torch.sqrt(alphas) / (1.0 - alphas_cumprod),
-        )
-
-        register_buffer(
-            "loss_weight",
-            torch.sqrt(alphas) * torch.sqrt(1.0 - alphas_cumprod) / betas / 100,
-        )
+        regbuf("betas", betas)
+        regbuf("alphas_cumprod", alphas_cumprod)
+        regbuf("alphas_cumprod_prev", alphas_cumprod_prev)
+        regbuf("sqrt_alphas_cumprod", torch.sqrt(alphas_cumprod))
+        regbuf("sqrt_one_minus_alphas_cumprod", torch.sqrt(1.0 - alphas_cumprod))
+        regbuf("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod))
+        regbuf("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
+        regbuf("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1))
+        pv = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        regbuf("posterior_variance", pv)
+        regbuf("posterior_log_variance_clipped", torch.log(pv.clamp(min=1e-20)))
+        pmc1 = betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        pmc2 = (1.0 - alphas_cumprod_prev) * torch.sqrt(alphas) / (1.0 - alphas_cumprod)
+        regbuf("posterior_mean_coef1", pmc1)
+        regbuf("posterior_mean_coef2", pmc2)
+        lw = torch.sqrt(alphas) * torch.sqrt(1.0 - alphas_cumprod) / betas / 100
+        regbuf("loss_weight", lw)
 
     def predict_noise_from_start(self, x_t, t, x0):
         return (
@@ -163,99 +146,82 @@ class Diffusion_TS(nn.Module):
         )
 
     def q_posterior(self, x_start, x_t, t):
-        posterior_mean = (
+        pm = (
             extract(self.posterior_mean_coef1, t, x_t.shape) * x_start
             + extract(self.posterior_mean_coef2, t, x_t.shape) * x_t
         )
-        posterior_variance = extract(self.posterior_variance, t, x_t.shape)
-        posterior_log_variance_clipped = extract(
-            self.posterior_log_variance_clipped, t, x_t.shape
-        )
-        return posterior_mean, posterior_variance, posterior_log_variance_clipped
+        pv = extract(self.posterior_variance, t, x_t.shape)
+        plv = extract(self.posterior_log_variance_clipped, t, x_t.shape)
+        return pm, pv, plv
 
     def output(self, x, t, padding_masks=None, conditioning_vars=None):
+        mu, logvar = None, None
         if conditioning_vars is not None:
-            # Deterministic embeddings for stability
             z, mu, logvar = self.conditioning_module(conditioning_vars, sample=False)
-            conditioning_vector = mu.unsqueeze(1).repeat(1, self.seq_len, 1)
-            x = torch.cat([x, conditioning_vector], dim=-1)
-        else:
-            mu, logvar = None, None
-
+            cvec = mu.unsqueeze(1).repeat(1, self.seq_len, 1)
+            x = torch.cat([x, cvec], dim=-1)
         trend, season = self.model(x, t, padding_masks=padding_masks)
-        model_output = trend + season
-        out = self.fc(model_output)
+        model_out = trend + season
+        out = self.fc(model_out)
         return out, mu, logvar
 
     def model_predictions(self, x, t, conditioning_vars, clip_x_start=False):
-        maybe_clip = (
-            partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
-        )
+        fn = partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
         x_start, mu, logvar = self.output(x, t, conditioning_vars=conditioning_vars)
-        x_start = maybe_clip(x_start)
+        x_start = fn(x_start)
         pred_noise = self.predict_noise_from_start(x, t, x_start)
         return pred_noise, x_start
 
-    def p_sample(self, x, t: int, conditioning_vars, clip_denoised=True):
-        batched_times = torch.full((x.shape[0],), t, device=x.device, dtype=torch.long)
-        model_mean, _, model_log_variance, x_start = self.p_mean_variance(
-            x=x,
-            t=batched_times,
-            conditioning_vars=conditioning_vars,
-            clip_denoised=clip_denoised,
+    def p_sample(self, x, t, conditioning_vars, clip_denoised=True):
+        bt = torch.full((x.shape[0],), t, device=x.device, dtype=torch.long)
+        mm, _, mlv, x_start = self.p_mean_variance(
+            x, bt, conditioning_vars, clip_denoised
         )
         noise = torch.randn_like(x) if t > 0 else 0.0
-        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
-        return pred_img, x_start
+        return mm + (0.5 * mlv).exp() * noise, x_start
 
     def p_mean_variance(self, x, t, conditioning_vars, clip_denoised=True):
-        _, x_start = self.model_predictions(
+        pred_noise, x_start = self.model_predictions(
             x, t, conditioning_vars, clip_x_start=clip_denoised
         )
         if clip_denoised:
-            x_start.clamp_(-1.0, 1.0)
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
-            x_start=x_start, x_t=x, t=t
-        )
-        return model_mean, posterior_variance, posterior_log_variance, x_start
+            x_start = x_start.clamp(-1.0, 1.0)
+        pm, pv, plv = self.q_posterior(x_start, x, t)
+        return pm, pv, plv, x_start
 
     @torch.no_grad()
     def sample(self, shape, conditioning_vars):
-        device = self.betas.device
-        img = torch.randn(shape, device=device)
-        for t in tqdm(
+        dev = self.betas.device
+        img = torch.randn(shape, device=dev)
+        loop = tqdm(
             reversed(range(0, self.num_timesteps)),
             desc="sampling loop time step",
             total=self.num_timesteps,
-        ):
+        )
+        for t in loop:
             img, _ = self.p_sample(img, t, conditioning_vars)
         return img
 
     @torch.no_grad()
     def fast_sample(self, shape, conditioning_vars, clip_denoised=True):
-        batch, device, total_timesteps, sampling_timesteps, eta = (
-            shape[0],
-            self.betas.device,
-            self.num_timesteps,
-            self.sampling_timesteps,
-            self.eta,
-        )
-
-        times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)
+        batch = shape[0]
+        dev = self.betas.device
+        tt = self.num_timesteps
+        st = self.sampling_timesteps
+        eta = self.eta
+        times = torch.linspace(-1, tt - 1, steps=st + 1)
         times = list(reversed(times.int().tolist()))
-        time_pairs = list(zip(times[:-1], times[1:]))
-        img = torch.randn(shape, device=device)
-
-        for time, time_next in tqdm(time_pairs, desc="sampling loop time step"):
-            time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
-            pred_noise, x_start = self.model_predictions(
-                img, time_cond, conditioning_vars, clip_x_start=clip_denoised
+        pairs = list(zip(times[:-1], times[1:]))
+        img = torch.randn(shape, device=dev)
+        loop = tqdm(pairs, desc="sampling loop time step")
+        for time, time_next in loop:
+            bt = torch.full((batch,), time, device=dev, dtype=torch.long)
+            pn, xst = self.model_predictions(
+                img, bt, conditioning_vars, clip_x_start=clip_denoised
             )
-
             if time_next < 0:
-                img = x_start
+                img = xst
                 continue
-
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
             sigma = (
@@ -263,48 +229,55 @@ class Diffusion_TS(nn.Module):
             )
             c = (1 - alpha_next - sigma**2).sqrt()
             noise = torch.randn_like(img)
-            img = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
-
+            img = xst * alpha_next.sqrt() + c * pn + sigma * noise
         return img
 
     def sample_conditioning_vars(self, dataset, batch_size, random=False):
-        conditioning_vars = {}
+        d = {}
         if random:
-            for var_name, num_categories in self.categorical_dims.items():
-                conditioning_vars[var_name] = torch.randint(
-                    0,
-                    num_categories,
-                    (batch_size,),
-                    dtype=torch.long,
-                    device=self.device,
+            for v, nc in self.conditioning_var_n_categories.items():
+                d[v] = torch.randint(
+                    0, nc, (batch_size,), dtype=torch.long, device=self.device
                 )
         else:
-            sampled_rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
-            for var_name in self.categorical_dims.keys():
-                conditioning_vars[var_name] = torch.tensor(
-                    sampled_rows[var_name].values, dtype=torch.long, device=self.device
+            rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
+            for v in self.conditioning_var_n_categories.keys():
+                d[v] = torch.tensor(
+                    rows[v].values, dtype=torch.long, device=self.device
                 )
-
-        return conditioning_vars
+        return d
 
     def _generate(self, shape, conditioning_vars):
         self.eval()
         with torch.no_grad():
-            samples, mu, logvar = (
+            return (
                 self.fast_sample(shape, conditioning_vars)
                 if self.fast_sampling
                 else self.sample(shape, conditioning_vars)
             )
-            return samples
 
     def generate(self, conditioning_vars):
-        num_samples = len(conditioning_vars[list(conditioning_vars.keys())[0]])
-        shape = (num_samples, self.seq_len, self.input_dim)
+        bs = self.cfg.model.sampling_batch_size
+        total = len(next(iter(conditioning_vars.values())))
+        generated_samples = []
 
-        if self.cfg.model.use_ema_sampling:
-            return self.ema.ema_model._generate(shape, conditioning_vars)
-        else:
-            return self._generate(shape, conditioning_vars)
+        for start_idx in range(0, total, bs):
+            end_idx = min(start_idx + bs, total)
+            batch_conditioning_vars = {
+                var_name: var_tensor[start_idx:end_idx]
+                for var_name, var_tensor in conditioning_vars.items()
+            }
+            current_bs = end_idx - start_idx
+            shape = (current_bs, self.seq_len, self.input_dim)
+
+            if getattr(self.cfg.model, "use_ema_sampling", False):
+                samples = self.ema.ema_model._generate(shape, batch_conditioning_vars)
+            else:
+                samples = self._generate(shape, batch_conditioning_vars)
+
+            generated_samples.append(samples)
+
+        return torch.cat(generated_samples, dim=0)
 
     @property
     def loss_fn(self):
@@ -316,71 +289,71 @@ class Diffusion_TS(nn.Module):
             raise ValueError(f"invalid loss type {self.loss_type}")
 
     def q_sample(self, x_start, t, noise=None):
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        n = default(noise, lambda: torch.randn_like(x_start))
         return (
             extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-            + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
+            + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * n
         )
 
-    def _train_loss(
-        self,
-        x_start,
-        t,
-        target=None,
-        noise=None,
-        padding_masks=None,
-        conditioning_vars=None,
-    ):
-        # Obtain mu, logvar from conditioning module
+    def _train_loss(self, x_start, t, target=None, noise=None, conditioning_vars=None):
         with torch.set_grad_enabled(self.training):
             z, mu, logvar = self.conditioning_module(conditioning_vars, sample=False)
-
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        n = default(noise, lambda: torch.randn_like(x_start))
         if target is None:
             target = x_start
-
-        x = self.q_sample(x_start=x_start, t=t, noise=noise)
-        x_cat = torch.cat([x, mu.unsqueeze(1).repeat(1, self.seq_len, 1)], dim=-1)
-        trend, season = self.model(x_cat, t, padding_masks=padding_masks)
-        model_out = self.fc(trend + season)
-
-        train_loss = self.loss_fn(model_out, target, reduction="none")
-
+        x = self.q_sample(x_start, t, noise=n)
+        c = torch.cat([x, mu.unsqueeze(1).repeat(1, self.seq_len, 1)], dim=-1)
+        trend, season = self.model(c, t, padding_masks=None)
+        mo = self.fc(trend + season)
+        loss_main = self.loss_fn(mo, target, reduction="none")
         if self.use_ff:
-            fft1 = torch.fft.fft(model_out.transpose(1, 2), norm="forward")
+            fft1 = torch.fft.fft(mo.transpose(1, 2), norm="forward")
             fft2 = torch.fft.fft(target.transpose(1, 2), norm="forward")
             fft1, fft2 = fft1.transpose(1, 2), fft2.transpose(1, 2)
-            fourier_loss = self.loss_fn(
+            fl = self.loss_fn(
                 torch.real(fft1), torch.real(fft2), reduction="none"
             ) + self.loss_fn(torch.imag(fft1), torch.imag(fft2), reduction="none")
-            train_loss += self.ff_weight * fourier_loss
-
-        train_loss = reduce(train_loss, "b ... -> b (...)", "mean")
-        train_loss = train_loss * extract(self.loss_weight, t, train_loss.shape)
-        return train_loss.mean(), mu, logvar
+            loss_main += self.ff_weight * fl
+        loss_main = reduce(loss_main, "b ... -> b (...)", "mean")
+        lw = extract(self.loss_weight, t, loss_main.shape)
+        loss_main = loss_main * lw
+        return loss_main.mean(), mu, logvar
 
     def forward(self, x, conditioning_vars=None, **kwargs):
-        b, seq_len, input_dim = x.shape
-        assert seq_len == self.seq_len
-        assert input_dim == self.input_dim
+        b, s, d = x.shape
+        assert s == self.seq_len
+        assert d == self.input_dim
         t = torch.randint(0, self.num_timesteps, (b,), device=self.device).long()
         loss, mu, logvar = self._train_loss(
             x, t, conditioning_vars=conditioning_vars, **kwargs
         )
         return loss, mu, logvar
 
+    def _fit_gmm(self, loader):
+        all_mu = []
+        self.conditioning_module.eval()
+        with torch.no_grad():
+            for bx, cond_vars in loader:
+                bx = bx.to(self.device)
+                for k in cond_vars:
+                    cond_vars[k] = cond_vars[k].to(self.device)
+                l, mu, _ = self(bx, cond_vars)
+                all_mu.append(mu.cpu())
+        a = torch.cat(all_mu, dim=0)
+        self.conditioning_module.fit_gmm(a)
+        self.conditioning_module.set_rare_threshold(a, fraction=0.1)
+        self.gmm_fitted = True
+
     def train_model(self, train_dataset):
         self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         self.train()
         self.to(self.device)
-
-        train_loader = DataLoader(
+        loader = DataLoader(
             train_dataset,
             batch_size=self.cfg.model.batch_size,
             shuffle=self.cfg.dataset.shuffle,
             drop_last=True,
         )
-
         self.optimizer = Adam(
             filter(lambda p: p.requires_grad, self.parameters()),
             lr=self.cfg.model.base_lr,
@@ -395,177 +368,149 @@ class Diffusion_TS(nn.Module):
         self.scheduler = ReduceLROnPlateau(
             self.optimizer, **self.cfg.model.lr_scheduler_params
         )
+        if self.wandb_enabled and wandb is not None:
+            wandb.init(
+                project=self.cfg.wandb.project,
+                entity=self.cfg.wandb.entity,
+                config=self.cfg,
+                dir=self.cfg.run_dir,
+            )
 
-        for epoch in range(self.cfg.model.n_epochs):
+        for epoch in tqdm(
+            range(self.cfg.model.n_epochs), desc="Epoch", total=self.cfg.model.n_epochs
+        ):
             self.current_epoch = epoch + 1
             total_loss = 0.0
-
-            # Freeze conditioning module after warm-up
+            for param in self.conditioning_module.parameters():
+                param.requires_grad = True
             if self.current_epoch > self.warm_up_epochs:
                 for param in self.conditioning_module.parameters():
                     param.requires_grad = False
-
-            for i, (time_series_batch, conditioning_vars_batch) in enumerate(
-                train_loader
-            ):
-                time_series_batch = time_series_batch.to(self.device)
-                for key in conditioning_vars_batch:
-                    conditioning_vars_batch[key] = conditioning_vars_batch[key].to(
-                        self.device
-                    )
-
-                current_batch_size = time_series_batch.size(0)
-
+            for i, (ts_batch, cond_batch) in enumerate(loader):
+                ts_batch = ts_batch.to(self.device)
+                for k in cond_batch:
+                    cond_batch[k] = cond_batch[k].to(self.device)
+                bsz = ts_batch.size(0)
                 if self.current_epoch <= self.warm_up_epochs:
-                    # Warm-up period: no rarity, update running stats, apply KL
-                    loss, mu, logvar = self(
-                        time_series_batch, conditioning_vars=conditioning_vars_batch
-                    )
-                    # Update running statistics
-                    self.conditioning_module.update_running_statistics(mu.detach())
-
-                    # KL loss during warm-up
+                    loss, mu, logvar = self(ts_batch, conditioning_vars=cond_batch)
+                    kl_loss_val = 0.0
                     if mu is not None and logvar is not None:
-                        kl_loss = self.conditioning_module.kl_divergence(mu, logvar)
-                        loss = loss + self.kl_weight * kl_loss
-
+                        kl_loss_t = self.conditioning_module.kl_divergence(mu, logvar)
+                        kl_loss_val = kl_loss_t.item()
+                        loss = loss + self.kl_weight * kl_loss_t
+                    if self.wandb_enabled and wandb is not None:
+                        wandb.log(
+                            {"Loss/reconstruction": loss.item(), "Loss/KL": kl_loss_val}
+                        )
                 else:
-                    # Post warm-up: freeze conditioning module, compute rarity
-                    # No KL loss here
                     with torch.no_grad():
-                        _, mu, _ = self(
-                            time_series_batch, conditioning_vars=conditioning_vars_batch
-                        )
-                        # Do not backprop through this call
-                        mu_detach = mu.detach()
-                        rare_mask = (
-                            self.conditioning_module.is_rare(mu_detach)
-                            .float()
-                            .to(self.device)
-                        )
-
-                    # Separate rare and non-rare
-                    rare_indices = (rare_mask == 1.0).nonzero(as_tuple=True)[0]
-                    non_rare_indices = (rare_mask == 0.0).nonzero(as_tuple=True)[0]
-
+                        _, mu, _ = self(ts_batch, conditioning_vars=cond_batch)
+                        md = mu.detach()
+                        if self.gmm_fitted:
+                            rm = (
+                                self.conditioning_module.is_rare(md)
+                                .float()
+                                .to(self.device)
+                            )
+                        else:
+                            rm = torch.zeros((bsz,), device=self.device)
+                    ri = (rm == 1.0).nonzero(as_tuple=True)[0]
+                    nr = (rm == 0.0).nonzero(as_tuple=True)[0]
                     loss_rare = torch.tensor(0.0, device=self.device)
                     loss_non_rare = torch.tensor(0.0, device=self.device)
-
-                    if len(rare_indices) > 0:
-                        ts_rare = time_series_batch[rare_indices]
-                        cond_rare = {
-                            k: v[rare_indices]
-                            for k, v in conditioning_vars_batch.items()
-                        }
-                        loss_rare, _, _ = self(ts_rare, conditioning_vars=cond_rare)
-
-                    if len(non_rare_indices) > 0:
-                        ts_non_rare = time_series_batch[non_rare_indices]
-                        cond_non_rare = {
-                            k: v[non_rare_indices]
-                            for k, v in conditioning_vars_batch.items()
-                        }
-                        loss_non_rare, _, _ = self(
-                            ts_non_rare, conditioning_vars=cond_non_rare
-                        )
-
-                    N_r = rare_mask.sum().item()
-                    N_nr = (1 - rare_mask).sum().item()
-                    N = current_batch_size
-                    _lambda = self.sparse_conditioning_loss_weight
+                    if len(ri) > 0:
+                        ts_r = ts_batch[ri]
+                        c_r = {kk: vv[ri] for kk, vv in cond_batch.items()}
+                        loss_r, _, _ = self(ts_r, c_r)
+                        loss_rare = loss_r
+                    if len(nr) > 0:
+                        ts_nr = ts_batch[nr]
+                        c_nr = {kk: vv[nr] for kk, vv in cond_batch.items()}
+                        loss_nr, _, _ = self(ts_nr, c_nr)
+                        loss_non_rare = loss_nr
+                    n_r = rm.sum().item()
+                    n_nr = (1 - rm).sum().item()
+                    n_tot = float(bsz)
+                    lam = self.sparse_conditioning_loss_weight
                     loss = (
-                        _lambda * (N_r / N) * loss_rare
-                        + (1 - _lambda) * (N_nr / N) * loss_non_rare
+                        lam * (n_r / n_tot) * loss_rare
+                        + (1 - lam) * (n_nr / n_tot) * loss_non_rare
                     )
-
+                    if self.wandb_enabled and wandb is not None:
+                        wandb.log({"Loss/reconstruction": loss.item()})
                 loss = loss / self.cfg.model.gradient_accumulate_every
                 self.optimizer.zero_grad()
                 loss.backward()
                 total_loss += loss.item()
-
                 if (i + 1) % self.cfg.model.gradient_accumulate_every == 0:
                     torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
                     self.optimizer.step()
                     self.ema.update()
-
             self.scheduler.step(total_loss)
-
+            if self.current_epoch == self.warm_up_epochs and not self.gmm_fitted:
+                self._fit_gmm(loader)
             if (epoch + 1) % self.cfg.model.save_cycle == 0:
                 self.save(epoch=self.current_epoch)
-
         print("Training complete")
 
     def load(self, path: str):
-        checkpoint = torch.load(path)
-
-        if "model_state_dict" in checkpoint:
-            self.load_state_dict(checkpoint["model_state_dict"])
+        ckp = torch.load(path)
+        if "model_state_dict" in ckp:
+            self.load_state_dict(ckp["model_state_dict"])
             print("Loaded regular model state.")
         else:
             raise KeyError("Checkpoint does not contain 'model_state_dict'.")
-
-        if "optimizer_state_dict" in checkpoint and hasattr(self, "optimizer"):
-            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if "optimizer_state_dict" in ckp and hasattr(self, "optimizer"):
+            self.optimizer.load_state_dict(ckp["optimizer_state_dict"])
             print("Loaded optimizer state.")
         else:
             print(
                 "No optimizer state found in checkpoint or optimizer not initialized."
             )
-
-        if "ema_state_dict" in checkpoint and hasattr(self, "ema"):
-            self.ema.ema_model.load_state_dict(checkpoint["ema_state_dict"])
+        if "ema_state_dict" in ckp and hasattr(self, "ema"):
+            self.ema.ema_model.load_state_dict(ckp["ema_state_dict"])
             print("Loaded EMA model state.")
         else:
             print("No EMA state found in checkpoint or EMA not initialized.")
-
-        if "conditioning_module_state_dict" in checkpoint:
+        if "conditioning_module_state_dict" in ckp:
             self.conditioning_module.load_state_dict(
-                checkpoint["conditioning_module_state_dict"]
+                ckp["conditioning_module_state_dict"]
             )
             print("Loaded conditioning module state.")
         else:
             print("No conditioning module state found in checkpoint.")
-
-        if "epoch" in checkpoint:
-            self.current_epoch = checkpoint["epoch"]
+        if "epoch" in ckp:
+            self.current_epoch = ckp["epoch"]
             print(f"Loaded epoch number: {self.current_epoch}")
         else:
             print("No epoch information found in checkpoint.")
-
         self.to(self.device)
         if hasattr(self, "ema") and self.ema.ema_model:
             self.ema.ema_model.to(self.device)
         print(f"Model and EMA model moved to {self.device}.")
 
     def save(self, path: str = None, epoch: int = None):
-
         if path is None:
-            hydra_output_dir = os.path.join(self.cfg.run_dir)
-
-            if not os.path.exists(os.path.join(hydra_output_dir, "checkpoints")):
-                os.makedirs(
-                    os.path.join(hydra_output_dir, "checkpoints"), exist_ok=True
-                )
-
+            run_dir = os.path.join(self.cfg.run_dir)
+            if not os.path.exists(os.path.join(run_dir, "checkpoints")):
+                os.makedirs(os.path.join(run_dir, "checkpoints"), exist_ok=True)
             path = os.path.join(
-                os.path.join(hydra_output_dir, "checkpoints"),
+                run_dir,
+                "checkpoints",
                 f"diffusion_ts_checkpoint_{epoch if epoch else self.current_epoch}.pt",
             )
-
-        model_state_dict_cpu = {k: v.cpu() for k, v in self.state_dict().items()}
-        optimizer_state_dict_cpu = {
+        m_sd = {k: v.cpu() for k, v in self.state_dict().items()}
+        opt_sd = {
             k: v.cpu() if isinstance(v, torch.Tensor) else v
             for k, v in self.optimizer.state_dict().items()
         }
-        ema_state_dict_cpu = {
-            k: v.cpu() for k, v in self.ema.ema_model.state_dict().items()
-        }
+        ema_sd = {k: v.cpu() for k, v in self.ema.ema_model.state_dict().items()}
         torch.save(
             {
                 "epoch": epoch,
-                "model_state_dict": model_state_dict_cpu,
-                "optimizer_state_dict": optimizer_state_dict_cpu,
-                "ema_state_dict": ema_state_dict_cpu,
+                "model_state_dict": m_sd,
+                "optimizer_state_dict": opt_sd,
+                "ema_state_dict": ema_sd,
                 "conditioning_module_state_dict": self.conditioning_module.state_dict(),
             },
             path,
@@ -574,7 +519,7 @@ class Diffusion_TS(nn.Module):
 
 class EMA:
     def __init__(self, model, beta, update_every, device):
-        super(EMA, self).__init__()
+        super().__init__()
         self.model = model
         self.ema_model = copy.deepcopy(model).eval().to(device)
         self.beta = beta
@@ -589,12 +534,10 @@ class EMA:
         if self.step % self.update_every != 0:
             return
         with torch.no_grad():
-            for ema_param, model_param in zip(
+            for ema_p, model_p in zip(
                 self.ema_model.parameters(), self.model.parameters()
             ):
-                ema_param.data.mul_(self.beta).add_(
-                    model_param.data, alpha=1.0 - self.beta
-                )
+                ema_p.data.mul_(self.beta).add_(model_p.data, alpha=1.0 - self.beta)
 
     def forward(self, x):
         return self.ema_model(x)

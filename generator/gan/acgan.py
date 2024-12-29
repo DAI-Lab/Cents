@@ -453,11 +453,25 @@ class ACGAN(nn.Module):
         return conditioning_vars
 
     def generate(self, conditioning_vars):
-        num_samples = next(iter(conditioning_vars.values())).shape[0]
-        noise = torch.randn((num_samples, self.code_size)).to(self.device)
-        with torch.no_grad():
-            generated_data, mu, logvar = self.generator(noise, conditioning_vars)
-        return generated_data
+        bs = self.cfg.model.sampling_batch_size
+        total = len(next(iter(conditioning_vars.values())))
+        generated_samples = []
+
+        for start_idx in range(0, total, bs):
+            end_idx = min(start_idx + bs, total)
+            batch_conditioning_vars = {
+                var_name: var_tensor[start_idx:end_idx]
+                for var_name, var_tensor in conditioning_vars.items()
+            }
+            current_bs = end_idx - start_idx
+            noise = torch.randn((current_bs, self.noise_dim)).to(self.device)
+            with torch.no_grad():
+                generated_data, mu, logvar = self.generator(
+                    noise, batch_conditioning_vars
+                )
+            generated_samples.append(generated_data)
+
+        return torch.cat(generated_samples, dim=0)
 
     def save(self, path: str = None, epoch: int = None):
         """
