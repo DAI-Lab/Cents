@@ -86,7 +86,7 @@ for development.
 Please head to the [Contributing Guide](https://michael-fuest.github.io/EnData/contributing.html#get-started)
 for more details about this process. -->
 
-# Quickstart
+<!-- # Quickstart
 
 In this short tutorial we will guide you through a series of steps that will help you
 getting started with **EnData**.
@@ -119,11 +119,11 @@ conditioning_variables = generator.sample_random_conditioning_variables()
 synthetic_data = generator.generate(conditioning_variables)
 ```
 
-For a more in-depth tutorial, please refer to the tutorial notebooks in the `tutorials` directory.
+For a more in-depth tutorial, please refer to the tutorial notebooks in the `tutorials` directory. -->
 
 ## Datasets
 
-If you want to reproduce our models from scratch, you will need to download the [PecanStreet DataPort dataset](https://www.pecanstreet.org/dataport/) and place it under the path specified in your `data_config.yaml`. Specifically you will require the following files:
+If you want to reproduce our models from scratch, you will need to download the [PecanStreet DataPort dataset](https://www.pecanstreet.org/dataport/) and place it under the path specified in your `pecanstreet.yaml`. Specifically you will require the following files:
 
 - 15minute_data_austin.csv
 - 15minute_data_california.csv
@@ -134,7 +134,7 @@ If you want to train models using the [Open Power Systems dataset](https://data.
 
 - household_data_15min_singleindex.csv
 
-and again place it under the path specified in `data_config.yaml`. For instructions and dataset usage terms, please refer to the data provider's websites.
+and again place it under the path specified in `openpower.yaml`. For instructions and dataset usage terms, please refer to the data provider's websites.
 
 # What's next?
 
