@@ -1,5 +1,5 @@
 defaults:
-  - model: acgan
+  - model: diffusion_ts
   - dataset: pecanstreet
   - evaluator: default
   - normalizer: default

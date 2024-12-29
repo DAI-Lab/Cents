@@ -3,7 +3,7 @@ name: acgan
 noise_dim: 256
 cond_emb_dim: 64
 sparse_conditioning_loss_weight: 0.5
-kl_weight: 0.1
+kl_weight: 0.0
 
 batch_size: 4096
 n_epochs: 1600
@@ -12,3 +12,4 @@ lr_discr: 1e-4
 warm_up_epochs: 1200
 include_auxiliary_losses: True
 save_cycle: 2000
+sampling_batch_size: 1024
