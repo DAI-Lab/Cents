@@ -1,15 +1,14 @@
 _target_: generator.gan.acgan.ACGAN
 name: acgan
 noise_dim: 256
-cond_emb_dim: 64
-sparse_conditioning_loss_weight: 0.5
-kl_weight: 0.0
+cond_emb_dim: 16
+include_auxiliary_losses: True
 
-batch_size: 4096
-n_epochs: 1600
+batch_size: 1024
+sampling_batch_size: 4096
+n_epochs: 5000
+save_cycle: 5000
 lr_gen: 3e-4
 lr_discr: 1e-4
-warm_up_epochs: 1200
-include_auxiliary_losses: True
-save_cycle: 2000
-sampling_batch_size: 1024
+
+cond_loss_weight: 0.1
