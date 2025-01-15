@@ -1,19 +1,3 @@
-"""
-This class is adapted/taken from the Diffusion_TS GitHub repository:
-
-Repository: https://github.com/Y-debug-sys/Diffusion-TS
-Author: Xinyu Yuan
-License: MIT License
-
-Modifications:
-- Conditioning and sampling logic
-- Added further functions and removed unused functionality
-- Warm-up logic for the conditioning module
-- GMM-based rarity detection after warm-up
-
-Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
-"""
-
 import copy
 import math
 import os
@@ -25,7 +9,6 @@ import torch.nn.functional as F
 import wandb
 from einops import reduce
 from omegaconf import DictConfig
-from sklearn.mixture import GaussianMixture
 from torch import nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -55,7 +38,44 @@ def cosine_beta_schedule(timesteps, device, s=0.004):
     return torch.clip(betas, 0, 0.999).to(device)
 
 
+class EMA:
+    """
+    Exponential Moving Average to stabilize training.
+    """
+
+    def __init__(self, model, beta, update_every, device):
+        super().__init__()
+        self.model = model
+        self.ema_model = copy.deepcopy(model).eval().to(device)
+        self.beta = beta
+        self.update_every = update_every
+        self.step = 0
+        self.device = device
+        for param in self.ema_model.parameters():
+            param.requires_grad = False
+
+    def update(self):
+        self.step += 1
+        if self.step % self.update_every != 0:
+            return
+        with torch.no_grad():
+            for ema_p, model_p in zip(
+                self.ema_model.parameters(), self.model.parameters()
+            ):
+                ema_p.data.mul_(self.beta).add_(model_p.data, alpha=1.0 - self.beta)
+
+    def forward(self, x):
+        return self.ema_model(x)
+
+
 class Diffusion_TS(nn.Module):
+    """
+    A refactored diffusion class that:
+      - Uses a simpler, classification-based ConditioningModule (embedding + classification_logits).
+      - Removes warm-up, GMM, rare-sample logic.
+      - Incorporates classification loss from the conditioning module's logits.
+    """
+
     def __init__(self, cfg: DictConfig):
         super().__init__()
         self.cfg = cfg
@@ -65,21 +85,16 @@ class Diffusion_TS(nn.Module):
         self.input_dim = cfg.dataset.input_dim
         self.ff_weight = default(cfg.model.reg_weight, math.sqrt(self.seq_len) / 5)
         self.device = cfg.device
-        self.embedding_dim = cfg.model.cond_emb_dim
-        self.conditioning_var_n_categories = cfg.dataset.conditioning_vars
-        self.warm_up_epochs = cfg.model.warm_up_epochs
-        self.sparse_conditioning_loss_weight = cfg.model.sparse_conditioning_loss_weight
-        self.kl_weight = cfg.model.kl_weight
-        self.gmm_fitted = False
-        self.current_epoch = 0
-        self.wandb_enabled = getattr(self.cfg, "wandb_enabled", False)
 
+        self.cond_loss_weight = cfg.model.cond_loss_weight
+
+        self.embedding_dim = cfg.model.cond_emb_dim
+        self.context_var_n_categories = cfg.dataset.conditioning_vars
         self.conditioning_module = ConditioningModule(
-            self.conditioning_var_n_categories, self.embedding_dim, self.device
+            self.context_var_n_categories, self.embedding_dim, self.device
         ).to(self.device)
 
         self.fc = nn.Linear(self.input_dim + self.embedding_dim, self.input_dim)
-
         self.model = Transformer(
             n_feat=self.input_dim + self.embedding_dim,
             n_channel=cfg.dataset.seq_len,
@@ -106,7 +121,6 @@ class Diffusion_TS(nn.Module):
         alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0).to(
             self.device
         )
-
         (timesteps,) = betas.shape
         self.num_timesteps = int(timesteps)
         self.loss_type = cfg.model.loss_type
@@ -124,15 +138,32 @@ class Diffusion_TS(nn.Module):
         regbuf("log_one_minus_alphas_cumprod", torch.log(1.0 - alphas_cumprod))
         regbuf("sqrt_recip_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod))
         regbuf("sqrt_recipm1_alphas_cumprod", torch.sqrt(1.0 / alphas_cumprod - 1))
-        pv = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
-        regbuf("posterior_variance", pv)
-        regbuf("posterior_log_variance_clipped", torch.log(pv.clamp(min=1e-20)))
+
+        posterior_variance = (
+            betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+        )
+        regbuf("posterior_variance", posterior_variance)
+        regbuf(
+            "posterior_log_variance_clipped",
+            torch.log(posterior_variance.clamp(min=1e-20)),
+        )
         pmc1 = betas * torch.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod)
         pmc2 = (1.0 - alphas_cumprod_prev) * torch.sqrt(alphas) / (1.0 - alphas_cumprod)
         regbuf("posterior_mean_coef1", pmc1)
         regbuf("posterior_mean_coef2", pmc2)
+
         lw = torch.sqrt(alphas) * torch.sqrt(1.0 - alphas_cumprod) / betas / 100
         regbuf("loss_weight", lw)
+
+        if self.loss_type == "l1":
+            self.recon_loss_fn = F.l1_loss
+        elif self.loss_type == "l2":
+            self.recon_loss_fn = F.mse_loss
+        else:
+            raise ValueError(f"Invalid loss type {self.loss_type}")
+
+        self.auxiliary_loss = nn.CrossEntropyLoss()
+        self.wandb_enabled = getattr(self.cfg, "wandb_enabled", False)
 
     def predict_noise_from_start(self, x_t, t, x0):
         return (
@@ -154,35 +185,80 @@ class Diffusion_TS(nn.Module):
         plv = extract(self.posterior_log_variance_clipped, t, x_t.shape)
         return pm, pv, plv
 
-    def output(self, x, t, padding_masks=None, conditioning_vars=None):
-        mu, logvar = None, None
-        if conditioning_vars is not None:
-            z, mu, logvar = self.conditioning_module(conditioning_vars, sample=False)
-            cvec = mu.unsqueeze(1).repeat(1, self.seq_len, 1)
-            x = torch.cat([x, cvec], dim=-1)
-        trend, season = self.model(x, t, padding_masks=padding_masks)
-        model_out = trend + season
-        out = self.fc(model_out)
-        return out, mu, logvar
+    def forward(self, x, conditioning_vars=None):
+        """
+        Single forward step for a random diffusion time t:
+          1) Sample t in [0, self.num_timesteps)
+          2) Inject noise into x according to q_sample
+          3) Forward through Transformer to predict denoised x
+          4) Return the reconstruction loss + classification_logits from cond. module
+        """
+        b, s, d = x.shape
+        assert s == self.seq_len and d == self.input_dim
 
-    def model_predictions(self, x, t, conditioning_vars, clip_x_start=False):
-        fn = partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
-        x_start, mu, logvar = self.output(x, t, conditioning_vars=conditioning_vars)
-        x_start = fn(x_start)
+        t = torch.randint(0, self.num_timesteps, (b,), device=self.device).long()
+
+        # 2) Condition module forward => (embedding, classification_logits)
+        embedding, cond_classification_logits = self.conditioning_module(
+            conditioning_vars
+        )
+
+        # 3) Add noise to x (q_sample)
+        noise = torch.randn_like(x)
+        x_noisy = self.q_sample(x, t, noise=noise)
+
+        # 4) Concat embedding to x_noisy, feed through transformer, map with self.fc
+        #    shape: [b, s, d + embed_dim]
+        c = torch.cat([x_noisy, embedding.unsqueeze(1).repeat(1, s, 1)], dim=-1)
+        trend, season = self.model(c, t, padding_masks=None)
+        model_out = trend + season
+        x_recon = self.fc(model_out)
+
+        # 5) Compute reconstruction loss (weighted by self.loss_weight[t])
+        rec_loss = self.recon_loss_fn(x_recon, x, reduction="none")  # shape: [b, s, d]
+        if self.use_ff:
+            # optional frequency-domain reg
+            fft_pred = torch.fft.fft(x_recon.transpose(1, 2), norm="forward")
+            fft_true = torch.fft.fft(x.transpose(1, 2), norm="forward")
+            fft_pred, fft_true = fft_pred.transpose(1, 2), fft_true.transpose(1, 2)
+            fl = self.recon_loss_fn(
+                torch.real(fft_pred), torch.real(fft_true), reduction="none"
+            )
+            fl += self.recon_loss_fn(
+                torch.imag(fft_pred), torch.imag(fft_true), reduction="none"
+            )
+            rec_loss += self.ff_weight * fl
+
+        rec_loss = reduce(rec_loss, "b ... -> b (...)", "mean")
+        lw = extract(self.loss_weight, t, rec_loss.shape)
+        rec_loss = (rec_loss * lw).mean()
+
+        return rec_loss, cond_classification_logits
+
+    def q_sample(self, x_start, t, noise=None):
+        n = default(noise, lambda: torch.randn_like(x_start))
+        return (
+            extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
+            + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * n
+        )
+
+    def model_predictions(self, x, t, embedding, clip_x_start=False):
+        """
+        Given current x, time t, and the conditioning embedding,
+        produce x_start (denoised) and pred_noise.
+        """
+        c = torch.cat([x, embedding.unsqueeze(1).repeat(1, self.seq_len, 1)], dim=-1)
+        trend, season = self.model(c, t, padding_masks=None)
+        model_out = trend + season
+        x_start = self.fc(model_out)
+        if clip_x_start:
+            x_start = x_start.clamp(-1.0, 1.0)
         pred_noise = self.predict_noise_from_start(x, t, x_start)
         return pred_noise, x_start
 
-    def p_sample(self, x, t, conditioning_vars, clip_denoised=True):
-        bt = torch.full((x.shape[0],), t, device=x.device, dtype=torch.long)
-        mm, _, mlv, x_start = self.p_mean_variance(
-            x, bt, conditioning_vars, clip_denoised
-        )
-        noise = torch.randn_like(x) if t > 0 else 0.0
-        return mm + (0.5 * mlv).exp() * noise, x_start
-
-    def p_mean_variance(self, x, t, conditioning_vars, clip_denoised=True):
+    def p_mean_variance(self, x, t, embedding, clip_denoised=True):
         pred_noise, x_start = self.model_predictions(
-            x, t, conditioning_vars, clip_x_start=clip_denoised
+            x, t, embedding, clip_x_start=clip_denoised
         )
         if clip_denoised:
             x_start = x_start.clamp(-1.0, 1.0)
@@ -190,37 +266,55 @@ class Diffusion_TS(nn.Module):
         return pm, pv, plv, x_start
 
     @torch.no_grad()
+    def p_sample(self, x, t, embedding, clip_denoised=True):
+        bt = torch.full((x.shape[0],), t, device=x.device, dtype=torch.long)
+        pm, pv, plv, x_start = self.p_mean_variance(x, bt, embedding, clip_denoised)
+        noise = torch.randn_like(x) if t > 0 else 0.0
+        return pm + (0.5 * plv).exp() * noise, x_start
+
+    @torch.no_grad()
     def sample(self, shape, conditioning_vars):
+        """
+        Ancestral sampling from random noise down to x0.
+        """
         dev = self.betas.device
         img = torch.randn(shape, device=dev)
-        loop = tqdm(
-            reversed(range(0, self.num_timesteps)),
-            desc="sampling loop time step",
+        embedding, _ = self.conditioning_module(conditioning_vars)
+
+        for t in tqdm(
+            reversed(range(self.num_timesteps)),
+            desc="Sampling",
             total=self.num_timesteps,
-        )
-        for t in loop:
-            img, _ = self.p_sample(img, t, conditioning_vars)
+        ):
+            img, _ = self.p_sample(img, t, embedding)
         return img
 
     @torch.no_grad()
     def fast_sample(self, shape, conditioning_vars, clip_denoised=True):
-        batch = shape[0]
+        """
+        DDIM-like fast sampling approach.
+        """
         dev = self.betas.device
+        batch = shape[0]
+        # get embedding once
+        with torch.no_grad():
+            embedding, _ = self.conditioning_module(conditioning_vars)
+
         tt = self.num_timesteps
         st = self.sampling_timesteps
         eta = self.eta
         times = torch.linspace(-1, tt - 1, steps=st + 1)
         times = list(reversed(times.int().tolist()))
         pairs = list(zip(times[:-1], times[1:]))
+
         img = torch.randn(shape, device=dev)
-        loop = tqdm(pairs, desc="sampling loop time step")
-        for time, time_next in loop:
+        for time, time_next in tqdm(pairs, desc="Fast Sampling"):
             bt = torch.full((batch,), time, device=dev, dtype=torch.long)
-            pn, xst = self.model_predictions(
-                img, bt, conditioning_vars, clip_x_start=clip_denoised
+            pred_noise, x_start = self.model_predictions(
+                img, bt, embedding, clip_x_start=clip_denoised
             )
             if time_next < 0:
-                img = xst
+                img = x_start
                 continue
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
@@ -229,34 +323,13 @@ class Diffusion_TS(nn.Module):
             )
             c = (1 - alpha_next - sigma**2).sqrt()
             noise = torch.randn_like(img)
-            img = xst * alpha_next.sqrt() + c * pn + sigma * noise
+            img = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
         return img
 
-    def sample_conditioning_vars(self, dataset, batch_size, random=False):
-        d = {}
-        if random:
-            for v, nc in self.conditioning_var_n_categories.items():
-                d[v] = torch.randint(
-                    0, nc, (batch_size,), dtype=torch.long, device=self.device
-                )
-        else:
-            rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
-            for v in self.conditioning_var_n_categories.keys():
-                d[v] = torch.tensor(
-                    rows[v].values, dtype=torch.long, device=self.device
-                )
-        return d
-
-    def _generate(self, shape, conditioning_vars):
-        self.eval()
-        with torch.no_grad():
-            return (
-                self.fast_sample(shape, conditioning_vars)
-                if self.fast_sampling
-                else self.sample(shape, conditioning_vars)
-            )
-
     def generate(self, conditioning_vars):
+        """
+        Public method to generate from the trained model.
+        """
         bs = self.cfg.model.sampling_batch_size
         total = len(next(iter(conditioning_vars.values())))
         generated_samples = []
@@ -270,94 +343,42 @@ class Diffusion_TS(nn.Module):
             current_bs = end_idx - start_idx
             shape = (current_bs, self.seq_len, self.input_dim)
 
-            if getattr(self.cfg.model, "use_ema_sampling", False):
-                samples = self.ema.ema_model._generate(shape, batch_conditioning_vars)
-            else:
-                samples = self._generate(shape, batch_conditioning_vars)
+            with torch.no_grad():
+                if getattr(self.cfg.model, "use_ema_sampling", False) and hasattr(
+                    self, "ema"
+                ):
+                    samples = self.ema.ema_model._generate(
+                        shape, batch_conditioning_vars
+                    )
+                else:
+                    samples = (
+                        self.fast_sample(shape, batch_conditioning_vars)
+                        if self.fast_sampling
+                        else self.sample(shape, batch_conditioning_vars)
+                    )
 
             generated_samples.append(samples)
 
         return torch.cat(generated_samples, dim=0)
 
-    @property
-    def loss_fn(self):
-        if self.loss_type == "l1":
-            return F.l1_loss
-        elif self.loss_type == "l2":
-            return F.mse_loss
-        else:
-            raise ValueError(f"invalid loss type {self.loss_type}")
-
-    def q_sample(self, x_start, t, noise=None):
-        n = default(noise, lambda: torch.randn_like(x_start))
-        return (
-            extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-            + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * n
-        )
-
-    def _train_loss(self, x_start, t, target=None, noise=None, conditioning_vars=None):
-        with torch.set_grad_enabled(self.training):
-            z, mu, logvar = self.conditioning_module(conditioning_vars, sample=False)
-        n = default(noise, lambda: torch.randn_like(x_start))
-        if target is None:
-            target = x_start
-        x = self.q_sample(x_start, t, noise=n)
-        c = torch.cat([x, mu.unsqueeze(1).repeat(1, self.seq_len, 1)], dim=-1)
-        trend, season = self.model(c, t, padding_masks=None)
-        mo = self.fc(trend + season)
-        loss_main = self.loss_fn(mo, target, reduction="none")
-        if self.use_ff:
-            fft1 = torch.fft.fft(mo.transpose(1, 2), norm="forward")
-            fft2 = torch.fft.fft(target.transpose(1, 2), norm="forward")
-            fft1, fft2 = fft1.transpose(1, 2), fft2.transpose(1, 2)
-            fl = self.loss_fn(
-                torch.real(fft1), torch.real(fft2), reduction="none"
-            ) + self.loss_fn(torch.imag(fft1), torch.imag(fft2), reduction="none")
-            loss_main += self.ff_weight * fl
-        loss_main = reduce(loss_main, "b ... -> b (...)", "mean")
-        lw = extract(self.loss_weight, t, loss_main.shape)
-        loss_main = loss_main * lw
-        return loss_main.mean(), mu, logvar
-
-    def forward(self, x, conditioning_vars=None, **kwargs):
-        b, s, d = x.shape
-        assert s == self.seq_len
-        assert d == self.input_dim
-        t = torch.randint(0, self.num_timesteps, (b,), device=self.device).long()
-        loss, mu, logvar = self._train_loss(
-            x, t, conditioning_vars=conditioning_vars, **kwargs
-        )
-        return loss, mu, logvar
-
-    def _fit_gmm(self, loader):
-        all_mu = []
-        self.conditioning_module.eval()
-        with torch.no_grad():
-            for bx, cond_vars in loader:
-                bx = bx.to(self.device)
-                for k in cond_vars:
-                    cond_vars[k] = cond_vars[k].to(self.device)
-                l, mu, _ = self(bx, cond_vars)
-                all_mu.append(mu.cpu())
-        a = torch.cat(all_mu, dim=0)
-        self.conditioning_module.fit_gmm(a)
-        self.conditioning_module.set_rare_threshold(a, fraction=0.1)
-        self.gmm_fitted = True
-
     def train_model(self, train_dataset):
-        self.train_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        """
+        Full training loop:
+          - Single pass with combined (reconstruction + classification) loss
+          - Optional EMA + LR scheduling
+        """
         self.train()
         self.to(self.device)
+
         loader = DataLoader(
             train_dataset,
             batch_size=self.cfg.model.batch_size,
             shuffle=self.cfg.dataset.shuffle,
             drop_last=True,
         )
+
         self.optimizer = Adam(
-            filter(lambda p: p.requires_grad, self.parameters()),
-            lr=self.cfg.model.base_lr,
-            betas=[0.9, 0.96],
+            self.parameters(), lr=self.cfg.model.base_lr, betas=[0.9, 0.96]
         )
         self.ema = EMA(
             self,
@@ -368,6 +389,7 @@ class Diffusion_TS(nn.Module):
         self.scheduler = ReduceLROnPlateau(
             self.optimizer, **self.cfg.model.lr_scheduler_params
         )
+
         if self.wandb_enabled and wandb is not None:
             wandb.init(
                 project=self.cfg.wandb.project,
@@ -376,138 +398,72 @@ class Diffusion_TS(nn.Module):
                 dir=self.cfg.run_dir,
             )
 
-        for epoch in tqdm(
-            range(self.cfg.model.n_epochs), desc="Epoch", total=self.cfg.model.n_epochs
-        ):
-            self.current_epoch = epoch + 1
-            total_loss = 0.0
-            for param in self.conditioning_module.parameters():
-                param.requires_grad = True
-            if self.current_epoch > self.warm_up_epochs:
-                for param in self.conditioning_module.parameters():
-                    param.requires_grad = False
-            for i, (ts_batch, cond_batch) in enumerate(loader):
+        num_epochs = self.cfg.model.n_epochs
+        for epoch in range(num_epochs):
+            self.train()
+            epoch_loss = 0.0
+            for ts_batch, cond_batch in loader:
                 ts_batch = ts_batch.to(self.device)
                 for k in cond_batch:
                     cond_batch[k] = cond_batch[k].to(self.device)
-                bsz = ts_batch.size(0)
-                if self.current_epoch <= self.warm_up_epochs:
-                    loss, mu, logvar = self(ts_batch, conditioning_vars=cond_batch)
-                    kl_loss_val = 0.0
-                    if mu is not None and logvar is not None:
-                        kl_loss_t = self.conditioning_module.kl_divergence(mu, logvar)
-                        kl_loss_val = kl_loss_t.item()
-                        loss = loss + self.kl_weight * kl_loss_t
-                    if self.wandb_enabled and wandb is not None:
-                        wandb.log(
-                            {"Loss/reconstruction": loss.item(), "Loss/KL": kl_loss_val}
-                        )
-                else:
-                    with torch.no_grad():
-                        _, mu, _ = self(ts_batch, conditioning_vars=cond_batch)
-                        md = mu.detach()
-                        if self.gmm_fitted:
-                            rm = (
-                                self.conditioning_module.is_rare(md)
-                                .float()
-                                .to(self.device)
-                            )
-                        else:
-                            rm = torch.zeros((bsz,), device=self.device)
-                    ri = (rm == 1.0).nonzero(as_tuple=True)[0]
-                    nr = (rm == 0.0).nonzero(as_tuple=True)[0]
-                    loss_rare = torch.tensor(0.0, device=self.device)
-                    loss_non_rare = torch.tensor(0.0, device=self.device)
-                    if len(ri) > 0:
-                        ts_r = ts_batch[ri]
-                        c_r = {kk: vv[ri] for kk, vv in cond_batch.items()}
-                        loss_r, _, _ = self(ts_r, c_r)
-                        loss_rare = loss_r
-                    if len(nr) > 0:
-                        ts_nr = ts_batch[nr]
-                        c_nr = {kk: vv[nr] for kk, vv in cond_batch.items()}
-                        loss_nr, _, _ = self(ts_nr, c_nr)
-                        loss_non_rare = loss_nr
-                    n_r = rm.sum().item()
-                    n_nr = (1 - rm).sum().item()
-                    n_tot = float(bsz)
-                    lam = self.sparse_conditioning_loss_weight
-                    loss = (
-                        lam * (n_r / n_tot) * loss_rare
-                        + (1 - lam) * (n_nr / n_tot) * loss_non_rare
-                    )
-                    if self.wandb_enabled and wandb is not None:
-                        wandb.log({"Loss/reconstruction": loss.item()})
-                loss = loss / self.cfg.model.gradient_accumulate_every
+
+                # Forward pass => reconstruction loss, classification logits
+                rec_loss, cond_class_logits = self(ts_batch, cond_batch)
+
+                # Classification loss for the generator's conditioning module
+                cond_loss = 0.0
+                for var_name, logits in cond_class_logits.items():
+                    labels = cond_batch[var_name]  # shape (batch,)
+                    cond_loss += self.auxiliary_loss(logits, labels)
+
+                total_loss = rec_loss + self.cond_loss_weight * cond_loss
                 self.optimizer.zero_grad()
-                loss.backward()
-                total_loss += loss.item()
-                if (i + 1) % self.cfg.model.gradient_accumulate_every == 0:
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-                    self.optimizer.step()
-                    self.ema.update()
-            self.scheduler.step(total_loss)
-            if self.current_epoch == self.warm_up_epochs and not self.gmm_fitted:
-                self._fit_gmm(loader)
-            if (epoch + 1) % self.cfg.model.save_cycle == 0:
-                self.save(epoch=self.current_epoch)
+                total_loss.backward()
+                nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+                self.optimizer.step()
+                self.ema.update()
+
+                epoch_loss += total_loss.item()
+
+            self.scheduler.step(epoch_loss)
+
+            if self.wandb_enabled and wandb is not None:
+                wandb.log(
+                    {
+                        "Loss/Total": epoch_loss,
+                        "Loss/Recon": rec_loss.item(),
+                        "Loss/Cond": cond_loss.item(),
+                        "Epoch": epoch + 1,
+                    }
+                )
+
+            print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {epoch_loss:.4f}")
+
         print("Training complete")
 
-    def load(self, path: str):
-        ckp = torch.load(path)
-        if "model_state_dict" in ckp:
-            self.load_state_dict(ckp["model_state_dict"])
-            print("Loaded regular model state.")
-        else:
-            raise KeyError("Checkpoint does not contain 'model_state_dict'.")
-        if "optimizer_state_dict" in ckp and hasattr(self, "optimizer"):
-            self.optimizer.load_state_dict(ckp["optimizer_state_dict"])
-            print("Loaded optimizer state.")
-        else:
-            print(
-                "No optimizer state found in checkpoint or optimizer not initialized."
-            )
-        if "ema_state_dict" in ckp and hasattr(self, "ema"):
-            self.ema.ema_model.load_state_dict(ckp["ema_state_dict"])
-            print("Loaded EMA model state.")
-        else:
-            print("No EMA state found in checkpoint or EMA not initialized.")
-        if "conditioning_module_state_dict" in ckp:
-            self.conditioning_module.load_state_dict(
-                ckp["conditioning_module_state_dict"]
-            )
-            print("Loaded conditioning module state.")
-        else:
-            print("No conditioning module state found in checkpoint.")
-        if "epoch" in ckp:
-            self.current_epoch = ckp["epoch"]
-            print(f"Loaded epoch number: {self.current_epoch}")
-        else:
-            print("No epoch information found in checkpoint.")
-        self.to(self.device)
-        if hasattr(self, "ema") and self.ema.ema_model:
-            self.ema.ema_model.to(self.device)
-        print(f"Model and EMA model moved to {self.device}.")
-
+    # ---------------------------------------------------------
+    # Checkpointing
+    # ---------------------------------------------------------
     def save(self, path: str = None, epoch: int = None):
         if path is None:
             run_dir = os.path.join(self.cfg.run_dir)
-            if not os.path.exists(os.path.join(run_dir, "checkpoints")):
-                os.makedirs(os.path.join(run_dir, "checkpoints"), exist_ok=True)
+            ckpt_dir = os.path.join(run_dir, "checkpoints")
+            os.makedirs(ckpt_dir, exist_ok=True)
             path = os.path.join(
-                run_dir,
-                "checkpoints",
-                f"diffusion_ts_checkpoint_{epoch if epoch else self.current_epoch}.pt",
+                ckpt_dir,
+                f"diffusion_ts_checkpoint_{epoch if epoch else 0}.pt",
             )
+
         m_sd = {k: v.cpu() for k, v in self.state_dict().items()}
         opt_sd = {
-            k: v.cpu() if isinstance(v, torch.Tensor) else v
+            k: (v.cpu() if isinstance(v, torch.Tensor) else v)
             for k, v in self.optimizer.state_dict().items()
         }
         ema_sd = {k: v.cpu() for k, v in self.ema.ema_model.state_dict().items()}
+
         torch.save(
             {
-                "epoch": epoch,
+                "epoch": epoch if epoch is not None else 0,
                 "model_state_dict": m_sd,
                 "optimizer_state_dict": opt_sd,
                 "ema_state_dict": ema_sd,
@@ -515,29 +471,39 @@ class Diffusion_TS(nn.Module):
             },
             path,
         )
+        print(f"Saved diffusion model checkpoint to {path}")
 
+    def load(self, path: str):
+        ckp = torch.load(path, map_location=self.device)
+        if "model_state_dict" in ckp:
+            self.load_state_dict(ckp["model_state_dict"])
+            print("Loaded model state.")
+        else:
+            raise KeyError("Checkpoint missing 'model_state_dict'.")
 
-class EMA:
-    def __init__(self, model, beta, update_every, device):
-        super().__init__()
-        self.model = model
-        self.ema_model = copy.deepcopy(model).eval().to(device)
-        self.beta = beta
-        self.update_every = update_every
-        self.step = 0
-        self.device = device
-        for param in self.ema_model.parameters():
-            param.requires_grad = False
+        if "optimizer_state_dict" in ckp and hasattr(self, "optimizer"):
+            self.optimizer.load_state_dict(ckp["optimizer_state_dict"])
+            print("Loaded optimizer state.")
+        else:
+            print("No optimizer state or not initialized.")
 
-    def update(self):
-        self.step += 1
-        if self.step % self.update_every != 0:
-            return
-        with torch.no_grad():
-            for ema_p, model_p in zip(
-                self.ema_model.parameters(), self.model.parameters()
-            ):
-                ema_p.data.mul_(self.beta).add_(model_p.data, alpha=1.0 - self.beta)
+        if "ema_state_dict" in ckp and hasattr(self, "ema"):
+            self.ema.ema_model.load_state_dict(ckp["ema_state_dict"])
+            print("Loaded EMA model state.")
+        else:
+            print("No EMA state found or not initialized.")
 
-    def forward(self, x):
-        return self.ema_model(x)
+        if "conditioning_module_state_dict" in ckp:
+            self.conditioning_module.load_state_dict(
+                ckp["conditioning_module_state_dict"]
+            )
+            print("Loaded conditioning module state.")
+        else:
+            print("No conditioning module state found in checkpoint.")
+
+        if "epoch" in ckp:
+            print(f"Loaded epoch number: {ckp['epoch']}")
+
+        self.to(self.device)
+        self.ema.ema_model.to(self.device)
+        print(f"Model + EMA moved to {self.device}.")

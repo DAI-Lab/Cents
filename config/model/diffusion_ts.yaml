@@ -1,12 +1,12 @@
 _target_: generator.diffusion_ts.gaussian_diffusion.Diffusion_TS
 name: diffusion_ts
 noise_dim: 256
-cond_emb_dim: 64
-sparse_conditioning_loss_weight: 0.5 # sparse conditioning training sample weight for loss computation [0, 1]
-kl_weight: 0.1
+cond_emb_dim: 16
 
 batch_size: 1024
-n_epochs: 1000
+sampling_batch_size: 4096
+n_epochs: 5000
+save_cycle: 5000
 n_steps: 1000
 base_lr: 1e-4
 n_layer_enc: 4
@@ -37,7 +37,6 @@ lr_scheduler_params:
   verbose: false
 
 sampling_timesteps: null
-warm_up_epochs: 800
 use_ema_sampling: False
-save_cycle: 1000
-sampling_batch_size: 4096
+
+cond_loss_weight: 0.1

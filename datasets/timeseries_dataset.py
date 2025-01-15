@@ -641,6 +641,12 @@ class TimeSeriesDataset(Dataset, ABC):
         Returns:
             pd.DataFrame: DataFrame with a new column 'is_rare'.
         """
+        if "is_frequency_rare" not in self.data.columns:
+            self.data = self.get_frequency_based_rarity()
+
+        if "is_pattern_rare" not in self.data.columns:
+            self.data = self.get_clustering_based_rarity()
+
         self.data["is_rare"] = (
             self.data["is_frequency_rare"] & self.data["is_pattern_rare"]
         )

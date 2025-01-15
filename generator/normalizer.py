@@ -52,8 +52,9 @@ class StatsHead(nn.Module):
 
 class NormalizerModule(nn.Module):
     """
-    ConditioningModule + multi-dim StatsHead for
-    [mu, sigma, (optionally) z_min, z_max].
+    This module wraps:
+      - A ConditioningModule (returns (embedding, classification_logits))
+      - A StatsHead that projects the embedding into (mu, sigma, z_min, z_max).
     """
 
     def __init__(
@@ -72,24 +73,22 @@ class NormalizerModule(nn.Module):
     def forward(self, cat_vars_dict: Dict[str, torch.Tensor]):
         """
         Returns:
-          pred_mu, pred_sigma: always (batch_size, n_dims)
-          pred_z_min, pred_z_max: (batch_size, n_dims) if do_scale=True else (None, None)
+          pred_mu, pred_sigma: shape (batch_size, n_dims)
+          pred_z_min, pred_z_max: shape (batch_size, n_dims) if do_scale=True, else None
         """
-        z, _, _ = self.cond_module(cat_vars_dict, sample=False)
-        return self.stats_head(z)
+        embedding, _ = self.cond_module(cat_vars_dict)
+        return self.stats_head(embedding)
 
 
 class Normalizer:
     """
     A class that:
       1) Holds a reference to a dataset that has integer-coded context variables
-         + multiple time series columns (e.g., dataset.time_series_column_names).
-      2) Computes row-level dimension-wise (mean,std), then aggregates by context -> group_stats.
-      3) Trains a NormalizerModule (ConditioningModule + multi-dim StatsHead) to predict (mu_array, sigma_array).
-      4) Transforms or inverse-transforms data row-by-row, dimension-wise, using the learned model.
+         + multiple time series columns (dataset.time_series_column_names).
+      2) Computes row-level dimension-wise (mean,std) => aggregated by context => group_stats.
+      3) Trains a NormalizerModule to predict (mu_array, sigma_array) (and optionally z_min, z_max).
+      4) Transforms or inverse-transforms data row-by-row using the learned model or group_stats.
       5) Can save/load the model checkpoint.
-
-    Retains config handling and method signatures from the previous single-dim logic.
     """
 
     def __init__(self, dataset, cfg):
@@ -103,21 +102,19 @@ class Normalizer:
         self.normalizer_cfg = self._init_normalizer_config()
         self.do_scale = cfg.scale
         self.dataset = dataset
-        self.context_vars = dataset.conditioning_vars  # e.g. ["month", "weekday", ...]
-        self.time_series_cols = dataset.time_series_column_names  # multi-dim columns
+        self.context_vars = dataset.conditioning_vars
+        self.time_series_cols = dataset.time_series_column_names
         self.n_dims = len(self.time_series_cols)
 
         self.device = self.normalizer_cfg.device
         self.group_stats = {}
 
-        # Build the conditioning module
         cond_module = ConditioningModule(
-            self.dataset_cfg.conditioning_vars,
-            self.normalizer_cfg.embedding_dim,
-            self.normalizer_cfg.device,
+            context_vars=self.dataset_cfg.conditioning_vars,
+            embedding_dim=self.normalizer_cfg.embedding_dim,
+            device=self.normalizer_cfg.device,
         )
 
-        # Build the combined NormalizerModule for n_dims
         self.normalizer_model = NormalizerModule(
             cond_module=cond_module,
             hidden_dim=self.normalizer_cfg.hidden_dim,
@@ -131,7 +128,7 @@ class Normalizer:
         """
         For each context group, gather all time-series points per dimension,
         compute global mean, std, then compute z = (x - mu)/std,
-        finally get z_min, z_max for each dimension.
+        finally get z_min, z_max for each dimension if scaling is used.
         """
         df = self.dataset.data.copy()
         grouped_stats = {}
@@ -180,7 +177,7 @@ class Normalizer:
             zmin_arr,
             zmax_arr,
         ) in self.group_stats.items():
-            # If scale=False, zmin_arr, zmax_arr could be None. We'll store zeros or something
+            # If scale=False or missing zmin/zmax, store None
             if self.do_scale and zmin_arr is not None and zmax_arr is not None:
                 data_tuples.append((ctx_tuple, mu_arr, sigma_arr, zmin_arr, zmax_arr))
             else:
@@ -211,7 +208,6 @@ class Normalizer:
                     zmin_t = torch.from_numpy(zmin_arr).float()
                     zmax_t = torch.from_numpy(zmax_arr).float()
                 else:
-                    # If scale=False or they're None
                     zmin_t = None
                     zmax_t = None
 
@@ -245,6 +241,7 @@ class Normalizer:
 
                 self.optim.zero_grad()
 
+                # Forward pass with the NormalizerModule
                 pred_mu, pred_sigma, pred_z_min, pred_z_max = self.normalizer_model(
                     cat_vars_dict
                 )
@@ -273,6 +270,11 @@ class Normalizer:
             )
 
     def transform(self, use_model: bool = False) -> pd.DataFrame:
+        """
+        Transform the raw data in `self.dataset.data` into standardized form.
+        If use_model=True, use the learned NormalizerModule to get (mu, sigma, zmin, zmax).
+        Otherwise, use self.group_stats (the precomputed stats).
+        """
         df = self.dataset.data.copy()
         for i, row in df.iterrows():
             cat_vars_dict = {
@@ -294,6 +296,7 @@ class Normalizer:
                     zmin_arr = None
                     zmax_arr = None
             else:
+                # Use precomputed group_stats
                 ctx_tuple = tuple(row[vn] for vn in self.context_vars)
                 mu_arr, sigma_arr, zmin_arr, zmax_arr = self.group_stats[ctx_tuple]
 
@@ -309,6 +312,11 @@ class Normalizer:
     def inverse_transform(
         self, df: pd.DataFrame, use_model: bool = True
     ) -> pd.DataFrame:
+        """
+        Inverse-transform data from standardized form back to original scale.
+        If use_model=True, use the learned NormalizerModule to get (mu, sigma, zmin, zmax).
+        Otherwise, use self.group_stats.
+        """
         for i, row in df.iterrows():
             cat_vars_dict = {
                 vn: torch.tensor(
@@ -343,7 +351,7 @@ class Normalizer:
 
     def save(self, path: str = None, epoch: int = None):
         if path is None:
-            hydra_output_dir = os.path.join(self.cfg.run_dir)
+            hydra_output_dir = os.path.join(self.dataset_cfg.run_dir)
             os.makedirs(os.path.join(hydra_output_dir, "checkpoints"), exist_ok=True)
             path = os.path.join(
                 hydra_output_dir,

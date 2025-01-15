@@ -311,7 +311,8 @@ class DDPM(nn.Module):
         model = self.ema.ema_model if use_ema else self.eps_model
         device = self.device
         x = torch.randn(shape, device=device)
-        z, mu, logvar = self.conditioning_module(cond_vars, sample=True)
+        z, _, _ = self.conditioning_module(cond_vars, sample=True)
+        z = z.unsqueeze(1).repeat(1, x.shape[1], 1)
         for t in tqdm(reversed(range(self.n_steps)), desc="DDPM Sampling"):
             t_tensor = torch.full((x.shape[0],), t, device=device, dtype=torch.long)
             eps_theta = model(torch.cat([x, z], dim=-1), t_tensor)
@@ -394,6 +395,8 @@ class DDPM(nn.Module):
 
     def generate(self, conditioning_vars):
         bs = self.cfg.model.sampling_batch_size
+        seq_len = self.cfg.dataset.seq_len
+        input_dim = self.cfg.dataset.input_dim
         total = len(next(iter(conditioning_vars.values())))
         generated_samples = []
 
@@ -404,11 +407,7 @@ class DDPM(nn.Module):
                 for var_name, var_tensor in conditioning_vars.items()
             }
             current_bs = end_idx - start_idx
-            shape = (
-                current_bs,
-                self.n_steps,
-                self.n_steps,
-            )  # Adjusted based on your model's requirements
+            shape = (current_bs, seq_len, input_dim)
 
             if getattr(self.cfg.model, "use_ema_sampling", False):
                 samples = self.ema.ema_model.sample(

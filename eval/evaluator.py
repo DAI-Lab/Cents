@@ -3,12 +3,17 @@ import logging
 import os
 from typing import Any, Dict, List, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 import wandb
+from mpl_toolkits.mplot3d import Axes3D
 from omegaconf import DictConfig, OmegaConf
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.mixture import GaussianMixture
 
 from eval.discriminative_metric import discriminative_score_metrics
 from eval.metrics import (
@@ -56,7 +61,6 @@ class Evaluator:
     def evaluate_model(
         self,
         user_id: int = None,
-        distinguish_rare: bool = False,
         model: Any = None,
     ):
         """
@@ -81,64 +85,21 @@ class Evaluator:
         logger.info("----------------------")
 
         # Pass data_label to run_evaluation
-        self.run_evaluation(dataset, model, distinguish_rare)
+        self.run_evaluation(dataset, model)
 
-    def run_evaluation(self, dataset: Any, model: Any, distinguish_rare: bool):
+    def run_evaluation(self, dataset: Any, model: Any):
         """
         Run the evaluation process.
 
         Args:
             dataset: The dataset to evaluate.
             model: The trained model.
-            distinguish_rare (bool): Whether to distinguish between rare and non-rare data samples.
         """
-        if distinguish_rare:
-            rare_indices, non_rare_indices = self.identify_rare_combinations(
-                dataset, model
-            )
-            self.evaluate_subset(dataset, model, rare_indices, data_type="rare")
-            self.evaluate_subset(
-                dataset,
-                model,
-                non_rare_indices,
-            )
-        else:
-            all_indices = dataset.data.index.to_numpy()
-            self.evaluate_subset(dataset, model, all_indices)
-
-    def identify_rare_combinations(
-        self, dataset: Any, model: Any
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Identify indices of rare and non-rare conditioning combinations in the dataset.
-
-        Args:
-            dataset: The dataset containing conditioning variables.
-            model: The trained model with the conditioning module.
-
-        Returns:
-            Tuple containing indices of rare and non-rare conditioning combinations.
-        """
-        conditioning_vars = {
-            name: torch.tensor(
-                dataset.data[name].values, dtype=torch.long, device=device
-            )
-            for name in model.conditioning_var_n_categories.keys()
-        }
-
-        with torch.no_grad():
-            embeddings = model.conditioning_module(conditioning_vars)
-            mahalanobis_distances = (
-                model.conditioning_module.compute_mahalanobis_distance(embeddings)
-            )
-
-        rarity_threshold = torch.quantile(mahalanobis_distances, 0.8)
-        rare_mask = mahalanobis_distances > rarity_threshold
-
-        rare_indices = np.where(rare_mask.cpu().numpy())[0]
-        non_rare_indices = np.where(~rare_mask.cpu().numpy())[0]
-
-        return rare_indices, non_rare_indices
+        logger.info(
+            f"Starting evaluation of {self.model_name} with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters."
+        )
+        all_indices = dataset.data.index.to_numpy()
+        self.evaluate_subset(dataset, model, all_indices)
 
     def evaluate_subset(
         self,
@@ -154,13 +115,13 @@ class Evaluator:
             model: The trained model to generate data.
             indices (np.ndarray): Indices of data to use.
         """
-
+        dataset.data = dataset.get_combined_rarity()
         real_data_subset = dataset.data.iloc[indices].reset_index(drop=True)
         conditioning_vars = {
             name: torch.tensor(
                 real_data_subset[name].values, dtype=torch.long, device=device
             )
-            for name in model.conditioning_var_n_categories.keys()
+            for name in model.context_var_n_categories.keys()
         }
 
         generated_ts = model.generate(conditioning_vars).cpu().numpy()
@@ -181,68 +142,114 @@ class Evaluator:
 
         # Compute metrics
         if self.cfg.evaluator.eval_metrics:
-            self.compute_metrics(real_data_array, syn_data_array, real_data_inv)
+            rare_mask = None
+
+            if self.cfg.evaluator.eval_cond and "is_rare" in real_data_subset.columns:
+                rare_mask = real_data_subset["is_rare"].values
+
+            self.compute_metrics(
+                real_data_array, syn_data_array, real_data_inv, rare_mask
+            )
 
         # Generate plots
         if self.cfg.evaluator.eval_vis:
             self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
 
-        # Evaluate conditioning module rarity predictions
-        if self.cfg.evaluator.eval_cond:
-            self.evaluate_conditioning_module(model)
+        # # Evaluate conditioning module rarity predictions
+        # if self.cfg.evaluator.eval_cond:
+        #     self.evaluate_conditioning_module(model)
+
+        # Evaluate embedding space GMM
+        if self.cfg.evaluator.eval_gmm:
+            self.evaluate_embedding_space_with_gmm(dataset, model)
 
     def compute_metrics(
-        self, real_data: np.ndarray, syn_data: np.ndarray, real_data_frame: pd.DataFrame
+        self,
+        real_data: np.ndarray,
+        syn_data: np.ndarray,
+        real_data_frame: pd.DataFrame,
+        mask: np.ndarray = None,
     ):
         """
         Compute evaluation metrics and log them.
 
         Args:
-            real_data (np.ndarray): Real data array.
-            syn_data (np.ndarray): Synthetic data array.
-            real_data_subset (pd.DataFrame): Real data subset DataFrame.
+            real_data (np.ndarray): Real data array (shape: [N, seq_len, dims]).
+            syn_data (np.ndarray): Synthetic data array (shape: [N, seq_len, dims]).
+            real_data_frame (pd.DataFrame): Real data subset (inverse-transformed).
+            mask (np.ndarray, optional): Boolean array of shape (N,) indicating which rows are "rare".
+                                        If provided, we also compute metrics for that subset.
         """
-        # DTW
-        logger.info(f"--- Starting DTW distance computation ---")
+        logger.info(f"--- Starting Full-Subset Metrics ---")
+
         dtw_mean, dtw_std = dynamic_time_warping_dist(real_data, syn_data)
         wandb.log({"DTW/mean": dtw_mean, "DTW/std": dtw_std})
-        logger.info(f"--- DTW distance computation complete ---")
-        logger.info("----------------------")
+        logger.info(f"--- DTW completed ---")
 
-        # MMD
-        logger.info(f"--- Starting MMD computation ---")
         mmd_mean, mmd_std = calculate_mmd(real_data, syn_data)
         wandb.log({"MMD/mean": mmd_mean, "MMD/std": mmd_std})
-        logger.info(f"--- MMD computation complete ---")
-        logger.info("----------------------")
+        logger.info(f"--- MMD completed ---")
 
-        # MSE
-        logger.info(f"--- Starting Bounded MSE computation ---")
         mse_mean, mse_std = calculate_period_bound_mse(real_data_frame, syn_data)
         wandb.log({"MSE/mean": mse_mean, "MSE/std": mse_std})
-        logger.info(f"--- Bounded MSE computation complete ---")
-        logger.info("----------------------")
+        logger.info(f"--- BMSE completed ---")
 
-        # FID
-        logger.info(f"--- Starting Context FID computation ---")
         fid_score = Context_FID(real_data, syn_data)
         wandb.log({"Context_FID": fid_score})
-        logger.info(f"--- Context FID computation complete ---")
-        logger.info("----------------------")
+        logger.info(f"--- Context-FID completed ---")
 
-        # Discriminative Score
-        logger.info(f"--- Starting Discriminative Score computation ---")
         discr_score, _, _ = discriminative_score_metrics(real_data, syn_data)
         wandb.log({"Disc_Score": discr_score})
-        logger.info(f"--- Discriminative Score computation complete ---")
-        logger.info("----------------------")
+        logger.info(f"--- Discr Score completed ---")
 
-        # Predictive Score
-        logger.info(f"--- Starting Predictive Score computation ---")
         pred_score = predictive_score_metrics(real_data, syn_data)
         wandb.log({"Pred_Score": pred_score})
-        logger.info(f"--- Predictive Score computation complete ---")
-        logger.info("----------------------")
+        logger.info(f"--- Pred Score completed ---")
+
+        # ------------------------------
+        # Rare-subset metrics (if mask is provided)
+        # ------------------------------
+        if mask is not None:
+            logger.info("--- Starting Rare-Subset Metrics ---")
+
+            # Subselect real & synthetic data
+            rare_real_data = real_data[mask]
+            rare_syn_data = syn_data[mask]
+            # Also subselect the real_data_frame rows
+            rare_real_df = real_data_frame[mask].reset_index(drop=True)
+
+            # Compute the same metrics on the rare subset
+            dtw_mean_r, dtw_std_r = dynamic_time_warping_dist(
+                rare_real_data, rare_syn_data
+            )
+            wandb.log({"DTW_rare/mean": dtw_mean_r, "DTW_rare/std": dtw_std_r})
+            logger.info(f"--- DTW completed ---")
+
+            mmd_mean_r, mmd_std_r = calculate_mmd(rare_real_data, rare_syn_data)
+            wandb.log({"MMD_rare/mean": mmd_mean_r, "MMD_rare/std": mmd_std_r})
+            logger.info(f"--- MMD completed ---")
+
+            mse_mean_r, mse_std_r = calculate_period_bound_mse(
+                rare_real_df, rare_syn_data
+            )
+            wandb.log({"MSE_rare/mean": mse_mean_r, "MSE_rare/std": mse_std_r})
+            logger.info(f"--- BMSE completed ---")
+
+            fid_score_r = Context_FID(rare_real_data, rare_syn_data)
+            wandb.log({"Context_FID_rare": fid_score_r})
+            logger.info(f"--- Context-FID completed ---")
+
+            discr_score_r, _, _ = discriminative_score_metrics(
+                rare_real_data, rare_syn_data
+            )
+            wandb.log({"Disc_Score_rare": discr_score_r})
+            logger.info(f"--- Discr Score completed ---")
+
+            pred_score_r = predictive_score_metrics(rare_real_data, rare_syn_data)
+            wandb.log({"Pred_Score_rare": pred_score_r})
+            logger.info(f"--- Pred Score completed ---")
+
+            logger.info("Done computing Rare-Subset Metrics.")
 
     def create_visualizations(
         self,
@@ -275,7 +282,7 @@ class Evaluator:
                     dtype=torch.long,
                     device=device,
                 )
-                for var_name in model.conditioning_var_n_categories.keys()
+                for var_name in model.context_var_n_categories.keys()
             }
 
             # Generate synthetic samples
@@ -289,7 +296,7 @@ class Evaluator:
             generated_samples_df = pd.DataFrame(
                 {
                     var_name: [sample_row[var_name]] * num_samples
-                    for var_name in model.conditioning_var_n_categories.keys()
+                    for var_name in model.context_var_n_categories.keys()
                 }
             )
             generated_samples_df["timeseries"] = list(generated_samples)
@@ -369,53 +376,133 @@ class Evaluator:
         model.train_model(dataset)
         return model
 
-    def evaluate_conditioning_module(
-        self, model: Any, batch_size: int = 128
-    ) -> Dict[str, float]:
+    def evaluate_embedding_space_with_gmm(self, dataset: Any, model: Any):
         """
-        Evaluate the computed rarities of conditional embeddings against frequency-based ground truth rarity.
-
-        Args:
-            model (Any): The trained model containing the conditioning module.
-            batch_size (int): The number of samples to process in each batch.
-
-        Returns:
-            Dict[str, float]: Precision, recall, and F1 score of the rarity prediction.
+        1) Collect the entire dataset's embeddings (or user-specific if desired).
+        2) Fit multiple GMMs with different numbers of components, log AIC/LL.
+        3) Choose the best GMM (lowest AIC) and refit on embeddings.
+        4) Use PCA and TSNE to project embeddings to 2D and 3D, color by GMM cluster.
+        5) Log plots to Weights & Biases.
         """
-        comb_rarity_df = self.real_dataset.get_conditioning_var_combination_rarities(
-            coverage_threshold=0.8
+        logger.info("Starting GMM evaluation in embedding space...")
+
+        # -----------------------------
+        # 1) Collect embeddings
+        # -----------------------------
+        # If you want the entire dataset, do:
+        #   indices = dataset.data.index.to_numpy()
+        # If you wanted a user-specific approach, adapt accordingly.
+        all_indices = dataset.data.index.to_numpy()
+        real_data_subset = dataset.data.iloc[all_indices].reset_index(drop=True)
+
+        # Build conditioning vars (categoricals) for the entire subset
+        conditioning_vars = {
+            name: torch.tensor(
+                real_data_subset[name].values, dtype=torch.long, device=device
+            )
+            for name in model.context_var_n_categories.keys()
+        }
+
+        # Forward pass to get embeddings
+        with torch.no_grad():
+            embeddings, _ = model.conditioning_module(
+                conditioning_vars
+            )  # shape: (N, D)
+
+        # Move to CPU numpy
+        embeddings_np = embeddings.cpu().numpy()
+
+        # -----------------------------
+        # 2) Fit GMMs (2,3,5,10 comps), log AIC & log-likelihood
+        # -----------------------------
+        logger.info("Fitting multiple GMMs to find best number of components...")
+        possible_components = [2, 3, 5, 10]
+
+        best_gmm = None
+        best_n = None
+        lowest_aic = float("inf")
+
+        for n_comp in possible_components:
+            gmm = GaussianMixture(
+                n_components=n_comp, random_state=42, covariance_type="full"
+            )
+            gmm.fit(embeddings_np)
+
+            # Log-likelihood on the entire embedding set
+            # gmm.score(...) returns the average log-likelihood per sample
+            ll = gmm.score(embeddings_np) * embeddings_np.shape[0]
+            # AIC
+            aic = gmm.aic(embeddings_np)
+            # BIC (if you want to track it as well)
+            bic = gmm.bic(embeddings_np)
+
+            if aic < lowest_aic:
+                best_gmm = gmm
+                best_n = n_comp
+                lowest_aic = aic
+
+        logger.info(f"Best GMM has {best_n} components with AIC={lowest_aic:.2f}.")
+
+        # -----------------------------
+        # 3) Refit GMM with best # of comps
+        # -----------------------------
+        # (You can skip this if you want to reuse best_gmm directly,
+        #  but let's be explicit in case you prefer a clean re-fit.)
+        best_gmm = GaussianMixture(
+            n_components=best_n, random_state=42, covariance_type="full"
         )
-        conditioning_vars_list = list(self.cfg.dataset.conditioning_vars.keys())
+        best_gmm.fit(embeddings_np)
 
-        true_labels = comb_rarity_df["rare"].astype(bool).tolist()
-        num_samples = len(comb_rarity_df)
-        pred_labels = []
+        # Assign cluster labels to each embedding
+        cluster_labels = best_gmm.predict(embeddings_np)
 
-        for start_idx in range(0, num_samples, batch_size):
-            end_idx = min(start_idx + batch_size, num_samples)
-            batch_df = comb_rarity_df.iloc[start_idx:end_idx]
+        # -----------------------------
+        # 4) PCA & TSNE -> 2D & 3D
+        # -----------------------------
+        logger.info("Projecting embeddings with PCA & t-SNE and plotting clusters...")
 
-            conditioning_vars_batch = {
-                var_name: torch.tensor(
-                    batch_df[var_name].values, dtype=torch.long, device=self.cfg.device
-                )
-                for var_name in conditioning_vars_list
-            }
+        # Helper function to scatter-plot and log to W&B
+        def log_scatter_plot_2d(X_2d, labels, title_prefix="Plot"):
+            plt.figure(figsize=(6, 5))
+            sc = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=labels, cmap="tab10", alpha=0.6)
+            plt.colorbar(sc, label="Cluster ID")
+            plt.title(title_prefix)
+            wandb.log({title_prefix: wandb.Image(plt)})
+            plt.close()
 
-            with torch.no_grad():
-                _, mu_batch, _ = model.conditioning_module(
-                    conditioning_vars_batch, sample=False
-                )
-                pred_rare_mask = model.conditioning_module.is_rare(mu_batch)
-                pred_labels.extend(pred_rare_mask.cpu().tolist())
+        def log_scatter_plot_3d(X_3d, labels, title_prefix="3D Plot"):
+            fig = plt.figure(figsize=(7, 6))
+            ax = fig.add_subplot(111, projection="3d")
+            sc = ax.scatter(
+                X_3d[:, 0], X_3d[:, 1], X_3d[:, 2], c=labels, cmap="tab10", alpha=0.6
+            )
+            plt.title(title_prefix)
+            fig.colorbar(sc, label="Cluster ID", shrink=0.5, aspect=10)
+            wandb.log({title_prefix: wandb.Image(fig)})
+            plt.close(fig)
 
-        precision = precision_score(true_labels, pred_labels, zero_division=0)
-        recall = recall_score(true_labels, pred_labels, zero_division=0)
-        f1 = f1_score(true_labels, pred_labels, zero_division=0)
+        # ---- PCA 2D ----
+        pca_2d = PCA(n_components=2, random_state=42).fit_transform(embeddings_np)
+        log_scatter_plot_2d(pca_2d, cluster_labels, title_prefix="PCA_2D_GMM_Clusters")
 
-        metrics = {"precision": precision, "recall": recall, "f1_score": f1}
-        wandb.log(
-            {"Rarity_Precision": precision, "Rarity_Recall": recall, "Rarity_F1": f1}
+        # ---- PCA 3D ----
+        pca_3d = PCA(n_components=3, random_state=42).fit_transform(embeddings_np)
+        log_scatter_plot_3d(pca_3d, cluster_labels, title_prefix="PCA_3D_GMM_Clusters")
+
+        # ---- t-SNE 2D ----
+        tsne_2d = TSNE(
+            n_components=2, random_state=42, learning_rate="auto", init="pca"
+        ).fit_transform(embeddings_np)
+        log_scatter_plot_2d(
+            tsne_2d, cluster_labels, title_prefix="TSNE_2D_GMM_Clusters"
         )
 
-        return metrics
+        # ---- t-SNE 3D (optional) ----
+        tsne_3d = TSNE(
+            n_components=3, random_state=42, learning_rate="auto", init="pca"
+        ).fit_transform(embeddings_np)
+        log_scatter_plot_3d(
+            tsne_3d, cluster_labels, title_prefix="TSNE_3D_GMM_Clusters"
+        )
+
+        logger.info("GMM evaluation complete. Logged PCA & t-SNE cluster plots to W&B.")

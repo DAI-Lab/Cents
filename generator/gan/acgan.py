@@ -1,5 +1,5 @@
 """
-This class is adapted from the synthetic-timeseries-smart-grid GitHub repository:
+This class is inspired by the synthetic-timeseries-smart-grid GitHub repository:
 
 Repository: https://github.com/vermouth1992/synthetic-time-series-smart-grid
 Author: Chi Zhang
@@ -9,7 +9,6 @@ Modifications:
 - Hyperparameters and network structure
 - Training loop changes
 - Changes in conditioning logic
-- Integration of a single post–warm-up GMM fitting for rarity detection
 
 Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
 """
@@ -37,7 +36,7 @@ class Generator(nn.Module):
         input_dim,
         conditioning_module,
         device,
-        conditioning_var_category_dict=None,
+        context_vars=None,
         base_channels=256,
     ):
         super(Generator, self).__init__()
@@ -48,15 +47,11 @@ class Generator(nn.Module):
         self.base_channels = base_channels
         self.device = device
 
-        self.conditioning_var_category_dict = conditioning_var_category_dict
+        self.context_vars = context_vars
         self.conditioning_module = conditioning_module
 
         self.fc = nn.Linear(
-            (
-                noise_dim + embedding_dim
-                if self.conditioning_var_category_dict
-                else noise_dim
-            ),
+            (noise_dim + embedding_dim if self.context_vars else noise_dim),
             self.final_window_length * base_channels,
         ).to(self.device)
 
@@ -83,19 +78,33 @@ class Generator(nn.Module):
             nn.Sigmoid().to(self.device),
         ).to(self.device)
 
-    def forward(self, noise, conditioning_vars):
-        mu, logvar = None, None
-        if conditioning_vars:
-            z, mu, logvar = self.conditioning_module(conditioning_vars, sample=False)
-            x = torch.cat((noise, z), dim=1)
+    def forward(self, noise, context_vars):
+        """
+        Forward pass to produce a time series sample.
+
+        Args:
+            noise (Tensor): shape (batch_size, noise_dim)
+            context_vars (dict): optional dict of context variable Tensors
+
+        Returns:
+            generated_time_series (Tensor): shape (batch_size, seq_length, input_dim)
+            cond_classification_logits (dict): classification logits from the conditioning module
+        """
+        if context_vars:
+            embedding, cond_classification_logits = self.conditioning_module(
+                context_vars
+            )
+            x = torch.cat((noise, embedding), dim=1)
         else:
+            cond_classification_logits = {}
             x = noise
+
         x = self.fc(x)
         x = x.view(-1, self.base_channels, self.final_window_length)
         x = self.conv_transpose_layers(x)
-        x = x.permute(0, 2, 1)  # (batch_size, seq_length, n_dim)
+        x = x.permute(0, 2, 1)  # (batch_size, seq_length, input_dim)
 
-        return x, mu, logvar
+        return x, cond_classification_logits
 
 
 class Discriminator(nn.Module):
@@ -104,13 +113,13 @@ class Discriminator(nn.Module):
         window_length,
         input_dim,
         device,
-        conditioning_var_n_categories=None,
+        context_var_n_categories=None,
         base_channels=256,
     ):
         super(Discriminator, self).__init__()
         self.input_dim = input_dim
         self.window_length = window_length
-        self.conditioning_var_n_categories = conditioning_var_n_categories
+        self.context_var_n_categories = context_var_n_categories
         self.base_channels = base_channels
         self.device = device
 
@@ -139,14 +148,23 @@ class Discriminator(nn.Module):
             self.device
         )
 
+        # Auxiliary classifiers: one for each context var
         self.aux_classifiers = nn.ModuleDict()
-        for var_name, num_classes in self.conditioning_var_n_categories.items():
+        for var_name, num_classes in self.context_var_n_categories.items():
             self.aux_classifiers[var_name] = nn.Linear(
                 (window_length // 8) * base_channels, num_classes
             ).to(self.device)
         self.softmax = nn.Softmax(dim=1).to(self.device)
 
     def forward(self, x):
+        """
+        Args:
+            x (Tensor): shape (batch_size, seq_length, input_dim)
+
+        Returns:
+            validity (Tensor): shape (batch_size, 1)
+            aux_outputs (dict): { var_name: classification_logits }
+        """
         x = x.permute(
             0, 2, 1
         )  # Permute to (n_samples, n_dim, seq_length) for conv layers
@@ -156,8 +174,8 @@ class Discriminator(nn.Module):
 
         aux_outputs = {}
         for var_name, classifier in self.aux_classifiers.items():
-            aux_output = classifier(x)
-            aux_outputs[var_name] = self.softmax(aux_output)
+            aux_output = classifier(x)  # raw logits
+            aux_outputs[var_name] = aux_output
 
         return validity, aux_outputs
 
@@ -173,18 +191,16 @@ class ACGAN(nn.Module):
         self.seq_len = cfg.dataset.seq_len
         self.noise_dim = cfg.model.noise_dim
         self.cond_emb_dim = cfg.model.cond_emb_dim
-        self.conditioning_var_n_categories = cfg.dataset.conditioning_vars
+        self.context_var_n_categories = cfg.dataset.conditioning_vars
         self.device = cfg.device
-        self.warm_up_epochs = cfg.model.warm_up_epochs
-        self.sparse_conditioning_loss_weight = cfg.model.sparse_conditioning_loss_weight
-        self.kl_weight = cfg.model.kl_weight
+        self.cond_loss_weight = cfg.model.cond_loss_weight
 
         assert (
             self.seq_len % 8 == 0
         ), "window_length must be a multiple of 8 in this architecture!"
 
         self.conditioning_module = ConditioningModule(
-            self.conditioning_var_n_categories, self.cond_emb_dim, self.device
+            self.context_var_n_categories, self.cond_emb_dim, self.device
         ).to(self.device)
 
         self.generator = Generator(
@@ -194,14 +210,14 @@ class ACGAN(nn.Module):
             self.input_dim,
             self.conditioning_module,
             self.device,
-            self.conditioning_var_n_categories,
+            self.context_var_n_categories,
         ).to(self.device)
 
         self.discriminator = Discriminator(
             self.seq_len,
             self.input_dim,
             self.device,
-            self.conditioning_var_n_categories,
+            self.context_var_n_categories,
         ).to(self.device)
 
         self.adversarial_loss = nn.BCELoss().to(self.device)
@@ -213,8 +229,6 @@ class ACGAN(nn.Module):
         self.optimizer_D = optim.Adam(
             self.discriminator.parameters(), lr=self.lr_discr, betas=(0.5, 0.999)
         )
-
-        self.gmm_fitted = False
 
         if self.cfg.wandb_enabled:
             wandb.init(
@@ -233,43 +247,31 @@ class ACGAN(nn.Module):
         for epoch in range(num_epoch):
             self.current_epoch = epoch + 1
 
-            if self.current_epoch > self.warm_up_epochs:
-                for param in self.generator.conditioning_module.parameters():
-                    param.requires_grad = False
-
-            # ======================================================
-            # TRAINING LOOP
-            # ======================================================
             for _, (time_series_batch, conditioning_vars_batch) in enumerate(
                 tqdm(train_loader, desc=f"Epoch {epoch + 1}")
             ):
                 time_series_batch = time_series_batch.to(self.device)
                 conditioning_vars_batch = {
                     name: conditioning_vars_batch[name]
-                    for name in self.conditioning_var_n_categories.keys()
+                    for name in self.context_var_n_categories.keys()
                 }
-
                 current_batch_size = time_series_batch.size(0)
+
+                # ====================================================================
+                # 1. Train Discriminator
+                # ====================================================================
+                self.optimizer_D.zero_grad()
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
                 )
 
-                # ---------------------
-                # Forward pass G
-                # ---------------------
-                generated_time_series, mu, logvar = self.generator(
+                generated_time_series, _ = self.generator(
                     noise, conditioning_vars_batch
                 )
-
-                # ---------------------
-                # Train Discriminator
-                # ---------------------
-                self.optimizer_D.zero_grad()
-                soft_zero, soft_one = 0, 0.95
-
                 real_pred, aux_outputs_real = self.discriminator(time_series_batch)
                 fake_pred, aux_outputs_fake = self.discriminator(generated_time_series)
 
+                soft_zero, soft_one = 0, 0.95
                 d_real_loss = self.adversarial_loss(
                     real_pred, torch.ones_like(real_pred) * soft_one
                 )
@@ -277,165 +279,75 @@ class ACGAN(nn.Module):
                     fake_pred, torch.ones_like(fake_pred) * soft_zero
                 )
 
-                if self.cfg.wandb_enabled:
-                    wandb.log(
-                        {
-                            "Loss/Discr_adv": d_real_loss.item() + d_fake_loss.item(),
-                        }
-                    )
+                d_loss = d_real_loss + d_fake_loss
 
-                if self.cfg.model.include_auxiliary_losses:
-                    for var_name in self.conditioning_var_n_categories.keys():
-                        labels = conditioning_vars_batch[var_name].to(self.device)
-                        d_real_loss += self.auxiliary_loss(
-                            aux_outputs_real[var_name], labels
-                        )
-                        d_fake_loss += self.auxiliary_loss(
-                            aux_outputs_fake[var_name], labels
-                        )
+                for var_name in self.context_var_n_categories.keys():
+                    labels = conditioning_vars_batch[var_name].to(self.device)
+                    d_loss += self.auxiliary_loss(aux_outputs_real[var_name], labels)
+                    d_loss += self.auxiliary_loss(aux_outputs_fake[var_name], labels)
 
-                d_loss = 0.5 * (d_real_loss + d_fake_loss)
                 d_loss.backward()
                 self.optimizer_D.step()
 
-                # -----------------
-                # Train Generator
-                # -----------------
+                # ====================================================================
+                # 2. Train Generator
+                # ====================================================================
                 self.optimizer_G.zero_grad()
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
                 )
-                gen_categorical_vars = self.sample_conditioning_vars(
-                    dataset, current_batch_size, random=True
-                )
-                generated_time_series, mu_g, logvar_g = self.generator(
+                gen_categorical_vars = conditioning_vars_batch
+
+                generated_time_series, cond_classification_logits = self.generator(
                     noise, gen_categorical_vars
                 )
+
                 validity, aux_outputs = self.discriminator(generated_time_series)
-
-                # Only apply GMM-based rare logic if GMM is fitted
-                if self.gmm_fitted:
-                    gen_batch_embeddings = mu_g.detach()
-                    rare_mask_gen = (
-                        self.generator.conditioning_module.is_rare(gen_batch_embeddings)
-                        .float()
-                        .to(self.device)
-                    )
-                else:
-                    rare_mask_gen = torch.zeros((current_batch_size,)).to(self.device)
-
-                # Adversarial Loss for Generator
-                g_loss_rare = self.adversarial_loss(
-                    validity.squeeze() * rare_mask_gen,
-                    torch.ones_like(validity.squeeze()) * rare_mask_gen * soft_one,
-                )
-                g_loss_non_rare = self.adversarial_loss(
-                    validity.squeeze() * (1 - rare_mask_gen),
-                    torch.ones_like(validity.squeeze())
-                    * (1 - rare_mask_gen)
-                    * soft_one,
+                g_loss = self.adversarial_loss(
+                    validity.squeeze(), torch.ones_like(validity.squeeze()) * soft_one
                 )
 
-                if self.cfg.wandb_enabled:
-                    wandb.log(
-                        {
-                            "Loss/Gen_adv": g_loss_rare.item() + g_loss_non_rare.item(),
-                        }
-                    )
+                for var_name in self.context_var_n_categories.keys():
+                    labels = gen_categorical_vars[var_name].to(self.device)
+                    g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
 
-                if self.cfg.model.include_auxiliary_losses:
-                    for var_name in self.conditioning_var_n_categories.keys():
-                        labels = gen_categorical_vars[var_name]
-                        rare_indices = rare_mask_gen.bool()
-                        non_rare_indices = ~rare_mask_gen.bool()
+                # ------------------------------------------------------------------
+                # Additional classification loss from the conditioning module itself
+                # ------------------------------------------------------------------
+                cond_loss = 0.0
+                for var_name, logits in cond_classification_logits.items():
+                    labels = gen_categorical_vars[var_name].to(self.device)
+                    cond_loss += self.auxiliary_loss(logits, labels)
 
-                        if rare_indices.any():
-                            g_loss_rare += self.auxiliary_loss(
-                                aux_outputs[var_name][rare_indices],
-                                labels[rare_indices],
-                            )
+                total_generator_loss = g_loss + self.cond_loss_weight * cond_loss
 
-                        if non_rare_indices.any():
-                            g_loss_non_rare += self.auxiliary_loss(
-                                aux_outputs[var_name][non_rare_indices],
-                                labels[non_rare_indices],
-                            )
-
-                _lambda = self.sparse_conditioning_loss_weight
-                N_r = rare_mask_gen.sum().item()
-                N_nr = (1 - rare_mask_gen).sum().item()
-                N = current_batch_size
-                g_loss_main = (
-                    _lambda * (N_r / N) * g_loss_rare
-                    + (1 - _lambda) * (N_nr / N) * g_loss_non_rare
-                )
-
-                # KL Divergence (only before warm-up ends)
-                if (
-                    mu_g is not None
-                    and logvar_g is not None
-                    and self.current_epoch <= self.warm_up_epochs
-                ):
-                    kl_loss = self.conditioning_module.kl_divergence(mu_g, logvar_g)
-
-                    if self.cfg.wandb_enabled:
-                        wandb.log(
-                            {
-                                "Loss/KL": kl_loss.item(),
-                            }
-                        )
-
-                    g_loss = g_loss_main + self.kl_weight * kl_loss
-                else:
-                    g_loss = g_loss_main
-
-                g_loss.backward()
+                total_generator_loss.backward()
                 self.optimizer_G.step()
 
+                # -----------------
+                # Logging
+                # -----------------
                 if self.cfg.wandb_enabled:
                     wandb.log(
                         {
-                            "Loss/discr_total": d_loss.item(),
-                            "Loss/gen_total": g_loss.item(),
+                            "Loss/Discriminator": d_loss.item(),
+                            "Loss/Generator": g_loss.item(),
+                            "Loss/CondClassification": cond_loss.item(),
+                            "Loss/Generator_Total": total_generator_loss.item(),
                         }
                     )
-
-            # ======================================================
-            # After last warmup Epoch - Fit GMM if Warm-Up Just Ended
-            # ======================================================
-            if self.current_epoch == self.warm_up_epochs and not self.gmm_fitted:
-                all_embeddings = []
-                full_loader = prepare_dataloader(dataset, batch_size)
-                self.generator.conditioning_module.eval()
-
-                with torch.no_grad():
-                    for _, (ts_batch, cond_vars_batch) in enumerate(full_loader):
-                        cond_vars_batch = {
-                            name: cond_vars_batch[name].to(self.device)
-                            for name in self.conditioning_var_n_categories.keys()
-                        }
-                        _, mu_train, _ = self.generator.conditioning_module(
-                            cond_vars_batch, sample=False
-                        )
-                        all_embeddings.append(mu_train.cpu())
-
-                all_embeddings = torch.cat(
-                    all_embeddings, dim=0
-                )  # shape (N, cond_emb_dim)
-
-                self.generator.conditioning_module.fit_gmm(all_embeddings)
-                self.generator.conditioning_module.set_rare_threshold(
-                    all_embeddings, fraction=0.1
-                )
-                self.gmm_fitted = True
 
             if (epoch + 1) % self.cfg.model.save_cycle == 0:
                 self.save(epoch=self.current_epoch)
 
     def sample_conditioning_vars(self, dataset, batch_size, random=False):
+        """
+        Example method for sampling or selecting context var labels.
+        Adjust as needed for your data.
+        """
         conditioning_vars = {}
         if random:
-            for var_name, num_categories in self.conditioning_var_n_categories.items():
+            for var_name, num_categories in self.context_var_n_categories.items():
                 conditioning_vars[var_name] = torch.randint(
                     0,
                     num_categories,
@@ -445,11 +357,10 @@ class ACGAN(nn.Module):
                 )
         else:
             sampled_rows = dataset.data.sample(n=batch_size).reset_index(drop=True)
-            for var_name in self.conditioning_var_n_categories.keys():
+            for var_name in self.context_var_n_categories.keys():
                 conditioning_vars[var_name] = torch.tensor(
                     sampled_rows[var_name].values, dtype=torch.long, device=self.device
                 )
-
         return conditioning_vars
 
     def generate(self, conditioning_vars):
@@ -466,9 +377,7 @@ class ACGAN(nn.Module):
             current_bs = end_idx - start_idx
             noise = torch.randn((current_bs, self.noise_dim)).to(self.device)
             with torch.no_grad():
-                generated_data, mu, logvar = self.generator(
-                    noise, batch_conditioning_vars
-                )
+                generated_data, _ = self.generator(noise, batch_conditioning_vars)
             generated_samples.append(generated_data)
 
         return torch.cat(generated_samples, dim=0)
@@ -501,7 +410,6 @@ class ACGAN(nn.Module):
             "optimizer_G_state_dict": self.optimizer_G.state_dict(),
             "optimizer_D_state_dict": self.optimizer_D.state_dict(),
             "conditioning_module_state_dict": self.conditioning_module.state_dict(),
-            "gmm_fitted": self.gmm_fitted,
         }
         torch.save(checkpoint, path)
         print(f"Saved ACGAN checkpoint to {path}")
@@ -552,11 +460,6 @@ class ACGAN(nn.Module):
             print(f"Loaded epoch number: {self.current_epoch}")
         else:
             print("No epoch information found in checkpoint.")
-
-        if "gmm_fitted" in checkpoint:
-            self.gmm_fitted = checkpoint["gmm_fitted"]
-        else:
-            self.gmm_fitted = False
 
         self.generator.to(self.device)
         self.discriminator.to(self.device)
