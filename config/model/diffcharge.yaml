@@ -1,18 +1,14 @@
 _target_: generator.diffcharge.diffusion.DDPM
 name: diffcharge
 noise_dim: 256
-cond_emb_dim: 64
-sparse_conditioning_loss_weight: 0.5 # sparse conditioning training sample weight for loss computation [0, 1]
-freeze_cond_after_warmup: False # specify whether to freeze conditioning module parameters after warmup epoch
-kl_weight: 0.0
+cond_emb_dim: 16
 
-
-batch_size: 32
-n_epochs: 2000
+batch_size: 1024
+n_epochs: 1000
 init_lr: 3e-5
 network: cnn # attention
 use_cfg: True
-guidance_scale: 1.2
+guidance_scale: 10
 ema_decay: 0.99
 ema_update_interval: 10
 hidden_dim: 256
@@ -22,7 +18,7 @@ beta_end: 0.02
 n_steps: 1000
 schedule: linear # quadratic, cosine
 warm_up_epochs: 1800
-save_cycle: 1000 # specify number of epochs to save model after
+save_cycle: 1000
 sampling_batch_size: 2048
 
 cond_loss_weight: 0.1

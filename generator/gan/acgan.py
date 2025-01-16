@@ -311,9 +311,6 @@ class ACGAN(nn.Module):
                     labels = gen_categorical_vars[var_name].to(self.device)
                     g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
 
-                # ------------------------------------------------------------------
-                # Additional classification loss from the conditioning module itself
-                # ------------------------------------------------------------------
                 cond_loss = 0.0
                 for var_name, logits in cond_classification_logits.items():
                     labels = gen_categorical_vars[var_name].to(self.device)
@@ -324,9 +321,6 @@ class ACGAN(nn.Module):
                 total_generator_loss.backward()
                 self.optimizer_G.step()
 
-                # -----------------
-                # Logging
-                # -----------------
                 if self.cfg.wandb_enabled:
                     wandb.log(
                         {
