@@ -15,11 +15,13 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class StatsHead(nn.Module):
-    def __init__(self, embedding_dim, hidden_dim, n_dims, do_scale, n_layers=3):
+    def __init__(
+        self, embedding_dim, hidden_dim, time_series_dims, do_scale, n_layers=3
+    ):
         super().__init__()
-        self.n_dims = n_dims
+        self.time_series_dims = time_series_dims
         self.do_scale = do_scale
-        out_dim = 4 * n_dims if do_scale else 2 * n_dims
+        out_dim = 4 * time_series_dims if do_scale else 2 * time_series_dims
 
         layers = []
         in_dim = embedding_dim
@@ -34,13 +36,13 @@ class StatsHead(nn.Module):
         out = self.net(z)
         batch_size = out.size(0)
         if self.do_scale:
-            out = out.view(batch_size, 4, self.n_dims)
+            out = out.view(batch_size, 4, self.time_series_dims)
             pred_mu = out[:, 0, :]
             pred_log_sigma = out[:, 1, :]
             pred_z_min = out[:, 2, :]
             pred_z_max = out[:, 3, :]
         else:
-            out = out.view(batch_size, 2, self.n_dims)
+            out = out.view(batch_size, 2, self.time_series_dims)
             pred_mu = out[:, 0, :]
             pred_log_sigma = out[:, 1, :]
             pred_z_min = None
@@ -58,7 +60,11 @@ class NormalizerModule(nn.Module):
     """
 
     def __init__(
-        self, cond_module: nn.Module, hidden_dim: int, n_dims: int, do_scale: bool
+        self,
+        cond_module: nn.Module,
+        hidden_dim: int,
+        time_series_dims: int,
+        do_scale: bool,
     ):
         super().__init__()
         self.cond_module = cond_module
@@ -66,15 +72,15 @@ class NormalizerModule(nn.Module):
         self.stats_head = StatsHead(
             embedding_dim=self.embedding_dim,
             hidden_dim=hidden_dim,
-            n_dims=n_dims,
+            time_series_dims=time_series_dims,
             do_scale=do_scale,
         )
 
     def forward(self, cat_vars_dict: Dict[str, torch.Tensor]):
         """
         Returns:
-          pred_mu, pred_sigma: shape (batch_size, n_dims)
-          pred_z_min, pred_z_max: shape (batch_size, n_dims) if do_scale=True, else None
+          pred_mu, pred_sigma: shape (batch_size, time_series_dims)
+          pred_z_min, pred_z_max: shape (batch_size, time_series_dims) if do_scale=True, else None
         """
         embedding, _ = self.cond_module(cat_vars_dict)
         return self.stats_head(embedding)
@@ -104,7 +110,7 @@ class Normalizer:
         self.dataset = dataset
         self.context_vars = dataset.conditioning_vars
         self.time_series_cols = dataset.time_series_column_names
-        self.n_dims = len(self.time_series_cols)
+        self.time_series_dims = len(self.time_series_cols)
 
         self.device = self.normalizer_cfg.device
         self.group_stats = {}
@@ -118,7 +124,7 @@ class Normalizer:
         self.normalizer_model = NormalizerModule(
             cond_module=cond_module,
             hidden_dim=self.normalizer_cfg.hidden_dim,
-            n_dims=self.n_dims,
+            time_series_dims=self.time_series_dims,
             do_scale=self.do_scale,
         ).to(self.normalizer_cfg.device)
 
@@ -134,12 +140,12 @@ class Normalizer:
         grouped_stats = {}
 
         for group_vals, group_df in df.groupby(self.context_vars):
-            dimension_points = [[] for _ in range(self.n_dims)]
+            dimension_points = [[] for _ in range(self.time_series_dims)]
             for _, row in group_df.iterrows():
                 for d, col_name in enumerate(self.time_series_cols):
                     arr = np.array(row[col_name], dtype=np.float32).flatten()
                     dimension_points[d].append(arr)
-            for d in range(self.n_dims):
+            for d in range(self.time_series_dims):
                 dimension_points[d] = np.concatenate(dimension_points[d], axis=0)
 
             mu_array = np.array(
@@ -153,7 +159,7 @@ class Normalizer:
             z_max_array = np.zeros_like(mu_array)
 
             if self.do_scale:
-                for d in range(self.n_dims):
+                for d in range(self.time_series_dims):
                     z_vals = (dimension_points[d] - mu_array[d]) / std_array[d]
                     z_min_array[d], z_max_array[d] = z_vals.min(), z_vals.max()
             else:
@@ -177,18 +183,17 @@ class Normalizer:
             zmin_arr,
             zmax_arr,
         ) in self.group_stats.items():
-            # If scale=False or missing zmin/zmax, store None
             if self.do_scale and zmin_arr is not None and zmax_arr is not None:
                 data_tuples.append((ctx_tuple, mu_arr, sigma_arr, zmin_arr, zmax_arr))
             else:
                 data_tuples.append((ctx_tuple, mu_arr, sigma_arr, None, None))
 
         class _TrainSet(Dataset):
-            def __init__(self, samples, context_vars, n_dims, do_scale):
+            def __init__(self, samples, context_vars, time_series_dims, do_scale):
                 super().__init__()
                 self.samples = samples
                 self.context_vars = context_vars
-                self.n_dims = n_dims
+                self.time_series_dims = time_series_dims
                 self.do_scale = do_scale
 
             def __len__(self):
@@ -213,7 +218,9 @@ class Normalizer:
 
                 return cat_vars_dict, mu_t, sigma_t, zmin_t, zmax_t
 
-        return _TrainSet(data_tuples, self.context_vars, self.n_dims, self.do_scale)
+        return _TrainSet(
+            data_tuples, self.context_vars, self.time_series_dims, self.do_scale
+        )
 
     def train_normalizer(self):
         ds = self.create_training_dataset()

@@ -33,7 +33,7 @@ class Generator(nn.Module):
         noise_dim,
         embedding_dim,
         final_window_length,
-        input_dim,
+        time_series_dims,
         conditioning_module,
         device,
         context_vars=None,
@@ -43,7 +43,7 @@ class Generator(nn.Module):
         self.noise_dim = noise_dim
         self.embedding_dim = embedding_dim
         self.final_window_length = final_window_length // 8
-        self.input_dim = input_dim
+        self.time_series_dims = time_series_dims
         self.base_channels = base_channels
         self.device = device
 
@@ -73,7 +73,7 @@ class Generator(nn.Module):
             nn.BatchNorm1d(base_channels // 4).to(self.device),
             nn.LeakyReLU(0.2, inplace=True),
             nn.ConvTranspose1d(
-                base_channels // 4, input_dim, kernel_size=4, stride=2, padding=1
+                base_channels // 4, time_series_dims, kernel_size=4, stride=2, padding=1
             ).to(self.device),
             nn.Sigmoid().to(self.device),
         ).to(self.device)
@@ -87,7 +87,7 @@ class Generator(nn.Module):
             context_vars (dict): optional dict of context variable Tensors
 
         Returns:
-            generated_time_series (Tensor): shape (batch_size, seq_length, input_dim)
+            generated_time_series (Tensor): shape (batch_size, seq_length, time_series_dims)
             cond_classification_logits (dict): classification logits from the conditioning module
         """
         if context_vars:
@@ -102,7 +102,7 @@ class Generator(nn.Module):
         x = self.fc(x)
         x = x.view(-1, self.base_channels, self.final_window_length)
         x = self.conv_transpose_layers(x)
-        x = x.permute(0, 2, 1)  # (batch_size, seq_length, input_dim)
+        x = x.permute(0, 2, 1)  # (batch_size, seq_length, time_series_dims)
 
         return x, cond_classification_logits
 
@@ -111,13 +111,13 @@ class Discriminator(nn.Module):
     def __init__(
         self,
         window_length,
-        input_dim,
+        time_series_dims,
         device,
         context_var_n_categories=None,
         base_channels=256,
     ):
         super(Discriminator, self).__init__()
-        self.input_dim = input_dim
+        self.time_series_dims = time_series_dims
         self.window_length = window_length
         self.context_var_n_categories = context_var_n_categories
         self.base_channels = base_channels
@@ -125,7 +125,7 @@ class Discriminator(nn.Module):
 
         self.conv_layers = nn.Sequential(
             nn.Conv1d(
-                input_dim, base_channels // 4, kernel_size=4, stride=2, padding=1
+                time_series_dims, base_channels // 4, kernel_size=4, stride=2, padding=1
             ).to(self.device),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv1d(
@@ -159,7 +159,7 @@ class Discriminator(nn.Module):
     def forward(self, x):
         """
         Args:
-            x (Tensor): shape (batch_size, seq_length, input_dim)
+            x (Tensor): shape (batch_size, seq_length, time_series_dims)
 
         Returns:
             validity (Tensor): shape (batch_size, 1)
@@ -185,7 +185,7 @@ class ACGAN(nn.Module):
         super(ACGAN, self).__init__()
         self.cfg = cfg
         self.code_size = cfg.model.noise_dim
-        self.input_dim = cfg.dataset.input_dim
+        self.time_series_dims = cfg.dataset.time_series_dims
         self.lr_gen = cfg.model.lr_gen
         self.lr_discr = cfg.model.lr_discr
         self.seq_len = cfg.dataset.seq_len
@@ -207,7 +207,7 @@ class ACGAN(nn.Module):
             self.noise_dim,
             self.cond_emb_dim,
             self.seq_len,
-            self.input_dim,
+            self.time_series_dims,
             self.conditioning_module,
             self.device,
             self.context_var_n_categories,
@@ -215,7 +215,7 @@ class ACGAN(nn.Module):
 
         self.discriminator = Discriminator(
             self.seq_len,
-            self.input_dim,
+            self.time_series_dims,
             self.device,
             self.context_var_n_categories,
         ).to(self.device)
@@ -257,9 +257,6 @@ class ACGAN(nn.Module):
                 }
                 current_batch_size = time_series_batch.size(0)
 
-                # ====================================================================
-                # 1. Train Discriminator
-                # ====================================================================
                 self.optimizer_D.zero_grad()
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
@@ -289,9 +286,6 @@ class ACGAN(nn.Module):
                 d_loss.backward()
                 self.optimizer_D.step()
 
-                # ====================================================================
-                # 2. Train Generator
-                # ====================================================================
                 self.optimizer_G.zero_grad()
                 noise = torch.randn((current_batch_size, self.code_size)).to(
                     self.device
