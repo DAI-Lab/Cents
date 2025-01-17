@@ -140,7 +140,9 @@ class Evaluator:
         real_data_array = np.stack(real_data_inv["timeseries"])
         syn_data_array = np.stack(syn_data_inv["timeseries"])
 
-        # Compute metrics
+        if self.cfg.evaluator.eval_pv_shift:
+            self.evaluate_pv_shift(dataset=dataset, model=model)
+
         if self.cfg.evaluator.eval_metrics:
             rare_mask = None
 
@@ -151,15 +153,9 @@ class Evaluator:
                 real_data_array, syn_data_array, real_data_inv, rare_mask
             )
 
-        # Generate plots
         if self.cfg.evaluator.eval_vis:
             self.create_visualizations(real_data_inv, syn_data_inv, dataset, model)
 
-        # # Evaluate conditioning module rarity predictions
-        # if self.cfg.evaluator.eval_cond:
-        #     self.evaluate_conditioning_module(model)
-
-        # Evaluate embedding space GMM
         if self.cfg.evaluator.eval_gmm:
             self.evaluate_embedding_space_with_gmm(dataset, model)
 
@@ -206,19 +202,13 @@ class Evaluator:
         wandb.log({"Pred_Score": pred_score})
         logger.info(f"--- Pred Score completed ---")
 
-        # ------------------------------
-        # Rare-subset metrics (if mask is provided)
-        # ------------------------------
         if mask is not None:
             logger.info("--- Starting Rare-Subset Metrics ---")
 
-            # Subselect real & synthetic data
             rare_real_data = real_data[mask]
             rare_syn_data = syn_data[mask]
-            # Also subselect the real_data_frame rows
             rare_real_df = real_data_frame[mask].reset_index(drop=True)
 
-            # Compute the same metrics on the rare subset
             dtw_mean_r, dtw_std_r = dynamic_time_warping_dist(
                 rare_real_data, rare_syn_data
             )
@@ -285,14 +275,12 @@ class Evaluator:
                 for var_name in model.context_var_n_categories.keys()
             }
 
-            # Generate synthetic samples
             generated_samples = model.generate(conditioning_vars_sample).cpu().numpy()
             if generated_samples.ndim == 2:
                 generated_samples = generated_samples.reshape(
                     generated_samples.shape[0], -1, generated_samples.shape[1]
                 )
 
-            # Create DataFrame for generated samples
             generated_samples_df = pd.DataFrame(
                 {
                     var_name: [sample_row[var_name]] * num_samples
@@ -302,7 +290,6 @@ class Evaluator:
             generated_samples_df["timeseries"] = list(generated_samples)
             generated_samples_df["dataid"] = sample_row["dataid"]
 
-            # Check and fill missing normalization group keys
             normalization_keys = dataset.normalization_group_keys
             missing_keys = [
                 key
@@ -325,23 +312,18 @@ class Evaluator:
                             f"Sample row does not contain required key: '{key}'."
                         )
 
-            # Perform inverse transformation now that all keys are present
             generated_samples_df = dataset.inverse_transform(generated_samples_df)
-
-            # Extract conditioning vars for visualization
             cond_vars_for_vis = {
                 name: tensor[0].item()
                 for name, tensor in conditioning_vars_sample.items()
             }
 
-            # Visualization: Combined range and closest real time series plot
             comparison_plot = plot_syn_and_real_comparison(
                 real_data_df, generated_samples_df, cond_vars_for_vis
             )
             if comparison_plot is not None:
                 wandb.log({f"Comparison_Plot_{i}": wandb.Image(comparison_plot)})
 
-        # Visualization 3: KDE plots for real and synthetic data
         real_data_array = np.stack(real_data_df["timeseries"])
         syn_data_array = np.stack(syn_data_df["timeseries"])
         kde_plots = visualization(real_data_array, syn_data_array, "kernel")
@@ -506,3 +488,107 @@ class Evaluator:
         )
 
         logger.info("GMM evaluation complete. Logged PCA & t-SNE cluster plots to W&B.")
+
+    def evaluate_pv_shift(self, dataset: Any, model: Any):
+        """
+        Evaluate how well the model captures the shift from pv=0 to pv=1 for contexts
+        that do NOT have pv=1 in real data, by comparing the synthetic shift
+        to an average 'pv=1 - pv=0' signature from real data.
+        """
+        logger.info("Starting PV shift evaluation...")
+
+        # 1) Compute the "average shift" signature from real data
+        avg_shift = dataset.compute_average_pv_shift()
+        if avg_shift is None or np.allclose(avg_shift, 0.0):
+            logger.warning("No valid shift could be computed, skipping.")
+            return
+
+        # 2) Sample a few contexts that have only pv=0 or only pv=1
+        test_contexts = dataset.sample_shift_test_contexts()
+
+        # If there's a large list, pick a few
+        test_contexts = test_contexts[:5]  # or however many you like
+
+        for i, cinfo in enumerate(test_contexts):
+            base_ctx = cinfo["base_context"]
+            missing_pv = cinfo["missing_pv"]
+            present_pv = base_ctx["has_solar"]  # the actual state in real data
+
+            logger.info(
+                f"Evaluating shift test {i+1} -> base_ctx={base_ctx}, missing pv={missing_pv}"
+            )
+
+            # 3) We'll generate a timeseries for pv=0 and pv=1:
+            #  Actually, we need both states. For the real data, we only have 'present_pv'.
+            #  So let's do two synthetic calls: one with present_pv, one with missing_pv.
+            #  Then compute synthetic shift = (pv=1) - (pv=0).
+            #  If 'present_pv' is 0, we do that and the missing is 1, or vice versa.
+
+            # Convert base_ctx to Tensors
+            # e.g. model expects {var_name: Tensor([...])}
+            # We'll do a batch_size=1 for demonstration
+            base_ctx_tensor = {}
+            for var_name, val in base_ctx.items():
+                base_ctx_tensor[var_name] = torch.tensor(
+                    [val], dtype=torch.long, device=device
+                )
+
+            # We'll build a second context that is exactly the same except pv=missing_pv
+            alt_ctx_tensor = dict(base_ctx_tensor)
+            alt_ctx_tensor["has_solar"] = torch.tensor(
+                [missing_pv], dtype=torch.long, device=device
+            )
+
+            # Generate one sample each
+            with torch.no_grad():
+                syn_ts_present_pv = (
+                    model.generate(base_ctx_tensor).cpu().numpy()
+                )  # shape (1, seq_len, dim)
+                syn_ts_missing_pv = (
+                    model.generate(alt_ctx_tensor).cpu().numpy()
+                )  # shape (1, seq_len, dim)
+
+            # Flatten or pick dimension 0 if needed
+            # Suppose we have dim=1. Then syn_ts_present_pv is (1, seq_len, 1).
+            # We'll reduce that to shape (seq_len,)
+            if syn_ts_present_pv.ndim == 3 and syn_ts_present_pv.shape[-1] == 1:
+                syn_ts_present_pv = syn_ts_present_pv[0, :, 0]
+                syn_ts_missing_pv = syn_ts_missing_pv[0, :, 0]
+            else:
+                syn_ts_present_pv = syn_ts_present_pv[
+                    0, :, 0
+                ]  # pick dimension=0 if multi
+                syn_ts_missing_pv = syn_ts_missing_pv[0, :, 0]
+
+            # Synthetic shift
+            syn_shift = syn_ts_missing_pv - syn_ts_present_pv  # shape (seq_len,)
+
+            # 4) Compare L2 difference with average shift
+            # If 'present_pv'=0 and 'missing_pv'=1, then the shift we want is (1 - 0)
+            # which should match avg_shift. But if 'present_pv'=1, we do the negative?
+            # Or we can just define a sign convention. For simplicity, assume shift= (pv=1) - (pv=0).
+            # So if present is 1, missing=0 => shift = -(syn_shift). We'll define:
+
+            if present_pv == 0 and missing_pv == 1:
+                # syn_shift is (pv=1 - pv=0), which is correct
+                pass
+            else:
+                # present=1, missing=0 => syn_shift is (0 - 1) => negative
+                # let's multiply by -1 so we can compare to the same average shift
+                syn_shift = -syn_shift
+
+            # L2 difference
+            l2_diff = np.sqrt(np.sum((syn_shift - avg_shift) ** 2))
+            logger.info(f"Shift L2 difference: {l2_diff:.4f}")
+            wandb.log({f"Shift_L2_{i}": l2_diff})
+
+            # 5) Plot the synthetic shift vs. the avg shift side-by-side
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.plot(avg_shift, label="Real avg shift", color="blue")
+            ax.plot(syn_shift, label="Synthetic shift", color="red", linestyle="--")
+            ax.set_title(f"Shift comparison for test #{i+1}")
+            ax.legend()
+            wandb.log({f"ShiftPlot_{i}": wandb.Image(fig)})
+            plt.close(fig)
+
+        logger.info("Finished PV shift evaluation.")

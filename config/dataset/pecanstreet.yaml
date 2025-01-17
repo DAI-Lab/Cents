@@ -6,7 +6,7 @@ use_learned_normalizer: True
 threshold: 8 # int, clips values within +-threshold stds
 include_generation: False
 seq_len: 96
-input_dim: 1
+time_series_dims: 1
 shuffle: True
 path: "./data/pecanstreet/csv"
 data_columns: ["dataid","local_15min","car1","grid","solar"]

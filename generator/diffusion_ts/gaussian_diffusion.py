@@ -82,7 +82,7 @@ class Diffusion_TS(nn.Module):
         self.eta = cfg.model.eta
         self.use_ff = cfg.model.use_ff
         self.seq_len = cfg.dataset.seq_len
-        self.input_dim = cfg.dataset.input_dim
+        self.time_series_dims = cfg.dataset.time_series_dims
         self.ff_weight = default(cfg.model.reg_weight, math.sqrt(self.seq_len) / 5)
         self.device = cfg.device
 
@@ -94,9 +94,11 @@ class Diffusion_TS(nn.Module):
             self.context_var_n_categories, self.embedding_dim, self.device
         ).to(self.device)
 
-        self.fc = nn.Linear(self.input_dim + self.embedding_dim, self.input_dim)
+        self.fc = nn.Linear(
+            self.time_series_dims + self.embedding_dim, self.time_series_dims
+        )
         self.model = Transformer(
-            n_feat=self.input_dim + self.embedding_dim,
+            n_feat=self.time_series_dims + self.embedding_dim,
             n_channel=cfg.dataset.seq_len,
             n_layer_enc=cfg.model.n_layer_enc,
             n_layer_dec=cfg.model.n_layer_dec,
@@ -194,7 +196,7 @@ class Diffusion_TS(nn.Module):
           4) Return the reconstruction loss + classification_logits from cond. module
         """
         b, s, d = x.shape
-        assert s == self.seq_len and d == self.input_dim
+        assert s == self.seq_len and d == self.time_series_dims
 
         t = torch.randint(0, self.num_timesteps, (b,), device=self.device).long()
 
@@ -341,7 +343,7 @@ class Diffusion_TS(nn.Module):
                 for var_name, var_tensor in conditioning_vars.items()
             }
             current_bs = end_idx - start_idx
-            shape = (current_bs, self.seq_len, self.input_dim)
+            shape = (current_bs, self.seq_len, self.time_series_dims)
 
             with torch.no_grad():
                 if getattr(self.cfg.model, "use_ema_sampling", False) and hasattr(

@@ -26,9 +26,9 @@ class TimeSeriesDataset(Dataset, ABC):
         conditioning_var_column_names: Any = None,
         normalize: bool = True,
         scale: bool = True,
-        cluster_n_clusters: int = 10,  # Number of clusters for K-Means
-        cluster_features: List[str] = None,  # Features to use for clustering
-        cluster_rarity_threshold: float = 0.1,  # Top 10% rare clusters
+        cluster_n_clusters: int = 10,
+        cluster_features: List[str] = None,
+        cluster_rarity_threshold: float = 0.1,
         **kwargs,
     ):
         """
@@ -39,6 +39,7 @@ class TimeSeriesDataset(Dataset, ABC):
             if isinstance(time_series_column_names, list)
             else [time_series_column_names]
         )
+        self.time_series_dims = len(time_series_column_names)
         self.conditioning_vars = conditioning_var_column_names or []
         self.seq_len = seq_len
         self.cluster_n_clusters = cluster_n_clusters
@@ -51,7 +52,7 @@ class TimeSeriesDataset(Dataset, ABC):
             ):
                 overrides = [
                     f"seq_len={seq_len}",
-                    f"input_dim={len(time_series_column_names)}",
+                    f"time_series_dims={len(time_series_column_names)}",
                 ]
                 cfg = compose(config_name="default", overrides=overrides)
                 self.numeric_conditioning_bins = cfg.numeric_conditioning_bins
@@ -664,7 +665,7 @@ class TimeSeriesDataset(Dataset, ABC):
         normalizer_ckpt_path = os.path.join(
             ROOT_DIR,
             f"checkpoints/{self.name}/normalizer",
-            f"{self.name}_scale_{self.cfg.scale}_normalizer.pt",
+            f"{self.name}_dim_{self.time_series_dims}_scale_{self.cfg.scale}_normalizer.pt",
         )
         if os.path.exists(normalizer_ckpt_path):
             print(f"Loading existing normalizer from {normalizer_ckpt_path}")
