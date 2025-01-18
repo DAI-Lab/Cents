@@ -1,6 +1,6 @@
 import datetime
 import logging
-import os
+from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
 import matplotlib.pyplot as plt
@@ -12,7 +12,6 @@ from mpl_toolkits.mplot3d import Axes3D
 from omegaconf import DictConfig, OmegaConf
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.mixture import GaussianMixture
 
 from eval.discriminative_metric import discriminative_score_metrics
@@ -50,12 +49,15 @@ class Evaluator:
         self.real_dataset = real_dataset
         self.cfg = cfg
         self.model_name = cfg.model.name
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"{cfg.model.name}_{real_dataset.name}_{cfg.dataset.user_group}_cond_weight_{cfg.model.cond_loss_weight}_{cfg.model.n_epochs}_{timestamp}"
 
         wandb.init(
             config=OmegaConf.to_container(cfg, resolve=True),
             project=cfg.wandb.project,
             entity=cfg.wandb.entity,
             dir=cfg.run_dir,
+            name=run_name,
         )
 
     def evaluate_model(
@@ -355,7 +357,11 @@ class Evaluator:
         else:
             raise ValueError("Model name not recognized!")
 
-        model.train_model(dataset)
+        if self.cfg.model_ckpt is not None:
+            model.load(self.cfg.model_ckpt)
+        else:
+            model.train_model(dataset)
+
         return model
 
     def evaluate_embedding_space_with_gmm(self, dataset: Any, model: Any):
@@ -491,104 +497,91 @@ class Evaluator:
 
     def evaluate_pv_shift(self, dataset: Any, model: Any):
         """
-        Evaluate how well the model captures the shift from pv=0 to pv=1 for contexts
-        that do NOT have pv=1 in real data, by comparing the synthetic shift
-        to an average 'pv=1 - pv=0' signature from real data.
+        Evaluate PV shift (pv=0 vs. pv=1) by generating all contexts in one pass.
+        Compute a single L2 shift error, plot a few examples, and log to W&B.
         """
         logger.info("Starting PV shift evaluation...")
-
-        # 1) Compute the "average shift" signature from real data
         avg_shift = dataset.compute_average_pv_shift()
         if avg_shift is None or np.allclose(avg_shift, 0.0):
-            logger.warning("No valid shift could be computed, skipping.")
+            logger.warning(
+                "No valid average shift could be computed. Skipping shift eval."
+            )
             return
 
-        # 2) Sample a few contexts that have only pv=0 or only pv=1
         test_contexts = dataset.sample_shift_test_contexts()
+        if len(test_contexts) == 0:
+            logger.warning("No shift contexts found. Skipping.")
+            return
 
-        # If there's a large list, pick a few
-        test_contexts = test_contexts[:5]  # or however many you like
+        present_ctx_list = []
+        missing_ctx_list = []
+        present_pv_values = []
 
-        for i, cinfo in enumerate(test_contexts):
+        for cinfo in test_contexts:
             base_ctx = cinfo["base_context"]
+            present_pv = cinfo["present_pv"]
             missing_pv = cinfo["missing_pv"]
-            present_pv = base_ctx["has_solar"]  # the actual state in real data
 
-            logger.info(
-                f"Evaluating shift test {i+1} -> base_ctx={base_ctx}, missing pv={missing_pv}"
+            ctx_p = dict(base_ctx)
+            ctx_m = dict(base_ctx)
+            ctx_p["has_solar"] = present_pv
+            ctx_m["has_solar"] = missing_pv
+
+            present_ctx_list.append(ctx_p)
+            missing_ctx_list.append(ctx_m)
+            present_pv_values.append(present_pv)
+
+        present_ctx_tensors = {}
+        missing_ctx_tensors = {}
+        all_keys = present_ctx_list[0].keys()
+
+        for k in all_keys:
+            present_ctx_tensors[k] = torch.tensor(
+                [pc[k] for pc in present_ctx_list], dtype=torch.long, device=device
+            )
+            missing_ctx_tensors[k] = torch.tensor(
+                [mc[k] for mc in missing_ctx_list], dtype=torch.long, device=device
             )
 
-            # 3) We'll generate a timeseries for pv=0 and pv=1:
-            #  Actually, we need both states. For the real data, we only have 'present_pv'.
-            #  So let's do two synthetic calls: one with present_pv, one with missing_pv.
-            #  Then compute synthetic shift = (pv=1) - (pv=0).
-            #  If 'present_pv' is 0, we do that and the missing is 1, or vice versa.
+        with torch.no_grad():
+            syn_ts_present = model.generate(present_ctx_tensors)  # (N, seq_len, dim)
+            syn_ts_missing = model.generate(missing_ctx_tensors)  # (N, seq_len, dim)
 
-            # Convert base_ctx to Tensors
-            # e.g. model expects {var_name: Tensor([...])}
-            # We'll do a batch_size=1 for demonstration
-            base_ctx_tensor = {}
-            for var_name, val in base_ctx.items():
-                base_ctx_tensor[var_name] = torch.tensor(
-                    [val], dtype=torch.long, device=device
-                )
+        syn_ts_present = syn_ts_present.cpu().numpy()
+        syn_ts_missing = syn_ts_missing.cpu().numpy()
 
-            # We'll build a second context that is exactly the same except pv=missing_pv
-            alt_ctx_tensor = dict(base_ctx_tensor)
-            alt_ctx_tensor["has_solar"] = torch.tensor(
-                [missing_pv], dtype=torch.long, device=device
-            )
+        if syn_ts_present.ndim == 3 and syn_ts_present.shape[-1] == 1:
+            syn_ts_present = syn_ts_present[:, :, 0]
+            syn_ts_missing = syn_ts_missing[:, :, 0]
 
-            # Generate one sample each
-            with torch.no_grad():
-                syn_ts_present_pv = (
-                    model.generate(base_ctx_tensor).cpu().numpy()
-                )  # shape (1, seq_len, dim)
-                syn_ts_missing_pv = (
-                    model.generate(alt_ctx_tensor).cpu().numpy()
-                )  # shape (1, seq_len, dim)
+        shifts = []
+        for i, pv_val in enumerate(present_pv_values):
+            shift_i = syn_ts_missing[i] - syn_ts_present[i]
+            if pv_val == 1:
+                shift_i = -shift_i
+            shifts.append(shift_i)
+        shifts = np.array(shifts)
 
-            # Flatten or pick dimension 0 if needed
-            # Suppose we have dim=1. Then syn_ts_present_pv is (1, seq_len, 1).
-            # We'll reduce that to shape (seq_len,)
-            if syn_ts_present_pv.ndim == 3 and syn_ts_present_pv.shape[-1] == 1:
-                syn_ts_present_pv = syn_ts_present_pv[0, :, 0]
-                syn_ts_missing_pv = syn_ts_missing_pv[0, :, 0]
-            else:
-                syn_ts_present_pv = syn_ts_present_pv[
-                    0, :, 0
-                ]  # pick dimension=0 if multi
-                syn_ts_missing_pv = syn_ts_missing_pv[0, :, 0]
+        avg_shift = np.asarray(avg_shift).reshape(-1)
+        l2_values = []
+        for i in range(shifts.shape[0]):
+            diff = shifts[i] - avg_shift
+            l2 = np.sqrt((diff**2).sum())
+            l2_values.append(l2)
+        mean_l2 = np.mean(l2_values)
 
-            # Synthetic shift
-            syn_shift = syn_ts_missing_pv - syn_ts_present_pv  # shape (seq_len,)
+        logger.info(f"Overall shift L2 across all contexts: {mean_l2:.4f}")
+        wandb.log({"Shift_L2": mean_l2})
 
-            # 4) Compare L2 difference with average shift
-            # If 'present_pv'=0 and 'missing_pv'=1, then the shift we want is (1 - 0)
-            # which should match avg_shift. But if 'present_pv'=1, we do the negative?
-            # Or we can just define a sign convention. For simplicity, assume shift= (pv=1) - (pv=0).
-            # So if present is 1, missing=0 => shift = -(syn_shift). We'll define:
-
-            if present_pv == 0 and missing_pv == 1:
-                # syn_shift is (pv=1 - pv=0), which is correct
-                pass
-            else:
-                # present=1, missing=0 => syn_shift is (0 - 1) => negative
-                # let's multiply by -1 so we can compare to the same average shift
-                syn_shift = -syn_shift
-
-            # L2 difference
-            l2_diff = np.sqrt(np.sum((syn_shift - avg_shift) ** 2))
-            logger.info(f"Shift L2 difference: {l2_diff:.4f}")
-            wandb.log({f"Shift_L2_{i}": l2_diff})
-
-            # 5) Plot the synthetic shift vs. the avg shift side-by-side
+        n_plots = min(3, shifts.shape[0])
+        example_indices = np.random.choice(shifts.shape[0], size=n_plots, replace=False)
+        for j, idx in enumerate(example_indices):
             fig, ax = plt.subplots(figsize=(8, 4))
             ax.plot(avg_shift, label="Real avg shift", color="blue")
-            ax.plot(syn_shift, label="Synthetic shift", color="red", linestyle="--")
-            ax.set_title(f"Shift comparison for test #{i+1}")
+            ax.plot(shifts[idx], label="Synthetic shift", color="red", linestyle="--")
+            ax.set_title(f"Shift Example {j+1}, L2={l2_values[idx]:.4f}")
             ax.legend()
-            wandb.log({f"ShiftPlot_{i}": wandb.Image(fig)})
+            wandb.log({f"ShiftPlot_{j}": wandb.Image(fig)})
             plt.close(fig)
 
         logger.info("Finished PV shift evaluation.")
