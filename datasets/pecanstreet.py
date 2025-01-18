@@ -318,9 +318,12 @@ class PecanStreetDataset(TimeSeriesDataset):
                 # Add the known existing pv state
                 ctx_dict[pv_col] = the_pv_value_present
 
-                # We'll store the missing state too
                 test_contexts.append(
-                    {"base_context": ctx_dict, "missing_pv": missing_pv}
+                    {
+                        "base_context": ctx_dict,
+                        "present_pv": the_pv_value_present,
+                        "missing_pv": missing_pv,
+                    }
                 )
 
         return test_contexts

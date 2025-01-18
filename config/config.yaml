@@ -9,6 +9,7 @@ device: 0 # 0, cpu
 
 job_name: ${model.name}_${dataset.name}_${dataset.user_group}
 run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}
+model_ckpt: null
 
 hydra:
   job_logging:

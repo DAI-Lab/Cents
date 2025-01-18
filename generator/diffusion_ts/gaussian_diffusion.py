@@ -364,11 +364,6 @@ class Diffusion_TS(nn.Module):
         return torch.cat(generated_samples, dim=0)
 
     def train_model(self, train_dataset):
-        """
-        Full training loop:
-          - Single pass with combined (reconstruction + classification) loss
-          - Optional EMA + LR scheduling
-        """
         self.train()
         self.to(self.device)
 
@@ -409,10 +404,8 @@ class Diffusion_TS(nn.Module):
                 for k in cond_batch:
                     cond_batch[k] = cond_batch[k].to(self.device)
 
-                # Forward pass => reconstruction loss, classification logits
                 rec_loss, cond_class_logits = self(ts_batch, cond_batch)
 
-                # Classification loss for the generator's conditioning module
                 cond_loss = 0.0
                 for var_name, logits in cond_class_logits.items():
                     labels = cond_batch[var_name]  # shape (batch,)
@@ -441,11 +434,11 @@ class Diffusion_TS(nn.Module):
 
             print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {epoch_loss:.4f}")
 
+            if (epoch + 1) % self.cfg.model.save_cycle == 0:
+                self.save(epoch=epoch + 1)
+
         print("Training complete")
 
-    # ---------------------------------------------------------
-    # Checkpointing
-    # ---------------------------------------------------------
     def save(self, path: str = None, epoch: int = None):
         if path is None:
             run_dir = os.path.join(self.cfg.run_dir)
@@ -476,7 +469,9 @@ class Diffusion_TS(nn.Module):
         print(f"Saved diffusion model checkpoint to {path}")
 
     def load(self, path: str):
-        ckp = torch.load(path, map_location=self.device)
+        ckp = torch.load(
+            path, map_location=lambda storage, loc: storage.cuda(self.device)
+        )
         if "model_state_dict" in ckp:
             self.load_state_dict(ckp["model_state_dict"])
             print("Loaded model state.")

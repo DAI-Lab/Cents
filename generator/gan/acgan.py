@@ -193,6 +193,7 @@ class ACGAN(nn.Module):
         self.cond_emb_dim = cfg.model.cond_emb_dim
         self.context_var_n_categories = cfg.dataset.conditioning_vars
         self.device = cfg.device
+        self.include_auxiliary_losses = cfg.model.include_auxiliary_losses
         self.cond_loss_weight = cfg.model.cond_loss_weight
 
         assert (
@@ -278,10 +279,15 @@ class ACGAN(nn.Module):
 
                 d_loss = d_real_loss + d_fake_loss
 
-                for var_name in self.context_var_n_categories.keys():
-                    labels = conditioning_vars_batch[var_name].to(self.device)
-                    d_loss += self.auxiliary_loss(aux_outputs_real[var_name], labels)
-                    d_loss += self.auxiliary_loss(aux_outputs_fake[var_name], labels)
+                if self.include_auxiliary_losses:
+                    for var_name in self.context_var_n_categories.keys():
+                        labels = conditioning_vars_batch[var_name].to(self.device)
+                        d_loss += self.auxiliary_loss(
+                            aux_outputs_real[var_name], labels
+                        )
+                        d_loss += self.auxiliary_loss(
+                            aux_outputs_fake[var_name], labels
+                        )
 
                 d_loss.backward()
                 self.optimizer_D.step()
@@ -301,9 +307,10 @@ class ACGAN(nn.Module):
                     validity.squeeze(), torch.ones_like(validity.squeeze()) * soft_one
                 )
 
-                for var_name in self.context_var_n_categories.keys():
-                    labels = gen_categorical_vars[var_name].to(self.device)
-                    g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
+                if self.include_auxiliary_losses:
+                    for var_name in self.context_var_n_categories.keys():
+                        labels = gen_categorical_vars[var_name].to(self.device)
+                        g_loss += self.auxiliary_loss(aux_outputs[var_name], labels)
 
                 cond_loss = 0.0
                 for var_name, logits in cond_classification_logits.items():
@@ -409,7 +416,9 @@ class ACGAN(nn.Module):
         Args:
             path (str): The file path to load the checkpoint from.
         """
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(
+            path, map_location=lambda storage, loc: storage.cuda(self.device)
+        )
 
         if "generator_state_dict" in checkpoint:
             self.generator.load_state_dict(checkpoint["generator_state_dict"])
