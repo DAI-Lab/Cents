@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import scipy
 import seaborn as sns
+import torch
 from dtaidistance import dtw
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
@@ -193,31 +194,18 @@ def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
 def visualization(
     ori_data: np.ndarray, generated_data: np.ndarray, analysis: str, compare: int = 3000
 ):
-    """
-    Visualize the original and generated data using PCA, t-SNE, or KDE plots.
-
-    Args:
-        ori_data: Original data (n_samples, seq_len, n_features).
-        generated_data: Generated data (same shape as ori_data).
-        analysis: 'pca', 'tsne', or 'kernel' for PCA, t-SNE, or KDE visualization.
-        compare: Number of samples to compare.
-    """
     analysis_sample_no = min([compare, ori_data.shape[0]])
     idx = np.random.permutation(ori_data.shape[0])[:analysis_sample_no]
-
     ori_data = ori_data[idx]
     generated_data = generated_data[idx]
 
     no, seq_len, dim = ori_data.shape
     plots = []
-
     for d in range(dim):
         prep_data = np.array([ori_data[i, :, d] for i in range(analysis_sample_no)])
         prep_data_hat = np.array(
             [generated_data[i, :, d] for i in range(analysis_sample_no)]
         )
-
-        # Visualization
         colors = ["red"] * analysis_sample_no + ["blue"] * analysis_sample_no
 
         if analysis == "pca":
@@ -309,68 +297,49 @@ def plot_syn_and_real_comparison(
     df: pd.DataFrame, syn_df: pd.DataFrame, conditioning_vars: dict, dimension: int = 0
 ):
     """
-    Plot the range of real data and synthetic time series, along with the closest real time series using DTW.
-    The x-axis will display hourly timestamps instead of every 15 minutes.
-
-    Args:
-        df (pd.DataFrame): DataFrame containing real time series data.
-        syn_df (pd.DataFrame): DataFrame containing synthetic time series data.
-        conditioning_vars (dict): Dictionary of conditioning variables and their values for filtering.
-        dimension (int, optional): Time series dimension to plot. Defaults to 0.
+    Generate two separate figures:
+    1) Range of real data vs. synthetic time series
+    2) Synthetic time series vs. closest real time series
     """
-    # Filter real data based on conditioning variables
-    condition = (
-        df[list(conditioning_vars.keys())].eq(pd.Series(conditioning_vars)).all(axis=1)
-    )
+
+    cpu_conditioning_vars = {}
+    for k, v in conditioning_vars.items():
+        if isinstance(v, torch.Tensor):
+            v = v[0].cpu().item()
+        cpu_conditioning_vars[k] = v
+
+    fields = list(cpu_conditioning_vars.keys())
+    condition = df[fields].eq(pd.Series(cpu_conditioning_vars)).all(axis=1)
     filtered_df = df[condition]
-
     array_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
-
     if array_data.size == 0:
-        print(f"No real data for conditioning variables: {conditioning_vars}")
-        return
+        return None, None
 
     min_values = np.min(array_data, axis=0)
     max_values = np.max(array_data, axis=0)
 
-    # Filter synthetic data with the same conditioning variables
-    syn_condition = (
-        syn_df[list(conditioning_vars.keys())]
-        .eq(pd.Series(conditioning_vars))
-        .all(axis=1)
-    )
+    syn_condition = syn_df[fields].eq(pd.Series(cpu_conditioning_vars)).all(axis=1)
     syn_filtered_df = syn_df[syn_condition]
-
     if syn_filtered_df.empty:
-        print(f"No synthetic data for conditioning variables: {conditioning_vars}")
-        return
+        return None, None
 
     syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
-
-    # Generate timestamps at 15-minute intervals
     timestamps = pd.date_range(start="00:00", end="23:45", freq="15min")
-
-    # Get hourly tick positions and labels
     hourly_positions = np.arange(0, len(timestamps), 4)
     hourly_labels = [timestamps[i].strftime("%H:%M") for i in hourly_positions]
 
-    # Generate plot title based on conditioning variables
-    title = ", ".join([f"{key}={value}" for key, value in conditioning_vars.items()])
-
-    # Create subplots
-    fig, axes = plt.subplots(2, 1, figsize=(15, 14), sharex=True)
-
-    # Plot 1: Real data range and synthetic time series
-    axes[0].fill_between(
+    fig_range, ax_range = plt.subplots(figsize=(15, 6))
+    ax_range.fill_between(
         range(len(timestamps)),
         min_values,
         max_values,
         color="gray",
         alpha=0.5,
-        label="kWh load range of real data",
+        label="Real Data Range",
     )
+    synthetic_label_used = False
     for index in range(syn_values.shape[0]):
-        axes[0].plot(
+        ax_range.plot(
             range(len(timestamps)),
             syn_values[index],
             color="blue",
@@ -378,32 +347,29 @@ def plot_syn_and_real_comparison(
             markersize=2,
             linestyle="-",
             alpha=0.6,
-            label="Synthetic time series" if index == 0 else None,
+            label="Synthetic TS" if not synthetic_label_used else None,
         )
-    axes[0].set_title(f"Range of Real Data and Synthetic Time Series ({title})")
-    axes[0].set_ylabel("Electric load in kWh")
-    axes[0].legend()
-    axes[0].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
+        synthetic_label_used = True
+    ax_range.set_title("Synthetic vs. Real Data Range")
+    ax_range.set_ylabel("kWh")
+    ax_range.legend()
+    ax_range.grid(True, linestyle="--", linewidth=0.5, alpha=0.7)
+    ax_range.set_xticks(hourly_positions)
+    ax_range.set_xticklabels(hourly_labels, rotation=45)
 
-    # Plot 2: Synthetic time series and closest real time series
+    fig_closest, ax_closest = plt.subplots(figsize=(15, 6))
     synthetic_plotted = False
     real_plotted = False
-
     for index in range(syn_values.shape[0]):
         syn_ts = syn_values[index]
-
-        # Find the closest real time series using DTW
         min_dtw_distance = float("inf")
         closest_real_ts = None
-
         for real_ts in array_data:
             distance = dtw.distance(syn_ts, real_ts)
             if distance < min_dtw_distance:
                 min_dtw_distance = distance
                 closest_real_ts = real_ts
-
-        # Plot synthetic time series
-        axes[1].plot(
+        ax_closest.plot(
             range(len(timestamps)),
             syn_ts,
             color="blue",
@@ -411,13 +377,11 @@ def plot_syn_and_real_comparison(
             markersize=2,
             linestyle="-",
             alpha=0.6,
-            label="Synthetic time series" if not synthetic_plotted else None,
+            label="Synthetic TS" if not synthetic_plotted else None,
         )
         synthetic_plotted = True
-
-        # Plot closest real time series
         if closest_real_ts is not None:
-            axes[1].plot(
+            ax_closest.plot(
                 range(len(timestamps)),
                 closest_real_ts,
                 color="red",
@@ -425,19 +389,17 @@ def plot_syn_and_real_comparison(
                 markersize=2,
                 linestyle="--",
                 alpha=0.6,
-                label="Closest real time series" if not real_plotted else None,
+                label="Closest Real TS" if not real_plotted else None,
             )
             real_plotted = True
+    ax_closest.set_title("Synthetic vs. Closest Real TS")
+    ax_closest.set_xlabel("Time of Day")
+    ax_closest.set_ylabel("kWh")
+    ax_closest.legend()
+    ax_closest.grid(True, linestyle="--", linewidth=0.5, alpha=0.7)
+    ax_closest.set_xticks(hourly_positions)
+    ax_closest.set_xticklabels(hourly_labels, rotation=45)
 
-    axes[1].set_title(f"Synthetic vs Closest Real Time Series ({title})")
-    axes[1].set_xlabel("Time of day")
-    axes[1].set_ylabel("Electric load in kWh")
-    axes[1].legend()
-    axes[1].grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.7)
-
-    # Set x-ticks for both plots
-    axes[1].set_xticks(hourly_positions)
-    axes[1].set_xticklabels(hourly_labels, rotation=45)
-
-    plt.tight_layout()
-    return plt.gcf()
+    fig_range.tight_layout()
+    fig_closest.tight_layout()
+    return fig_range, fig_closest
