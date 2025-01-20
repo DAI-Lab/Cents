@@ -1,5 +1,6 @@
 import datetime
 import logging
+import random
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
@@ -263,8 +264,13 @@ class Evaluator:
             num_samples (int): Number of samples to generate for visualization.
             num_runs (int): Number of visualization runs.
         """
-        logger.info(f"--- Starting Visualizations ---")
+        logger.info("--- Starting Visualizations ---")
+
+        real_data_array = np.stack(real_data_df["timeseries"])
+        _, seq_len, dim = real_data_array.shape
+
         for i in range(num_runs):
+            logger.info(f"--- Starting vis run {i + 1} of {num_runs}")
             sample_index = np.random.randint(low=0, high=real_data_df.shape[0])
             sample_row = real_data_df.iloc[sample_index]
 
@@ -276,7 +282,6 @@ class Evaluator:
                 )
                 for var_name in model.context_var_n_categories.keys()
             }
-
             generated_samples = model.generate(conditioning_vars_sample).cpu().numpy()
             if generated_samples.ndim == 2:
                 generated_samples = generated_samples.reshape(
@@ -298,7 +303,6 @@ class Evaluator:
                 for key in normalization_keys
                 if key not in generated_samples_df.columns
             ]
-
             if missing_keys:
                 logger.warning(
                     f"Missing normalization group keys: {missing_keys}. Filling with sample_row values."
@@ -306,34 +310,81 @@ class Evaluator:
                 for key in missing_keys:
                     if key in sample_row:
                         generated_samples_df[key] = sample_row[key]
-                        logger.info(
-                            f"Filled missing key '{key}' with value '{sample_row[key]}'."
-                        )
                     else:
                         raise ValueError(
                             f"Sample row does not contain required key: '{key}'."
                         )
 
             generated_samples_df = dataset.inverse_transform(generated_samples_df)
-            cond_vars_for_vis = {
-                name: tensor[0].item()
-                for name, tensor in conditioning_vars_sample.items()
-            }
 
-            comparison_plot = plot_syn_and_real_comparison(
-                real_data_df, generated_samples_df, cond_vars_for_vis
+            range_fig, closest_fig = plot_syn_and_real_comparison(
+                real_data_df,
+                generated_samples_df,
+                conditioning_vars_sample,
+                dimension=0,
             )
-            if comparison_plot is not None:
-                wandb.log({f"Comparison_Plot_{i}": wandb.Image(comparison_plot)})
 
-        real_data_array = np.stack(real_data_df["timeseries"])
+            if range_fig is not None:
+                wandb.log({f"RangePlot_{i}": wandb.Image(range_fig)})
+                plt.close(range_fig)
+            if closest_fig is not None:
+                wandb.log({f"ClosestPlot_{i}": wandb.Image(closest_fig)})
+                plt.close(closest_fig)
+
+            if dim > 1:
+                syn_sample_0 = generated_samples[0, :, 0]
+                real_sample_0 = (
+                    sample_row["timeseries"][:, 0]
+                    if sample_row["timeseries"].ndim == 2
+                    else sample_row["timeseries"]
+                )
+                syn_sample_1 = generated_samples[0, :, 1]
+                real_sample_1 = (
+                    sample_row["timeseries"][:, 1]
+                    if sample_row["timeseries"].ndim == 2
+                    else None
+                )
+
+                fig_multi, axes_multi = plt.subplots(1, 2, figsize=(14, 4), sharex=True)
+                axes_multi[0].plot(
+                    syn_sample_0, label="Synthetic Time Series", color="red"
+                )
+                axes_multi[0].plot(
+                    real_sample_0, label="Real Time Series", color="blue"
+                )
+                axes_multi[0].set_title("Consumption")
+                axes_multi[0].set_xlabel("Timestep")
+                axes_multi[0].set_ylabel("kWh")
+                axes_multi[0].legend()
+
+                if real_sample_1 is not None:
+                    axes_multi[1].plot(
+                        syn_sample_1, label="Synthetic Time Series", color="red"
+                    )
+                    axes_multi[1].plot(
+                        real_sample_1, label="Real Time Series", color="blue"
+                    )
+                else:
+                    axes_multi[1].plot(
+                        syn_sample_1, label="Synthetic Time Series", color="red"
+                    )
+
+                axes_multi[1].set_title("Generation")
+                axes_multi[1].set_xlabel("Timestep")
+                axes_multi[1].set_ylabel("kWh")
+                axes_multi[1].legend()
+
+                fig_multi.suptitle("Multivariate Generation")
+                wandb.log({f"MultiDim_Chart_{i}": wandb.Image(fig_multi)})
+                plt.close(fig_multi)
+
         syn_data_array = np.stack(syn_data_df["timeseries"])
         kde_plots = visualization(real_data_array, syn_data_array, "kernel")
         if kde_plots is not None:
             for i, plot in enumerate(kde_plots):
                 wandb.log({f"KDE_Dim_{i}": wandb.Image(plot)})
 
-        logger.info(f"--- Visualizations complete! ---")
+        logger.info("--- Visualizations complete! ---")
 
     def get_trained_model(self, dataset: Any) -> Any:
         """
@@ -374,16 +425,9 @@ class Evaluator:
         """
         logger.info("Starting GMM evaluation in embedding space...")
 
-        # -----------------------------
-        # 1) Collect embeddings
-        # -----------------------------
-        # If you want the entire dataset, do:
-        #   indices = dataset.data.index.to_numpy()
-        # If you wanted a user-specific approach, adapt accordingly.
         all_indices = dataset.data.index.to_numpy()
         real_data_subset = dataset.data.iloc[all_indices].reset_index(drop=True)
 
-        # Build conditioning vars (categoricals) for the entire subset
         conditioning_vars = {
             name: torch.tensor(
                 real_data_subset[name].values, dtype=torch.long, device=device
@@ -391,18 +435,12 @@ class Evaluator:
             for name in model.context_var_n_categories.keys()
         }
 
-        # Forward pass to get embeddings
         with torch.no_grad():
             embeddings, _ = model.conditioning_module(
                 conditioning_vars
             )  # shape: (N, D)
 
-        # Move to CPU numpy
         embeddings_np = embeddings.cpu().numpy()
-
-        # -----------------------------
-        # 2) Fit GMMs (2,3,5,10 comps), log AIC & log-likelihood
-        # -----------------------------
         logger.info("Fitting multiple GMMs to find best number of components...")
         possible_components = [2, 3, 5, 10]
 
@@ -415,13 +453,8 @@ class Evaluator:
                 n_components=n_comp, random_state=42, covariance_type="full"
             )
             gmm.fit(embeddings_np)
-
-            # Log-likelihood on the entire embedding set
-            # gmm.score(...) returns the average log-likelihood per sample
             ll = gmm.score(embeddings_np) * embeddings_np.shape[0]
-            # AIC
             aic = gmm.aic(embeddings_np)
-            # BIC (if you want to track it as well)
             bic = gmm.bic(embeddings_np)
 
             if aic < lowest_aic:
@@ -430,26 +463,14 @@ class Evaluator:
                 lowest_aic = aic
 
         logger.info(f"Best GMM has {best_n} components with AIC={lowest_aic:.2f}.")
-
-        # -----------------------------
-        # 3) Refit GMM with best # of comps
-        # -----------------------------
-        # (You can skip this if you want to reuse best_gmm directly,
-        #  but let's be explicit in case you prefer a clean re-fit.)
         best_gmm = GaussianMixture(
             n_components=best_n, random_state=42, covariance_type="full"
         )
         best_gmm.fit(embeddings_np)
-
-        # Assign cluster labels to each embedding
         cluster_labels = best_gmm.predict(embeddings_np)
 
-        # -----------------------------
-        # 4) PCA & TSNE -> 2D & 3D
-        # -----------------------------
         logger.info("Projecting embeddings with PCA & t-SNE and plotting clusters...")
 
-        # Helper function to scatter-plot and log to W&B
         def log_scatter_plot_2d(X_2d, labels, title_prefix="Plot"):
             plt.figure(figsize=(6, 5))
             sc = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=labels, cmap="tab10", alpha=0.6)
@@ -485,7 +506,7 @@ class Evaluator:
             tsne_2d, cluster_labels, title_prefix="TSNE_2D_GMM_Clusters"
         )
 
-        # ---- t-SNE 3D (optional) ----
+        # ---- t-SNE 3D ----
         tsne_3d = TSNE(
             n_components=3, random_state=42, learning_rate="auto", init="pca"
         ).fit_transform(embeddings_np)
@@ -497,8 +518,11 @@ class Evaluator:
 
     def evaluate_pv_shift(self, dataset: Any, model: Any):
         """
-        Evaluate PV shift (pv=0 vs. pv=1) by generating all contexts in one pass.
-        Compute a single L2 shift error, plot a few examples, and log to W&B.
+        Evaluate PV shift (pv=0 vs. pv=1). Compare synthetic shift to:
+          - The average real shift
+          - A context-matched real shift (if found)
+
+        Plots separate figures with consistent axis labeling.
         """
         logger.info("Starting PV shift evaluation...")
         avg_shift = dataset.compute_average_pv_shift()
@@ -516,17 +540,14 @@ class Evaluator:
         present_ctx_list = []
         missing_ctx_list = []
         present_pv_values = []
-
         for cinfo in test_contexts:
             base_ctx = cinfo["base_context"]
             present_pv = cinfo["present_pv"]
             missing_pv = cinfo["missing_pv"]
-
             ctx_p = dict(base_ctx)
             ctx_m = dict(base_ctx)
             ctx_p["has_solar"] = present_pv
             ctx_m["has_solar"] = missing_pv
-
             present_ctx_list.append(ctx_p)
             missing_ctx_list.append(ctx_m)
             present_pv_values.append(present_pv)
@@ -534,7 +555,6 @@ class Evaluator:
         present_ctx_tensors = {}
         missing_ctx_tensors = {}
         all_keys = present_ctx_list[0].keys()
-
         for k in all_keys:
             present_ctx_tensors[k] = torch.tensor(
                 [pc[k] for pc in present_ctx_list], dtype=torch.long, device=device
@@ -569,17 +589,80 @@ class Evaluator:
             l2 = np.sqrt((diff**2).sum())
             l2_values.append(l2)
         mean_l2 = np.mean(l2_values)
-
         logger.info(f"Overall shift L2 across all contexts: {mean_l2:.4f}")
         wandb.log({"Shift_L2": mean_l2})
+
+        def find_context_matched_shift(dataset, cinfo):
+            """
+            Attempt to find a real shift for the same context (pv=0 vs. pv=1).
+            For example, we match on city, building_type, and any other relevant columns.
+            Then compute the average difference in time series between pv=1 and pv=0.
+
+            Return:
+                np.array(shape=(seq_len,)) if found,
+                or None if no suitable match is found.
+            """
+            base_ctx = cinfo["base_context"]
+            city_val = base_ctx.get("city", None)
+            btype_val = base_ctx.get("building_type", None)
+            df = dataset.data.copy()
+
+            mask = pd.Series([True] * len(df))
+            if city_val is not None and "city" in df.columns:
+                mask = mask & (df["city"] == city_val)
+            if btype_val is not None and "building_type" in df.columns:
+                mask = mask & (df["building_type"] == btype_val)
+
+            df_matched = df[mask]
+            if df_matched.empty:
+                return None
+
+            df_pv0 = df_matched[df_matched["has_solar"] == 0]
+            df_pv1 = df_matched[df_matched["has_solar"] == 1]
+
+            if df_pv0.empty or df_pv1.empty:
+                return None
+
+            ts_pv0 = np.stack(df_pv0["timeseries"].values, axis=0)
+            ts_pv1 = np.stack(df_pv1["timeseries"].values, axis=0)
+
+            mean_pv0 = ts_pv0.mean(axis=0)
+            mean_pv1 = ts_pv1.mean(axis=0)
+
+            mean_pv0_dim0 = mean_pv0[:, 0]
+            mean_pv1_dim0 = mean_pv1[:, 0]
+
+            real_shift = mean_pv1_dim0 - mean_pv0_dim0
+            return real_shift
+
+        matched_shifts = []
+        for cinfo in test_contexts:
+            matched = find_context_matched_shift(dataset, cinfo)
+            matched_shifts.append(matched)
 
         n_plots = min(3, shifts.shape[0])
         example_indices = np.random.choice(shifts.shape[0], size=n_plots, replace=False)
         for j, idx in enumerate(example_indices):
             fig, ax = plt.subplots(figsize=(8, 4))
-            ax.plot(avg_shift, label="Real avg shift", color="blue")
-            ax.plot(shifts[idx], label="Synthetic shift", color="red", linestyle="--")
-            ax.set_title(f"Shift Example {j+1}, L2={l2_values[idx]:.4f}")
+
+            ax.plot(avg_shift, label="Avg Real Shift (pv=1 - pv=0)", color="blue")
+            ax.plot(shifts[idx], label="Synthetic Shift", color="red", linestyle="--")
+
+            matched_s = matched_shifts[idx]
+            if matched_s is not None:
+                ax.plot(
+                    matched_s,
+                    label="Context-Matched Real Shift",
+                    color="green",
+                    linestyle=":",
+                )
+
+            ax.set_xlim([0, shifts.shape[1]])
+            ax.set_xlabel("Timestep")
+            ax.set_ylabel("kWh usage")
+            ax.set_title(
+                f"Shift Example {j+1} | L2 vs. Avg Shift: {l2_values[idx]:.4f}"
+            )
             ax.legend()
             wandb.log({f"ShiftPlot_{j}": wandb.Image(fig)})
             plt.close(fig)

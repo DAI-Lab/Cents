@@ -148,7 +148,6 @@ class Discriminator(nn.Module):
             self.device
         )
 
-        # Auxiliary classifiers: one for each context var
         self.aux_classifiers = nn.ModuleDict()
         for var_name, num_classes in self.context_var_n_categories.items():
             self.aux_classifiers[var_name] = nn.Linear(
