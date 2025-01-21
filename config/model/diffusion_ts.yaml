@@ -38,5 +38,6 @@ lr_scheduler_params:
 
 sampling_timesteps: null
 use_ema_sampling: False
+use_fp16: False
 
 cond_loss_weight: 0.1

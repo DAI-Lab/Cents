@@ -396,6 +396,13 @@ class Diffusion_TS(nn.Module):
             )
 
         num_epochs = self.cfg.model.n_epochs
+        use_fp16 = getattr(self.cfg.model, "use_fp16", False)
+        scaler = None
+        if use_fp16:
+            from torch.cuda.amp import GradScaler, autocast
+
+            scaler = GradScaler()
+
         for epoch in range(num_epochs):
             self.train()
             epoch_loss = 0.0
@@ -404,20 +411,36 @@ class Diffusion_TS(nn.Module):
                 for k in cond_batch:
                     cond_batch[k] = cond_batch[k].to(self.device)
 
-                rec_loss, cond_class_logits = self(ts_batch, cond_batch)
+                if use_fp16:
+                    with torch.cuda.amp.autocast():
+                        rec_loss, cond_class_logits = self(ts_batch, cond_batch)
+                        cond_loss = 0.0
+                        for var_name, logdits in cond_class_logits.items():
+                            labels = cond_batch[var_name]
+                            cond_loss += self.auxiliary_loss(logits, labels)
+                        total_loss = rec_loss + self.cond_loss_weight * cond_loss
+                else:
+                    rec_loss, cond_class_logits = self(ts_batch, cond_batch)
+                    cond_loss = 0.0
+                    for var_name, logits in cond_class_logits.items():
+                        labels = cond_batch[var_name]
+                        cond_loss += self.auxiliary_loss(logits, labels)
+                    total_loss = rec_loss + self.cond_loss_weight * cond_loss
 
-                cond_loss = 0.0
-                for var_name, logits in cond_class_logits.items():
-                    labels = cond_batch[var_name]  # shape (batch,)
-                    cond_loss += self.auxiliary_loss(logits, labels)
-
-                total_loss = rec_loss + self.cond_loss_weight * cond_loss
                 self.optimizer.zero_grad()
-                total_loss.backward()
-                nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-                self.optimizer.step()
-                self.ema.update()
 
+                if use_fp16:
+                    scaler.scale(total_loss).backward()
+                    scaler.unscale_(self.optimizer)
+                    nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+                    scaler.step(self.optimizer)
+                    scaler.update()
+                else:
+                    total_loss.backward()
+                    nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+                    self.optimizer.step()
+
+                self.ema.update()
                 epoch_loss += total_loss.item()
 
             self.scheduler.step(epoch_loss)
@@ -502,5 +525,6 @@ class Diffusion_TS(nn.Module):
             print(f"Loaded epoch number: {ckp['epoch']}")
 
         self.to(self.device)
-        self.ema.ema_model.to(self.device)
+
+        # self.ema.ema_model.to(self.device)
         print(f"Model + EMA moved to {self.device}.")

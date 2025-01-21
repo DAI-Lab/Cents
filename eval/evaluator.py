@@ -369,7 +369,7 @@ class Evaluator:
                         syn_sample_1, label="Synthetic Time Series", color="red"
                     )
 
-                axes_multi[1].set_title("Generation")
+                axes_multi[1].set_title("PV Generation")
                 axes_multi[1].set_xlabel("Timestep")
                 axes_multi[1].set_ylabel("kWh")
                 axes_multi[1].legend()
@@ -645,14 +645,16 @@ class Evaluator:
         for j, idx in enumerate(example_indices):
             fig, ax = plt.subplots(figsize=(8, 4))
 
-            ax.plot(avg_shift, label="Avg Real Shift (pv=1 - pv=0)", color="blue")
-            ax.plot(shifts[idx], label="Synthetic Shift", color="red", linestyle="--")
+            ax.plot(avg_shift, label="Mean kWh shift", color="blue")
+            ax.plot(
+                shifts[idx], label="Synthetic kWh shift", color="red", linestyle="--"
+            )
 
             matched_s = matched_shifts[idx]
             if matched_s is not None:
                 ax.plot(
                     matched_s,
-                    label="Context-Matched Real Shift",
+                    label="Context-Matched kWh Shift",
                     color="green",
                     linestyle=":",
                 )
