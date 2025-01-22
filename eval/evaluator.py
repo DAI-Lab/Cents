@@ -30,8 +30,17 @@ from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 logger = logging.getLogger(__name__)
+
+plt.rcParams.update(
+    {
+        "font.size": 20,
+        "axes.labelsize": 18,
+        "xtick.labelsize": 16,
+        "ytick.labelsize": 16,
+        "legend.fontsize": 20,
+    }
+)
 
 
 class Evaluator:
@@ -251,29 +260,13 @@ class Evaluator:
         dataset: Any,
         model: Any,
         num_samples: int = 100,
-        num_runs: int = 3,
+        num_runs: int = 5,
     ):
-        """
-        Create various visualizations for the evaluation results.
-
-        Args:
-            real_data_df (pd.DataFrame): Inverse-transformed real data.
-            syn_data_df (pd.DataFrame): Inverse-transformed synthetic data.
-            dataset (Any): The dataset object.
-            model (Any): The trained model.
-            num_samples (int): Number of samples to generate for visualization.
-            num_runs (int): Number of visualization runs.
-        """
-        logger.info("--- Starting Visualizations ---")
-
         real_data_array = np.stack(real_data_df["timeseries"])
         _, seq_len, dim = real_data_array.shape
-
         for i in range(num_runs):
-            logger.info(f"--- Starting vis run {i + 1} of {num_runs}")
             sample_index = np.random.randint(low=0, high=real_data_df.shape[0])
             sample_row = real_data_df.iloc[sample_index]
-
             conditioning_vars_sample = {
                 var_name: torch.tensor(
                     [sample_row[var_name]] * num_samples,
@@ -287,7 +280,6 @@ class Evaluator:
                 generated_samples = generated_samples.reshape(
                     generated_samples.shape[0], -1, generated_samples.shape[1]
                 )
-
             generated_samples_df = pd.DataFrame(
                 {
                     var_name: [sample_row[var_name]] * num_samples
@@ -296,7 +288,6 @@ class Evaluator:
             )
             generated_samples_df["timeseries"] = list(generated_samples)
             generated_samples_df["dataid"] = sample_row["dataid"]
-
             normalization_keys = dataset.normalization_group_keys
             missing_keys = [
                 key
@@ -304,9 +295,6 @@ class Evaluator:
                 if key not in generated_samples_df.columns
             ]
             if missing_keys:
-                logger.warning(
-                    f"Missing normalization group keys: {missing_keys}. Filling with sample_row values."
-                )
                 for key in missing_keys:
                     if key in sample_row:
                         generated_samples_df[key] = sample_row[key]
@@ -314,23 +302,19 @@ class Evaluator:
                         raise ValueError(
                             f"Sample row does not contain required key: '{key}'."
                         )
-
             generated_samples_df = dataset.inverse_transform(generated_samples_df)
-
             range_fig, closest_fig = plot_syn_and_real_comparison(
                 real_data_df,
                 generated_samples_df,
                 conditioning_vars_sample,
                 dimension=0,
             )
-
             if range_fig is not None:
                 wandb.log({f"RangePlot_{i}": wandb.Image(range_fig)})
                 plt.close(range_fig)
             if closest_fig is not None:
                 wandb.log({f"ClosestPlot_{i}": wandb.Image(closest_fig)})
                 plt.close(closest_fig)
-
             if dim > 1:
                 syn_sample_0 = generated_samples[0, :, 0]
                 real_sample_0 = (
@@ -344,199 +328,147 @@ class Evaluator:
                     if sample_row["timeseries"].ndim == 2
                     else None
                 )
-
                 fig_multi, axes_multi = plt.subplots(1, 2, figsize=(14, 4), sharex=True)
-                axes_multi[0].plot(
-                    syn_sample_0, label="Synthetic Time Series", color="red"
+                axes_multi[0].plot(syn_sample_0, label="Synthetic", color="blue")
+                axes_multi[0].plot(real_sample_0, label="Real", color="red")
+                font_size = 12
+                axes_multi[0].tick_params(
+                    axis="both", which="major", labelsize=font_size
                 )
-                axes_multi[0].plot(
-                    real_sample_0, label="Real Time Series", color="blue"
-                )
-                axes_multi[0].set_title("Consumption")
-                axes_multi[0].set_xlabel("Timestep")
-                axes_multi[0].set_ylabel("kWh")
-                axes_multi[0].legend()
-
+                axes_multi[0].set_xlabel("Timestep", fontsize=font_size)
+                axes_multi[0].set_ylabel("kWh", fontsize=font_size)
+                leg_0 = axes_multi[0].legend()
+                leg_0.prop.set_size(font_size)
                 if real_sample_1 is not None:
-                    axes_multi[1].plot(
-                        syn_sample_1, label="Synthetic Time Series", color="red"
-                    )
-                    axes_multi[1].plot(
-                        real_sample_1, label="Real Time Series", color="blue"
-                    )
+                    axes_multi[1].plot(syn_sample_1, label="Synthetic", color="blue")
+                    axes_multi[1].plot(real_sample_1, label="Real", color="red")
                 else:
-                    axes_multi[1].plot(
-                        syn_sample_1, label="Synthetic Time Series", color="red"
-                    )
-
-                axes_multi[1].set_title("PV Generation")
-                axes_multi[1].set_xlabel("Timestep")
-                axes_multi[1].set_ylabel("kWh")
-                axes_multi[1].legend()
-
-                fig_multi.suptitle("Multivariate Generation")
+                    axes_multi[1].plot(syn_sample_1, label="Synthetic", color="blue")
+                axes_multi[1].tick_params(
+                    axis="both", which="major", labelsize=font_size
+                )
+                axes_multi[1].set_xlabel("Timestep", fontsize=font_size)
+                axes_multi[1].set_ylabel("kWh", fontsize=font_size)
+                leg_1 = axes_multi[1].legend()
+                leg_1.prop.set_size(font_size)
                 wandb.log({f"MultiDim_Chart_{i}": wandb.Image(fig_multi)})
                 plt.close(fig_multi)
-
         syn_data_array = np.stack(syn_data_df["timeseries"])
         kde_plots = visualization(real_data_array, syn_data_array, "kernel")
+        tsne_plots = visualization(real_data_array, syn_data_array, "tsne")
         if kde_plots is not None:
             for i, plot in enumerate(kde_plots):
                 wandb.log({f"KDE_Dim_{i}": wandb.Image(plot)})
-
-        logger.info("--- Visualizations complete! ---")
+        if tsne_plots is not None:
+            for i, plot in enumerate(tsne_plots):
+                wandb.log({f"TSNE_Dim_{i}": wandb.Image(plot)})
 
     def get_trained_model(self, dataset: Any) -> Any:
-        """
-        Get a trained model for the dataset.
-
-        Args:
-            dataset: The dataset to train the model on.
-
-        Returns:
-            Any: The trained model.
-        """
         model_dict = {
             "acgan": ACGAN,
             "diffcharge": DDPM,
             "diffusion_ts": Diffusion_TS,
         }
-
         if self.model_name in model_dict:
             model_class = model_dict[self.model_name]
             model = model_class(self.cfg)
         else:
             raise ValueError("Model name not recognized!")
-
         if self.cfg.model_ckpt is not None:
             model.load(self.cfg.model_ckpt)
         else:
             model.train_model(dataset)
-
         return model
 
     def evaluate_embedding_space_with_gmm(self, dataset: Any, model: Any):
-        """
-        1) Collect the entire dataset's embeddings (or user-specific if desired).
-        2) Fit multiple GMMs with different numbers of components, log AIC/LL.
-        3) Choose the best GMM (lowest AIC) and refit on embeddings.
-        4) Use PCA and TSNE to project embeddings to 2D and 3D, color by GMM cluster.
-        5) Log plots to Weights & Biases.
-        """
-        logger.info("Starting GMM evaluation in embedding space...")
-
+        logger.info("GMM evaluation in embedding space...")
         all_indices = dataset.data.index.to_numpy()
         real_data_subset = dataset.data.iloc[all_indices].reset_index(drop=True)
-
         conditioning_vars = {
             name: torch.tensor(
                 real_data_subset[name].values, dtype=torch.long, device=device
             )
             for name in model.context_var_n_categories.keys()
         }
-
         with torch.no_grad():
-            embeddings, _ = model.conditioning_module(
-                conditioning_vars
-            )  # shape: (N, D)
-
+            embeddings, _ = model.conditioning_module(conditioning_vars)
         embeddings_np = embeddings.cpu().numpy()
-        logger.info("Fitting multiple GMMs to find best number of components...")
         possible_components = [2, 3, 5, 10]
-
         best_gmm = None
         best_n = None
         lowest_aic = float("inf")
-
         for n_comp in possible_components:
             gmm = GaussianMixture(
                 n_components=n_comp, random_state=42, covariance_type="full"
             )
             gmm.fit(embeddings_np)
-            ll = gmm.score(embeddings_np) * embeddings_np.shape[0]
             aic = gmm.aic(embeddings_np)
-            bic = gmm.bic(embeddings_np)
-
             if aic < lowest_aic:
                 best_gmm = gmm
                 best_n = n_comp
                 lowest_aic = aic
-
-        logger.info(f"Best GMM has {best_n} components with AIC={lowest_aic:.2f}.")
         best_gmm = GaussianMixture(
             n_components=best_n, random_state=42, covariance_type="full"
         )
         best_gmm.fit(embeddings_np)
         cluster_labels = best_gmm.predict(embeddings_np)
 
-        logger.info("Projecting embeddings with PCA & t-SNE and plotting clusters...")
+        def log_scatter_plot_2d(X_2d, labels, name):
+            fig = plt.figure(figsize=(6, 5))
+            ax = fig.add_subplot(111)
+            sc = ax.scatter(X_2d[:, 0], X_2d[:, 1], c=labels, cmap="tab10", alpha=0.6)
+            font_size = 12
+            ax.tick_params(axis="both", which="major", labelsize=font_size)
+            ax.set_xlabel("Comp. 1", fontsize=font_size)
+            ax.set_ylabel("Comp. 2", fontsize=font_size)
+            cbar = plt.colorbar(sc)
+            cbar.ax.tick_params(labelsize=font_size)
+            wandb.log({name: wandb.Image(fig)})
+            plt.close(fig)
 
-        def log_scatter_plot_2d(X_2d, labels, title_prefix="Plot"):
-            plt.figure(figsize=(6, 5))
-            sc = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=labels, cmap="tab10", alpha=0.6)
-            plt.colorbar(sc, label="Cluster ID")
-            plt.title(title_prefix)
-            wandb.log({title_prefix: wandb.Image(plt)})
-            plt.close()
-
-        def log_scatter_plot_3d(X_3d, labels, title_prefix="3D Plot"):
+        def log_scatter_plot_3d(X_3d, labels, name):
             fig = plt.figure(figsize=(7, 6))
             ax = fig.add_subplot(111, projection="3d")
             sc = ax.scatter(
                 X_3d[:, 0], X_3d[:, 1], X_3d[:, 2], c=labels, cmap="tab10", alpha=0.6
             )
-            plt.title(title_prefix)
-            fig.colorbar(sc, label="Cluster ID", shrink=0.5, aspect=10)
-            wandb.log({title_prefix: wandb.Image(fig)})
+            font_size = 12
+            ax.tick_params(axis="both", which="major", labelsize=font_size)
+            ax.set_xlabel("Comp. 1", fontsize=font_size)
+            ax.set_ylabel("Comp. 2", fontsize=font_size)
+            ax.set_zlabel("Comp. 3", fontsize=font_size)
+            cbar = fig.colorbar(sc, ax=ax, shrink=0.5, aspect=10)
+            cbar.ax.tick_params(labelsize=font_size)
+            wandb.log({name: wandb.Image(fig)})
             plt.close(fig)
 
-        # ---- PCA 2D ----
         pca_2d = PCA(n_components=2, random_state=42).fit_transform(embeddings_np)
-        log_scatter_plot_2d(pca_2d, cluster_labels, title_prefix="PCA_2D_GMM_Clusters")
-
-        # ---- PCA 3D ----
+        log_scatter_plot_2d(pca_2d, cluster_labels, "PCA_2D_GMM_Clusters")
         pca_3d = PCA(n_components=3, random_state=42).fit_transform(embeddings_np)
-        log_scatter_plot_3d(pca_3d, cluster_labels, title_prefix="PCA_3D_GMM_Clusters")
-
-        # ---- t-SNE 2D ----
+        log_scatter_plot_3d(pca_3d, cluster_labels, "PCA_3D_GMM_Clusters")
         tsne_2d = TSNE(
             n_components=2, random_state=42, learning_rate="auto", init="pca"
         ).fit_transform(embeddings_np)
-        log_scatter_plot_2d(
-            tsne_2d, cluster_labels, title_prefix="TSNE_2D_GMM_Clusters"
-        )
-
-        # ---- t-SNE 3D ----
+        log_scatter_plot_2d(tsne_2d, cluster_labels, "TSNE_2D_GMM_Clusters")
         tsne_3d = TSNE(
             n_components=3, random_state=42, learning_rate="auto", init="pca"
         ).fit_transform(embeddings_np)
-        log_scatter_plot_3d(
-            tsne_3d, cluster_labels, title_prefix="TSNE_3D_GMM_Clusters"
-        )
-
-        logger.info("GMM evaluation complete. Logged PCA & t-SNE cluster plots to W&B.")
+        log_scatter_plot_3d(tsne_3d, cluster_labels, "TSNE_3D_GMM_Clusters")
 
     def evaluate_pv_shift(self, dataset: Any, model: Any):
-        """
-        Evaluate PV shift (pv=0 vs. pv=1). Compare synthetic shift to:
-          - The average real shift
-          - A context-matched real shift (if found)
-
-        Plots separate figures with consistent axis labeling.
-        """
-        logger.info("Starting PV shift evaluation...")
         avg_shift = dataset.compute_average_pv_shift()
         if avg_shift is None or np.allclose(avg_shift, 0.0):
-            logger.warning(
-                "No valid average shift could be computed. Skipping shift eval."
-            )
             return
-
         test_contexts = dataset.sample_shift_test_contexts()
-        if len(test_contexts) == 0:
-            logger.warning("No shift contexts found. Skipping.")
-            return
+        n_sampled = len(test_contexts)
+        n_pv1_missing = sum(1 for c in test_contexts if c["missing_pv"] == 1)
+        n_pv0_missing = sum(1 for c in test_contexts if c["missing_pv"] == 0)
 
+        print(f"[Shift Contexts] Sampled: {n_sampled}.")
+        print(f"[Shift Contexts] PV=1 is missing in {n_pv1_missing} of these contexts.")
+        print(f"[Shift Contexts] PV=0 is missing in {n_pv0_missing} of these contexts.")
+        if len(test_contexts) == 0:
+            return
         present_ctx_list = []
         missing_ctx_list = []
         present_pv_values = []
@@ -551,7 +483,6 @@ class Evaluator:
             present_ctx_list.append(ctx_p)
             missing_ctx_list.append(ctx_m)
             present_pv_values.append(present_pv)
-
         present_ctx_tensors = {}
         missing_ctx_tensors = {}
         all_keys = present_ctx_list[0].keys()
@@ -562,18 +493,14 @@ class Evaluator:
             missing_ctx_tensors[k] = torch.tensor(
                 [mc[k] for mc in missing_ctx_list], dtype=torch.long, device=device
             )
-
         with torch.no_grad():
-            syn_ts_present = model.generate(present_ctx_tensors)  # (N, seq_len, dim)
-            syn_ts_missing = model.generate(missing_ctx_tensors)  # (N, seq_len, dim)
-
+            syn_ts_present = model.generate(present_ctx_tensors)
+            syn_ts_missing = model.generate(missing_ctx_tensors)
         syn_ts_present = syn_ts_present.cpu().numpy()
         syn_ts_missing = syn_ts_missing.cpu().numpy()
-
         if syn_ts_present.ndim == 3 and syn_ts_present.shape[-1] == 1:
             syn_ts_present = syn_ts_present[:, :, 0]
             syn_ts_missing = syn_ts_missing[:, :, 0]
-
         shifts = []
         for i, pv_val in enumerate(present_pv_values):
             shift_i = syn_ts_missing[i] - syn_ts_present[i]
@@ -581,7 +508,6 @@ class Evaluator:
                 shift_i = -shift_i
             shifts.append(shift_i)
         shifts = np.array(shifts)
-
         avg_shift = np.asarray(avg_shift).reshape(-1)
         l2_values = []
         for i in range(shifts.shape[0]):
@@ -589,49 +515,31 @@ class Evaluator:
             l2 = np.sqrt((diff**2).sum())
             l2_values.append(l2)
         mean_l2 = np.mean(l2_values)
-        logger.info(f"Overall shift L2 across all contexts: {mean_l2:.4f}")
         wandb.log({"Shift_L2": mean_l2})
 
         def find_context_matched_shift(dataset, cinfo):
-            """
-            Attempt to find a real shift for the same context (pv=0 vs. pv=1).
-            For example, we match on city, building_type, and any other relevant columns.
-            Then compute the average difference in time series between pv=1 and pv=0.
-
-            Return:
-                np.array(shape=(seq_len,)) if found,
-                or None if no suitable match is found.
-            """
             base_ctx = cinfo["base_context"]
             city_val = base_ctx.get("city", None)
             btype_val = base_ctx.get("building_type", None)
             df = dataset.data.copy()
-
             mask = pd.Series([True] * len(df))
             if city_val is not None and "city" in df.columns:
                 mask = mask & (df["city"] == city_val)
             if btype_val is not None and "building_type" in df.columns:
                 mask = mask & (df["building_type"] == btype_val)
-
             df_matched = df[mask]
             if df_matched.empty:
                 return None
-
             df_pv0 = df_matched[df_matched["has_solar"] == 0]
             df_pv1 = df_matched[df_matched["has_solar"] == 1]
-
             if df_pv0.empty or df_pv1.empty:
                 return None
-
             ts_pv0 = np.stack(df_pv0["timeseries"].values, axis=0)
             ts_pv1 = np.stack(df_pv1["timeseries"].values, axis=0)
-
             mean_pv0 = ts_pv0.mean(axis=0)
             mean_pv1 = ts_pv1.mean(axis=0)
-
             mean_pv0_dim0 = mean_pv0[:, 0]
             mean_pv1_dim0 = mean_pv1[:, 0]
-
             real_shift = mean_pv1_dim0 - mean_pv0_dim0
             return real_shift
 
@@ -639,34 +547,27 @@ class Evaluator:
         for cinfo in test_contexts:
             matched = find_context_matched_shift(dataset, cinfo)
             matched_shifts.append(matched)
-
-        n_plots = min(3, shifts.shape[0])
-        example_indices = np.random.choice(shifts.shape[0], size=n_plots, replace=False)
-        for j, idx in enumerate(example_indices):
+        n_plots = min(6, shifts.shape[0])
+        for j, idx in enumerate(
+            np.random.choice(shifts.shape[0], size=n_plots, replace=False)
+        ):
             fig, ax = plt.subplots(figsize=(8, 4))
-
-            ax.plot(avg_shift, label="Mean kWh shift", color="blue")
-            ax.plot(
-                shifts[idx], label="Synthetic kWh shift", color="red", linestyle="--"
-            )
-
+            ax.plot(avg_shift, label="Real shift", color="red")
+            ax.plot(shifts[idx], label="Synthetic shift", color="blue", linestyle="--")
             matched_s = matched_shifts[idx]
             if matched_s is not None:
                 ax.plot(
                     matched_s,
-                    label="Context-Matched kWh Shift",
+                    label="Context-matched shift",
                     color="green",
                     linestyle=":",
                 )
-
-            ax.set_xlim([0, shifts.shape[1]])
-            ax.set_xlabel("Timestep")
-            ax.set_ylabel("kWh usage")
-            ax.set_title(
-                f"Shift Example {j+1} | L2 vs. Avg Shift: {l2_values[idx]:.4f}"
-            )
-            ax.legend()
+            font_size = 12
+            ax.tick_params(axis="both", which="major", labelsize=font_size)
+            ax.set_xlabel("Timestep", fontsize=font_size)
+            ax.set_ylabel("kWh", fontsize=font_size)
+            leg = ax.legend()
+            leg.prop.set_size(font_size)
+            fig.tight_layout()
             wandb.log({f"ShiftPlot_{j}": wandb.Image(fig)})
             plt.close(fig)
-
-        logger.info("Finished PV shift evaluation.")
