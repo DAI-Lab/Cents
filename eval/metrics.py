@@ -198,7 +198,6 @@ def visualization(
     idx = np.random.permutation(ori_data.shape[0])[:analysis_sample_no]
     ori_data = ori_data[idx]
     generated_data = generated_data[idx]
-
     no, seq_len, dim = ori_data.shape
     plots = []
     for d in range(dim):
@@ -207,127 +206,106 @@ def visualization(
             [generated_data[i, :, d] for i in range(analysis_sample_no)]
         )
         colors = ["red"] * analysis_sample_no + ["blue"] * analysis_sample_no
-
         if analysis == "pca":
             pca = PCA(n_components=2)
             pca_results = pca.fit_transform(prep_data)
             pca_hat_results = pca.transform(prep_data_hat)
-
             f, ax = plt.subplots(1)
             ax.scatter(
                 pca_results[:, 0],
                 pca_results[:, 1],
                 c=colors[:analysis_sample_no],
                 alpha=0.2,
-                label="Original",
             )
             ax.scatter(
                 pca_hat_results[:, 0],
                 pca_hat_results[:, 1],
                 c=colors[analysis_sample_no:],
                 alpha=0.2,
-                label="Synthetic",
             )
-            ax.legend()
-            ax.set_title(f"PCA plot for Dimension {d}")
-            ax.set_xlabel("x-pca")
-            ax.set_ylabel("y-pca")
-            plt.show()
+            font_size = 14
+            ax.tick_params(axis="both", which="major", labelsize=font_size)
+            ax.set_xlabel("PC1", fontsize=font_size)
+            ax.set_ylabel("PC2", fontsize=font_size)
+            leg = ax.legend(["Real", "Synthetic"])
+            leg.prop.set_size(font_size)
             plots.append(f)
-
         elif analysis == "tsne":
             prep_data_final = np.concatenate((prep_data, prep_data_hat), axis=0)
             tsne = TSNE(
                 n_components=2,
                 learning_rate="auto",
                 init="pca",
-                verbose=1,
+                verbose=0,
                 perplexity=5,
                 n_iter=300,
                 early_exaggeration=5.0,
             )
             tsne_results = tsne.fit_transform(prep_data_final)
-
             f, ax = plt.subplots(1)
             ax.scatter(
                 tsne_results[:analysis_sample_no, 0],
                 tsne_results[:analysis_sample_no, 1],
                 c=colors[:analysis_sample_no],
                 alpha=0.2,
-                label="Original",
             )
             ax.scatter(
                 tsne_results[analysis_sample_no:, 0],
                 tsne_results[analysis_sample_no:, 1],
                 c=colors[analysis_sample_no:],
                 alpha=0.2,
-                label="Synthetic",
             )
-            ax.legend()
-            ax.set_title(f"t-SNE plot for dimension {d}")
-            plt.show()
+            font_size = 14
+            ax.tick_params(axis="both", which="major", labelsize=font_size)
+            ax.set_xlabel("t-SNE dim 1", fontsize=font_size)
+            ax.set_ylabel("t-SNE dim 2", fontsize=font_size)
+            leg = ax.legend(["Real", "Synthetic"])
+            leg.prop.set_size(font_size)
             plots.append(f)
-
         elif analysis == "kernel":
             f, ax = plt.subplots(1)
-            sns.kdeplot(
-                data=prep_data.flatten(),
-                fill=True,
-                color="red",
-                label="Original",
-                ax=ax,
-            )
+            sns.kdeplot(data=prep_data.flatten(), fill=True, color="red", ax=ax)
             sns.kdeplot(
                 data=prep_data_hat.flatten(),
                 fill=True,
                 color="blue",
-                label="Synthetic",
                 ax=ax,
                 linestyle="--",
             )
-            ax.legend()
-            ax.set_title(f"KDE plot for Dimension {d}")
-            plt.show()
+            font_size = 14
+            ax.tick_params(axis="both", which="major", labelsize=font_size)
+            ax.set_xlabel("kWh", fontsize=font_size)
+            ax.set_ylabel("Density", fontsize=font_size)
+            leg = ax.legend(["Real", "Synthetic"])
+            leg.prop.set_size(font_size)
             plots.append(f)
-
     return plots
 
 
 def plot_syn_and_real_comparison(
     df: pd.DataFrame, syn_df: pd.DataFrame, conditioning_vars: dict, dimension: int = 0
 ):
-    """
-    Generate two separate figures:
-    1) Range of real data vs. synthetic time series
-    2) Synthetic time series vs. closest real time series
-    """
-
     cpu_conditioning_vars = {}
     for k, v in conditioning_vars.items():
         if isinstance(v, torch.Tensor):
             v = v[0].cpu().item()
         cpu_conditioning_vars[k] = v
-
     fields = list(cpu_conditioning_vars.keys())
     condition = df[fields].eq(pd.Series(cpu_conditioning_vars)).all(axis=1)
     filtered_df = df[condition]
     array_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
     if array_data.size == 0:
         return None, None
-
     min_values = np.min(array_data, axis=0)
     max_values = np.max(array_data, axis=0)
-
     syn_condition = syn_df[fields].eq(pd.Series(cpu_conditioning_vars)).all(axis=1)
     syn_filtered_df = syn_df[syn_condition]
     if syn_filtered_df.empty:
         return None, None
-
     syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
     timestamps = pd.date_range(start="00:00", end="23:45", freq="15min")
     hourly_positions = np.arange(0, len(timestamps), 4)
     hourly_labels = [timestamps[i].strftime("%H:%M") for i in hourly_positions]
-
     fig_range, ax_range = plt.subplots(figsize=(15, 6))
     ax_range.fill_between(
         range(len(timestamps)),
@@ -335,7 +313,7 @@ def plot_syn_and_real_comparison(
         max_values,
         color="gray",
         alpha=0.5,
-        label="Real Data Range",
+        label="Range of real time series",
     )
     synthetic_label_used = False
     for index in range(syn_values.shape[0]):
@@ -347,16 +325,17 @@ def plot_syn_and_real_comparison(
             markersize=2,
             linestyle="-",
             alpha=0.6,
-            label="Synthetic TS" if not synthetic_label_used else None,
+            label="Synthetic time series" if not synthetic_label_used else None,
         )
         synthetic_label_used = True
-    ax_range.set_title("Synthetic vs. Real Data Range")
-    ax_range.set_ylabel("kWh")
-    ax_range.legend()
-    ax_range.grid(True, linestyle="--", linewidth=0.5, alpha=0.7)
+    font_size = 14
+    ax_range.tick_params(axis="both", which="major", labelsize=font_size)
+    ax_range.set_xlabel("Time of day", fontsize=font_size)
+    ax_range.set_ylabel("kWh", fontsize=font_size)
+    leg_range = ax_range.legend()
+    leg_range.prop.set_size(font_size)
     ax_range.set_xticks(hourly_positions)
     ax_range.set_xticklabels(hourly_labels, rotation=45)
-
     fig_closest, ax_closest = plt.subplots(figsize=(15, 6))
     synthetic_plotted = False
     real_plotted = False
@@ -377,7 +356,7 @@ def plot_syn_and_real_comparison(
             markersize=2,
             linestyle="-",
             alpha=0.6,
-            label="Synthetic TS" if not synthetic_plotted else None,
+            label="Synthetic time series" if not synthetic_plotted else None,
         )
         synthetic_plotted = True
         if closest_real_ts is not None:
@@ -389,17 +368,16 @@ def plot_syn_and_real_comparison(
                 markersize=2,
                 linestyle="--",
                 alpha=0.6,
-                label="Closest Real TS" if not real_plotted else None,
+                label="Real time series" if not real_plotted else None,
             )
             real_plotted = True
-    ax_closest.set_title("Synthetic vs. Closest Real TS")
-    ax_closest.set_xlabel("Time of Day")
-    ax_closest.set_ylabel("kWh")
-    ax_closest.legend()
-    ax_closest.grid(True, linestyle="--", linewidth=0.5, alpha=0.7)
+    ax_closest.tick_params(axis="both", which="major", labelsize=font_size)
+    ax_closest.set_xlabel("Time of day", fontsize=font_size)
+    ax_closest.set_ylabel("kWh", fontsize=font_size)
+    leg_closest = ax_closest.legend()
+    leg_closest.prop.set_size(font_size)
     ax_closest.set_xticks(hourly_positions)
     ax_closest.set_xticklabels(hourly_labels, rotation=45)
-
     fig_range.tight_layout()
     fig_closest.tight_layout()
     return fig_range, fig_closest
