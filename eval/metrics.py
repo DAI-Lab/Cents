@@ -223,7 +223,7 @@ def visualization(
                 c=colors[analysis_sample_no:],
                 alpha=0.2,
             )
-            font_size = 14
+            font_size = 18
             ax.tick_params(axis="both", which="major", labelsize=font_size)
             ax.set_xlabel("PC1", fontsize=font_size)
             ax.set_ylabel("PC2", fontsize=font_size)
@@ -255,7 +255,7 @@ def visualization(
                 c=colors[analysis_sample_no:],
                 alpha=0.2,
             )
-            font_size = 14
+            font_size = 18
             ax.tick_params(axis="both", which="major", labelsize=font_size)
             ax.set_xlabel("t-SNE dim 1", fontsize=font_size)
             ax.set_ylabel("t-SNE dim 2", fontsize=font_size)
@@ -272,7 +272,7 @@ def visualization(
                 ax=ax,
                 linestyle="--",
             )
-            font_size = 14
+            font_size = 18
             ax.tick_params(axis="both", which="major", labelsize=font_size)
             ax.set_xlabel("kWh", fontsize=font_size)
             ax.set_ylabel("Density", fontsize=font_size)
@@ -328,7 +328,7 @@ def plot_syn_and_real_comparison(
             label="Synthetic time series" if not synthetic_label_used else None,
         )
         synthetic_label_used = True
-    font_size = 14
+    font_size = 22
     ax_range.tick_params(axis="both", which="major", labelsize=font_size)
     ax_range.set_xlabel("Time of day", fontsize=font_size)
     ax_range.set_ylabel("kWh", fontsize=font_size)

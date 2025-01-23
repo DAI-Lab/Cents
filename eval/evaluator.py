@@ -260,7 +260,7 @@ class Evaluator:
         dataset: Any,
         model: Any,
         num_samples: int = 100,
-        num_runs: int = 5,
+        num_runs: int = 8,
     ):
         real_data_array = np.stack(real_data_df["timeseries"])
         _, seq_len, dim = real_data_array.shape
