@@ -213,7 +213,6 @@ class DataGenerator:
         df = convert_generated_data_to_df(
             data,
             self.conditioning_var_buffer,
-            time_series_columns=self.cfg.dataset.time_series_columns,
             decode=False,
         )
         inv_data = self.normalizer.inverse_transform(df, use_model=True)

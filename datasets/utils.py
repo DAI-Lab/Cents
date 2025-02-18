@@ -181,40 +181,20 @@ def encode_conditioning_variables(
 def convert_generated_data_to_df(
     data: torch.Tensor,
     conditioning_vars: Dict[str, Any],
-    time_series_columns: List[str],
     mapping: Optional[Dict[str, Any]] = None,
     decode: bool = True,
 ) -> pd.DataFrame:
     """
-    Convert generated time series data into a DataFrame.
-
-    Args:
-        data (torch.Tensor): Generated time series data.
-            Expected shape is (n_samples, seq_len, dims) or (n_samples, seq_len) for single-dim data.
-        conditioning_vars (Dict[str, Any]): Dictionary of conditioning variables (each a one-element tensor).
-        time_series_columns (List[str]): List of names for the time series columns.
-        mapping (Optional[Dict[str, Any]]): Mapping to decode conditioning variables if decode=True.
-        decode (bool): If True, use the mapping to decode the conditioning variables.
-
-    Returns:
-        pd.DataFrame: A DataFrame with each row containing the context variables and one column per time series.
+    Convert generated time series data into a DataFrame with a single 'timeseries' column.
     """
-    # Move tensor to numpy array
     data_np = data.cpu().numpy()
-
-    # If data is 2D, reshape it to have a last dimension of 1
     if data_np.ndim == 2:
         data_np = data_np.reshape(data_np.shape[0], -1, 1)
     elif data_np.ndim != 3:
         raise ValueError("Generated data must have 2 or 3 dimensions.")
 
-    n_samples, seq_len, dims = data_np.shape
-    if dims != len(time_series_columns):
-        raise ValueError(
-            f"Mismatch: generated data has {dims} dims but time_series_columns has length {len(time_series_columns)}."
-        )
+    n_samples = data_np.shape[0]
 
-    # Process conditioning variables
     if decode:
         if mapping is None:
             raise ValueError("Mapping must be provided when decode=True.")
@@ -224,13 +204,10 @@ def convert_generated_data_to_df(
     else:
         cond_vars = {var: int(code.item()) for var, code in conditioning_vars.items()}
 
-    # Build records: for each generated sample, create one record with all context variables and each time series column separately.
     records = []
     for i in range(n_samples):
-        record = cond_vars.copy()  # copy context variables into the record
-        for d, col_name in enumerate(time_series_columns):
-            # Each column gets the corresponding slice (shape: (seq_len,))
-            record[col_name] = data_np[i, :, d]
+        record = cond_vars.copy()
+        record["timeseries"] = data_np[i]
         records.append(record)
 
     return pd.DataFrame.from_records(records)
