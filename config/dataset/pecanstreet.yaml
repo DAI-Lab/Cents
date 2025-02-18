@@ -9,6 +9,7 @@ seq_len: 96
 time_series_dims: 1
 shuffle: True
 path: "./data/pecanstreet/csv"
+time_series_columns: ["grid"]
 data_columns: ["dataid","local_15min","car1","grid","solar"]
 metadata_columns: ["dataid","building_type","solar","car1","city","state","total_square_footage","house_construction_year"]
 

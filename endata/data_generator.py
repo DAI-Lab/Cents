@@ -12,6 +12,7 @@ from datasets.utils import convert_generated_data_to_df
 from generator.diffcharge.diffusion import DDPM
 from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from generator.gan.acgan import ACGAN
+from generator.normalizer import Normalizer
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -48,6 +49,7 @@ class DataGenerator:
             self.model = model
         else:
             self._initialize_model()
+
         self.conditioning_var_buffer = {}
         self.conditioning_var_codes = (
             conditioning_var_codes if conditioning_var_codes is not None else {}
@@ -86,6 +88,14 @@ class DataGenerator:
             self.model = model_class(self.cfg).to(self.cfg.device)
         else:
             raise ValueError(f"Model {self.model_name} not recognized.")
+
+    def _initialize_normalizer(self):
+        """
+        Initialize the normalizer based on the dataset parameters.
+        """
+        normalizer = Normalizer(self.cfg.dataset)
+        normalizer.load(self._get_normalizer_checkpoint_path())
+        self.normalizer = normalizer
 
     def _set_dataset_config(self, dataset_name: str, cfg: DictConfig = None):
         """
@@ -142,7 +152,6 @@ class DataGenerator:
                 conditioning_var_codes = json.load(f)
 
             formatted_codes = json.dumps(conditioning_var_codes, indent=4)
-            print(formatted_codes)
 
             for outer_key, inner_dict in conditioning_var_codes.items():
                 conditioning_var_codes[outer_key] = {
@@ -202,9 +211,13 @@ class DataGenerator:
 
         data = self.model.generate(conditioning_vars)
         df = convert_generated_data_to_df(
-            data, self.conditioning_var_buffer, self.conditioning_var_codes
+            data,
+            self.conditioning_var_buffer,
+            time_series_columns=self.cfg.dataset.time_series_columns,
+            decode=False,
         )
-        return df
+        inv_data = self.normalizer.inverse_transform(df, use_model=True)
+        return inv_data
 
     def load_model(self, dataset_name: str):
         """
@@ -218,22 +231,55 @@ class DataGenerator:
         checkpoint_path = self._get_model_checkpoint_path()
         self.model.load(checkpoint_path)
 
+        if self.cfg.dataset.normalize:
+            self._initialize_normalizer()
+
+    def load_normalizer(self):
+        """
+        Load the context normalizer from a checkpoint file.
+        """
+        if not self.cfg.dataset.normalize:
+            return None
+
+        checkpoint_path = self._get_normalizer_checkpoint_path()
+        normalizer = self.normalizer.load(checkpoint_path)
+
     def _get_model_checkpoint_path(self):
         """
         Returns the checkpoint path for the data generator's model type.
         """
         project_root = str(Path(__file__).resolve().parent.parent)
         checkpoint_dir = os.path.join(
-            project_root, f"checkpoints/models/{self.dataset_name}"
+            project_root, f"checkpoints/{self.dataset_name}/{self.model_name}"
         )
 
+        time_series_dims = self.cfg.dataset.time_series_dims
+
         if self.model_name == "diffusion_ts":
-            checkpoint_name = "diffusion_ts_checkpoint_1000.pt"
+            checkpoint_name = (
+                f"diffusion_ts_checkpoint_dim_{time_series_dims}_cond_01_5000.pt"
+            )
         elif self.model_name == "acgan":
-            checkpoint_name = "acgan_checkpoint_200.pt"
-        elif self.model_name == "diffcharge":
-            checkpoint_name = "diffcharge_checkpoint_1000.pt"
+            checkpoint_name = (
+                f"acgan_checkpoint_dim_{time_series_dims}_cond_01_aux_1_5000.pt"
+            )
         else:
             raise ValueError(f"No model checkpoint found for {self.model_name}.")
 
         return os.path.join(checkpoint_dir, checkpoint_name)
+
+    def _get_normalizer_checkpoint_path(self):
+        """
+        Returns the checkpoint path for the data generator's normalizer.
+        """
+        project_root = str(Path(__file__).resolve().parent.parent)
+        checkpoint_dir = os.path.join(
+            project_root, f"checkpoints/{self.dataset_name}/normalizer"
+        )
+
+        time_series_dims = self.cfg.dataset.time_series_dims
+        scale = self.cfg.dataset.scale
+        return os.path.join(
+            checkpoint_dir,
+            f"{self.dataset_name}_dim_{time_series_dims}_scale_{scale}_normalizer.pt",
+        )
