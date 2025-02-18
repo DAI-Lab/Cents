@@ -97,20 +97,20 @@ class Normalizer:
       5) Can save/load the model checkpoint.
     """
 
-    def __init__(self, dataset, cfg):
+    def __init__(self, cfg, dataset=None):
         """
         Args:
+            cfg: A config object with fields like device, run_dir, etc.
             dataset: A TimeSeriesDataset or similar, with .data (DataFrame)
                      plus a list of dimension columns in .time_series_column_names.
-            cfg: A config object with fields like device, run_dir, etc.
         """
         self.dataset_cfg = cfg
         self.normalizer_cfg = self._init_normalizer_config()
         self.do_scale = cfg.scale
+        self.time_series_dims = self.dataset_cfg.time_series_dims
+        self.time_series_cols = self.dataset_cfg.time_series_columns
+        self.context_vars = self.dataset_cfg.conditioning_vars.keys()
         self.dataset = dataset
-        self.context_vars = dataset.conditioning_vars
-        self.time_series_cols = dataset.time_series_column_names
-        self.time_series_dims = len(self.time_series_cols)
 
         self.device = self.normalizer_cfg.device
         self.group_stats = {}
