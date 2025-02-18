@@ -347,13 +347,32 @@ class Normalizer:
                 ctx_tuple = tuple(row[vn] for vn in self.context_vars)
                 mu_arr, sigma_arr, zmin_arr, zmax_arr = self.group_stats[ctx_tuple]
 
-            for d, col_name in enumerate(self.time_series_cols):
-                z = np.array(row[col_name], dtype=np.float32)
-                if self.do_scale and (zmin_arr is not None) and (zmax_arr is not None):
-                    rng = (zmax_arr[d] - zmin_arr[d]) + 1e-8
-                    z = z * rng + zmin_arr[d]
-                arr_orig = z * (sigma_arr[d] + 1e-8) + mu_arr[d]
-                df.at[i, col_name] = arr_orig
+            if "timeseries" in row:
+                z_all = np.array(row["timeseries"], dtype=np.float32)
+                out_ts = np.empty_like(z_all)
+                for d in range(self.time_series_dims):
+                    z = z_all[:, d]
+                    if (
+                        self.do_scale
+                        and (zmin_arr is not None)
+                        and (zmax_arr is not None)
+                    ):
+                        rng = (zmax_arr[d] - zmin_arr[d]) + 1e-8
+                        z = z * rng + zmin_arr[d]
+                    out_ts[:, d] = z * (sigma_arr[d] + 1e-8) + mu_arr[d]
+                df.at[i, "timeseries"] = out_ts
+            else:
+                for d, col_name in enumerate(self.time_series_cols):
+                    z = np.array(row[col_name], dtype=np.float32)
+                    if (
+                        self.do_scale
+                        and (zmin_arr is not None)
+                        and (zmax_arr is not None)
+                    ):
+                        rng = (zmax_arr[d] - zmin_arr[d]) + 1e-8
+                        z = z * rng + zmin_arr[d]
+                    arr_orig = z * (sigma_arr[d] + 1e-8) + mu_arr[d]
+                    df.at[i, col_name] = arr_orig
         return df
 
     def save(self, path: str = None, epoch: int = None):
