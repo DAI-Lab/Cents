@@ -33,6 +33,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
+          export PYTHONPATH=$GITHUB_WORKSPACE
           poetry run pytest --maxfail=1 --disable-warnings -q --cov=.
 
       - name: Upload coverage to Codecov
