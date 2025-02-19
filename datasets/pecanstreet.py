@@ -11,7 +11,6 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset
 
 from datasets.timeseries_dataset import TimeSeriesDataset
-from datasets.utils import encode_conditioning_variables
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

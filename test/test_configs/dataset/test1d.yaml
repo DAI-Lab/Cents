@@ -1,0 +1,14 @@
+name: test1d
+normalize: True
+scale: True
+use_learned_normalizer: True
+shuffle: True
+threshold: 6
+time_series_dims: 1
+time_series_columns: [time_series_col1]
+seq_len: 16
+user_group: null
+
+numeric_conditioning_bins: 5
+conditioning_vars:
+  conditioning_var: 2
