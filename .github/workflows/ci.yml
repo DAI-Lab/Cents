@@ -34,7 +34,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           export PYTHONPATH=$GITHUB_WORKSPACE
-          poetry run pytest --maxfail=1 --disable-warnings -q --cov=.
+          poetry run pytest --maxfail=1 --disable-warnings.
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
