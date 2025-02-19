@@ -1016,19 +1016,6 @@ files = [
 ]
 
 [[package]]
-name = "intel-openmp"
-version = "2025.0.5"
-description = "Intel OpenMP* Runtime Library"
-optional = false
-python-versions = "*"
-files = [
-    {file = "intel_openmp-2025.0.5-py2.py3-none-win_amd64.whl", hash = "sha256:308ef48251d79dd238f215b58d4b8b2a18eec82d38437246374c0377bec2ac96"},
-]
-
-[package.dependencies]
-intel-cmplr-lib-ur = "2025.0.5"
-
-[[package]]
 name = "isort"
 version = "5.13.2"
 description = "A Python utility / library to sort Python imports."
@@ -1433,21 +1420,6 @@ python-dateutil = ">=2.7"
 
 [package.extras]
 dev = ["meson-python (>=0.13.1,<0.17.0)", "numpy (>=1.25)", "pybind11 (>=2.6,!=2.13.3)", "setuptools (>=64)", "setuptools_scm (>=7)"]
-
-[[package]]
-name = "mkl"
-version = "2025.0.1"
-description = "Intel® oneAPI Math Kernel Library"
-optional = false
-python-versions = "*"
-files = [
-    {file = "mkl-2025.0.1-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:581b3de496bd004ab2d2bd38775bbcc885303270687940848a19747cce45d47b"},
-    {file = "mkl-2025.0.1-py2.py3-none-win_amd64.whl", hash = "sha256:5b7ee0dd14038ea1e1b0eb484f3a883b50aa0130da5d31e8734b960218eb4255"},
-]
-
-[package.dependencies]
-intel-openmp = ">=2024"
-tbb = "==2022.*"
 
 [[package]]
 name = "mpmath"
@@ -2979,31 +2951,6 @@ mpmath = ">=1.1.0,<1.4"
 dev = ["hypothesis (>=6.70.0)", "pytest (>=7.1.0)"]
 
 [[package]]
-name = "tbb"
-version = "2022.0.0"
-description = "Intel® oneAPI Threading Building Blocks (oneTBB)"
-optional = false
-python-versions = "*"
-files = [
-    {file = "tbb-2022.0.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:15a15a4e3ea4c3f3198bdb3c55fac75c589e15ed2ad0bbb080900d355c5b017e"},
-    {file = "tbb-2022.0.0-py3-none-win_amd64.whl", hash = "sha256:6a0bae732599ec5c082f46e4aaf14bdbef1621e8cd0c6fcf64d50d347c2ebda4"},
-]
-
-[package.dependencies]
-tcmlib = "==1.*"
-
-[[package]]
-name = "tcmlib"
-version = "1.2.0"
-description = "Thread Composability Manager"
-optional = false
-python-versions = "*"
-files = [
-    {file = "tcmlib-1.2.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:dee9a0665ffa0a74f0ec72844ef7d82e9178ebf6980a76ac65906303d5ed4d03"},
-    {file = "tcmlib-1.2.0-py2.py3-none-win_amd64.whl", hash = "sha256:f751e005fd815ed0efeb87d4523f6a0938c5671e59ac935614f42d8ebb6489c9"},
-]
-
-[[package]]
 name = "threadpoolctl"
 version = "3.5.0"
 description = "threadpoolctl"
@@ -3420,20 +3367,6 @@ files = [
 ]
 
 [[package]]
-name = "umf"
-version = "0.9.1"
-description = "Unified Memory Framework"
-optional = false
-python-versions = "*"
-files = [
-    {file = "umf-0.9.1-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:2f7b8eb45e182b24823be420063799ea89b4f1cad6b9510b1fc6e04b809c7ec2"},
-    {file = "umf-0.9.1-py2.py3-none-win_amd64.whl", hash = "sha256:9d1336d63c7a6b36af1f76dab942a760168da519a1bfe6941fc6418198b10820"},
-]
-
-[package.dependencies]
-tcmlib = "1.2"
-
-[[package]]
 name = "urllib3"
 version = "2.3.0"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
@@ -3588,4 +3521,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "627eef3ce811ed4347f24c2a6a1ab5860c75d1fe55910aedd6c2f3c56ac697ef"
+content-hash = "d8fc3435db30d02be634487cf2fc2eab707169ca97e7154ca7922408e44fd5ae"
