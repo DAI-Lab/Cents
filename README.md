@@ -6,8 +6,9 @@
 <!-- Uncomment these lines after releasing the package to PyPI for version and downloads badges -->
 <!--[![PyPI Shield](https://img.shields.io/pypi/v/EnData.svg)](https://pypi.python.org/pypi/EnData)-->
 <!--[![Downloads](https://pepy.tech/badge/EnData)](https://pepy.tech/project/EnData)-->
-[![Github Actions Shield](https://img.shields.io/github/workflow/status/michael-fuest/EnData/Run%20Tests)](https://github.com/michael-fuest/EnData/actions)
-[![Coverage Status](https://codecov.io/gh/michael-fuest/EnData/branch/master/graph/badge.svg)](https://codecov.io/gh/michael-fuest/EnData)
+[![GitHub Actions Build Status](https://img.shields.io/github/workflow/status/michael-fuest/EnData/CI?label=build)](https://github.com/michael-fuest/EnData/actions)
+[![Codecov Coverage](https://img.shields.io/codecov/c/github/michael-fuest/EnData?label=coverage)](https://codecov.io/gh/michael-fuest/EnData)
+
 
 
 
