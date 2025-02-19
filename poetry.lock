@@ -1016,19 +1016,6 @@ files = [
 ]
 
 [[package]]
-name = "intel-cmplr-lib-ur"
-version = "2025.0.5"
-description = "Intel® oneAPI Unified Runtime Libraries package"
-optional = false
-python-versions = "*"
-files = [
-    {file = "intel_cmplr_lib_ur-2025.0.5-py2.py3-none-win_amd64.whl", hash = "sha256:d792c1cafada93aee1ab387e85ecd906a6bb0c0fc5d5fb9b2986c1dcaf301aae"},
-]
-
-[package.dependencies]
-umf = "==0.9.*"
-
-[[package]]
 name = "intel-openmp"
 version = "2025.0.5"
 description = "Intel OpenMP* Runtime Library"
