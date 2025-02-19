@@ -1,11 +1,10 @@
-_target_: generator.diffusion_ts.gaussian_diffusion.Diffusion_TS
 name: diffusion_ts
 noise_dim: 256
 cond_emb_dim: 16
 
 batch_size: 1024
 sampling_batch_size: 4096
-n_epochs: 5
+n_epochs: 1
 save_cycle: 5000
 n_steps: 1000
 base_lr: 1e-4

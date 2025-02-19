@@ -1,6 +1,6 @@
-import json
+# trainer.py
+
 import os
-from pathlib import Path
 from typing import List, Optional
 
 import torch
@@ -17,47 +17,20 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class Trainer:
-    """
-    A class to handle training of generative models.
-    """
-
-    def __init__(
-        self,
-        model_name: str,
-        dataset: TimeSeriesDataset,
-        overrides: Optional[List[str]] = [],
-    ):
-        """
-        Initialize the Trainer with the model name, dataset, and any configuration overrides.
-
-        Args:
-            model_name (str): The name of the generative model ('acgan', 'diffusion_ts', etc.).
-            dataset (TimeSeriesDataset): The dataset to train on.
-            overrides (List[str], optional): Configuration overrides.
-        """
+    def __init__(self, model_name: str, dataset: TimeSeriesDataset, cfg=None):
         self.model_name = model_name
-        self.overrides = overrides
         self.dataset = dataset
-        self.cfg = self._load_config()
+        self.cfg = self._load_config() if not cfg else cfg
         self.model = None
         self._initialize_model()
 
     def _load_config(self) -> DictConfig:
-        """
-        Load and merge the global config and model-specific config, then apply overrides.
-
-        Returns:
-            DictConfig: The merged configuration.
-        """
         config_dir = os.path.join(ROOT_DIR, "config")
-
-        self.overrides = [f"model={self.model_name}"] + self.overrides
-
+        self.overrides = [f"model={self.model_name}"]
         with initialize_config_dir(config_dir=str(config_dir), version_base=None):
             cfg = compose(config_name="config", overrides=self.overrides)
 
         dataset_name = self.dataset.name if hasattr(self.dataset, "name") else "default"
-
         if self.dataset.cfg:
             cfg.dataset = self.dataset.cfg
         else:
@@ -75,13 +48,9 @@ class Trainer:
                 print(
                     f"Warning: No config found for dataset {dataset_name}, using default dataset config."
                 )
-
         return cfg
 
     def _initialize_model(self):
-        """
-        Initialize the model based on the model name and parameters.
-        """
         model_dict = {
             "acgan": ACGAN,
             "diffusion_ts": Diffusion_TS,
@@ -94,26 +63,19 @@ class Trainer:
             raise ValueError(f"Model {self.model_name} not recognized.")
 
     def fit(self):
-        """
-        Train the model.
-        """
         if not self.dataset:
             raise ValueError("Dataset not specified or None.")
-
         self.model.train_model(self.dataset)
 
     def get_data_generator(self):
-        """
-        Create a data generator from the trained model.
-        """
         data_generator = DataGenerator(
             model_name=self.model_name,
             cfg=self.cfg,
+        )
+        data_generator.load_model(
+            self.dataset.name,
+            self.cfg.dataset,
             model=self.model,
-            conditioning_var_codes=(
-                self.dataset.conditioning_var_codes
-                if hasattr(self.dataset, "conditioning_var_codes")
-                else None
-            ),
+            normalizer=self.dataset._normalizer,
         )
         return data_generator
