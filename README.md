@@ -3,11 +3,9 @@
 <i>An open source project from Data to AI Lab at MIT.</i>
 </p>
 
-<!-- Uncomment these lines after releasing the package to PyPI for version and downloads badges -->
-<!--[![PyPI Shield](https://img.shields.io/pypi/v/EnData.svg)](https://pypi.python.org/pypi/EnData)-->
-<!--[![Downloads](https://pepy.tech/badge/EnData)](https://pepy.tech/project/EnData)-->
-[![GitHub Actions Build Status](https://img.shields.io/github/workflow/status/michael-fuest/EnData/CI?label=build)](https://github.com/michael-fuest/EnData/actions)
-[![Codecov Coverage](https://img.shields.io/codecov/c/github/michael-fuest/EnData?label=coverage)](https://codecov.io/gh/michael-fuest/EnData)
+[![PyPI Shield](https://img.shields.io/pypi/v/EnData.svg)](https://pypi.python.org/pypi/endata)
+[![Downloads](https://pepy.tech/badge/endata)](https://pepy.tech/project/endata)
+[![GitHub Actions Build Status](https://img.shields.io/github/actions/workflow/status/michael-fuest/EnData/ci.yml?branch=main)](https://github.com/michael-fuest/EnData/actions)
 
 
 
@@ -20,12 +18,11 @@ A library for generative modeling and evaluation of synthetic household-level el
 
 # Overview
 
-EnData is a library built for generating *synthetic household-level electric load and generation timeseries*. EnData supports a variety of generative time series models that can be used to train a time series data generator from scratch on a user-defined dataset. Additionally, EnData provides functionality for loading pre-trained model checkpoints that can be used to generate data instantly. Trained models can be evaluated using a series of metrics and visualizations also implemented here.
+EnData is a library built for generating *synthetic household-level electric load and generation timeseries*. EnData supports several generative time series models that can be used to train a time series data generator from scratch on a user-defined dataset. Additionally, EnData provides functionality for loading pre-trained model checkpoints that can be used to generate data instantly. Trained models can be evaluated using a series of metrics and visualizations also implemented here.
 
-These supported models include:
+These currently supported models are:
 
 - [Diffusion-TS](https://github.com/Y-debug-sys/Diffusion-TS/tree/main)
-- [DiffCharge](https://github.com/LSY-Cython/DiffCharge/tree/main)
 - [ACGAN](https://arxiv.org/abs/1610.09585)
 
 Feel free to look at our [tutorial notebooks]() to get started.
@@ -44,24 +41,24 @@ These are the minimum commands needed to create a virtualenv using python3.8 for
 
 ```bash
 pip install virtualenv
-virtualenv -p $(which python3.8) EnData-venv
+virtualenv -p $(which python3.9) endata-venv
 ```
 
 Afterwards, you have to execute this command to activate the virtualenv:
 
 ```bash
-source EnData-venv/bin/activate
+source endata-venv/bin/activate
 ```
 
 Remember to execute it every time you start a new console to work on **EnData**!
 
-<!-- ## Install from PyPI
+## Install from PyPI
 
 After creating the virtualenv and activating it, we recommend using
 [pip](https://pip.pypa.io/en/stable/) in order to install **EnData**:
 
 ```bash
-pip install EnData
+pip install endata
 ```
 
 This will pull and install the latest stable release from [PyPI](https://pypi.org/).
@@ -124,18 +121,12 @@ For a more in-depth tutorial, please refer to the tutorial notebooks in the `tut
 
 ## Datasets
 
-If you want to reproduce our models from scratch, you will need to download the [PecanStreet DataPort dataset](https://www.pecanstreet.org/dataport/) and place it under the path specified in your `pecanstreet.yaml`. Specifically you will require the following files:
+If you want to reproduce our models from scratch, you will need to download the [PecanStreet DataPort dataset](https://www.pecanstreet.org/dataport/) and place it under the path specified in `pecanstreet.yaml`. Specifically you will require the following files:
 
 - 15minute_data_austin.csv
 - 15minute_data_california.csv
 - 15minute_data_newyork.csv
 - metadata.csv
-
-If you want to train models using the [Open Power Systems dataset](https://data.open-power-system-data.org/household_data/), you will need to download the following file:
-
-- household_data_15min_singleindex.csv
-
-and again place it under the path specified in `openpower.yaml`. For instructions and dataset usage terms, please refer to the data provider's websites.
 
 # What's next?
 
