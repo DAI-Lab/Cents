@@ -121,6 +121,9 @@ class DataGenerator:
             for key, value in context_vars.items()
         }
 
+    def set_device(self, device: torch.device):
+        self.model.to(device)
+
     def generate(self, num_samples=100):
 
         if not self.context_var_buffer:
@@ -194,7 +197,7 @@ class DataGenerator:
             s3 = boto3.client(
                 "s3", config=botocore.config.Config(signature_version=botocore.UNSIGNED)
             )
-            print(f"Downloading {s3_key} from to {local_path}...")
+            print(f"Downloading {s3_key} to {local_path}...")
             s3.download_file(bucket, s3_key, local_path)
         else:
             print(f"Using cached file at {local_path}")
