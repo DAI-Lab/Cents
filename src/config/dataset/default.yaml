@@ -1,0 +1,13 @@
+name: default
+normalize: True
+scale: True
+use_learned_normalizer: True
+shuffle: True
+threshold: 6 # int, clips values within +-threshold standard deviations when normalizing
+time_series_dims: 1
+time_series_columns: []
+seq_len: 8
+user_group: null
+
+numeric_context_bins: 5 # determines how many categories numerical vars are discretized into
+context_vars: {}

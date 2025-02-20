@@ -9,6 +9,6 @@ time_series_columns: [time_series_col1, time_series_col2]
 seq_len: 16
 user_group: null
 
-numeric_conditioning_bins: 5
-conditioning_vars:
-  conditioning_var: 2
+numeric_context_bins: 5
+context_vars:
+  context_var: 2

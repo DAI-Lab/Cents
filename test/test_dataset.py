@@ -1,7 +1,5 @@
 import numpy as np
-import pandas as pd
 import pytest
-import torch
 
 
 @pytest.mark.parametrize("dimension", ["1D", "2D"])

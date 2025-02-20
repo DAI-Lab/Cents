@@ -7,8 +7,8 @@ import pytest
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
-from datasets.timeseries_dataset import TimeSeriesDataset
-from endata.trainer import Trainer
+from src.datasets.timeseries_dataset import TimeSeriesDataset
+from src.trainer import Trainer
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,16 +27,13 @@ class SimpleTestDataset1D(TimeSeriesDataset):
             data=data,
             time_series_column_names=["time_series_col1"],
             seq_len=seq_len,
-            conditioning_var_column_names=["conditioning_var"],
+            context_var_column_names=["context_var"],
             normalize=normalize,
             scale=scale,
         )
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        if (
-            "time_series_col1" not in data.columns
-            or "conditioning_var" not in data.columns
-        ):
+        if "time_series_col1" not in data.columns or "context_var" not in data.columns:
             raise ValueError("Missing required columns in data.")
 
         data["time_series_col1"] = data["time_series_col1"].apply(
@@ -59,13 +56,13 @@ class SimpleTestDataset2D(TimeSeriesDataset):
             data=data,
             time_series_column_names=["time_series_col1", "time_series_col2"],
             seq_len=seq_len,
-            conditioning_var_column_names=["conditioning_var"],
+            context_var_column_names=["context_var"],
             normalize=normalize,
             scale=scale,
         )
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        required_cols = {"time_series_col1", "time_series_col2", "conditioning_var"}
+        required_cols = {"time_series_col1", "time_series_col2", "context_var"}
         if not required_cols.issubset(data.columns):
             raise ValueError("Missing required columns in data.")
 
@@ -86,7 +83,7 @@ def raw_df_1d():
             "time_series_col1": [
                 np.random.rand(seq_len).tolist() for _ in range(num_samples)
             ],
-            "conditioning_var": np.random.choice(["a", "b"], size=num_samples),
+            "context_var": np.random.choice(["a", "b"], size=num_samples),
         }
     )
     return df
@@ -105,7 +102,7 @@ def raw_df_2d():
             "time_series_col2": [
                 np.random.rand(seq_len).tolist() for _ in range(num_samples)
             ],
-            "conditioning_var": np.random.choice(["a", "b"], size=num_samples),
+            "context_var": np.random.choice(["a", "b"], size=num_samples),
         }
     )
     return df

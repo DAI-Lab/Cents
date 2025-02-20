@@ -1,0 +1,29 @@
+name: pecanstreet
+geography: null
+normalize: True
+scale: True
+use_learned_normalizer: True
+threshold: 8 # int, clips values within +-threshold stds
+include_generation: False
+seq_len: 96
+time_series_dims: 2
+shuffle: True
+path: "./data/pecanstreet/csv"
+time_series_columns: ["grid", "solar"]
+data_columns: ["dataid","local_15min","car1","grid","solar"]
+metadata_columns: ["dataid","building_type","solar","car1","city","state","total_square_footage","house_construction_year"]
+
+user_id: null
+user_group: all # non_pv_users, all
+
+numeric_context_bins: 5
+context_vars: # for each desired context variable, add the name and number of categories
+  month: 12
+  weekday: 7
+  building_type: 3
+  has_solar: 2 # note that the metadata csv file column name is 'solar', which is renamed to avoid conflicts with the 'solar' column in the data csv.
+  car1: 2
+  city: 7
+  state: 3
+  total_square_footage: 5
+  house_construction_year: 5

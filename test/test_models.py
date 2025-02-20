@@ -1,15 +1,6 @@
-import copy
-import math
-import os
-
 import numpy as np
 import pandas as pd
 import pytest
-import torch
-import torch.nn.functional as F
-
-from generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
-from generator.gan.acgan import ACGAN
 
 
 def test_trainer_fit_diffusion_1d(dummy_trainer_diffusion_1d):
