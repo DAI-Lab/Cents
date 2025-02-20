@@ -73,7 +73,9 @@ class _NormalizerModule(nn.Module):
 
 
 class Normalizer:
-    def __init__(self, dataset_cfg, dataset=None, normalizer_path=None):
+    def __init__(
+        self, dataset_cfg, dataset=None, normalizer_path=None, normalizer_cfg=None
+    ):
 
         assert (
             dataset is not None or normalizer_path is not None
