@@ -106,17 +106,17 @@ ENV/
 .*.swp
 
 # Repository Specific
-src/data/pecanstreet/csv
-src/data/openpower/csv
+endata/data/pecanstreet/csv
+endata/data/openpower/csv
 .DS_Store
 .ipynb_checkpoints
-src/.DS_Store
-src/runs/*
-src/Checkpoints_syn
-src/logs/*
-src/outputs/*
+endata/.DS_Store
+endata/runs/*
+endata/Checkpoints_syn
+endata/logs/*
+endata/outputs/*
 outputs/*
-src/checkpoints/*
-src/data/custom
+endata/checkpoints/*
+endata/data/custom
 tutorials/outputs
 checkpoints

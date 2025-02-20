@@ -15,9 +15,9 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from src.generator.context import ContextModule
-from src.generator.diffusion_ts.model_utils import default, extract, identity
-from src.generator.diffusion_ts.transformer import Transformer
+from endata.generator.context import ContextModule
+from endata.generator.diffusion_ts.model_utils import default, extract, identity
+from endata.generator.diffusion_ts.transformer import Transformer
 
 
 def linear_beta_schedule(timesteps, device):

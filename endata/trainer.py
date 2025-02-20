@@ -7,10 +7,10 @@ import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
-from src.data_generator import DataGenerator
-from src.datasets.timeseries_dataset import TimeSeriesDataset
-from src.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
-from src.generator.gan.acgan import ACGAN
+from endata.data_generator import DataGenerator
+from endata.datasets.timeseries_dataset import TimeSeriesDataset
+from endata.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
+from endata.generator.gan.acgan import ACGAN
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 

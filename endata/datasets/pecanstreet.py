@@ -10,7 +10,7 @@ from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset
 
-from datasets.timeseries_dataset import TimeSeriesDataset
+from endata.datasets.timeseries_dataset import TimeSeriesDataset
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

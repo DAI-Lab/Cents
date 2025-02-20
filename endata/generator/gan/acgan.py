@@ -23,8 +23,8 @@ import wandb
 from omegaconf import DictConfig
 from tqdm import tqdm
 
-from src.datasets.utils import prepare_dataloader
-from src.generator.context import ContextModule
+from endata.datasets.utils import prepare_dataloader
+from endata.generator.context import ContextModule
 
 
 class Generator(nn.Module):

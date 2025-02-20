@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from einops import rearrange, reduce, repeat
 from torch import nn
 
-from src.generator.diffusion_ts.model_utils import (
+from endata.generator.diffusion_ts.model_utils import (
     GELU2,
     AdaLayerNorm,
     Conv_MLP,

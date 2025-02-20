@@ -10,10 +10,10 @@ import torch.nn as nn
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
-from src.datasets.utils import convert_generated_data_to_df
-from src.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
-from src.generator.gan.acgan import ACGAN
-from src.generator.normalizer import Normalizer
+from endata.datasets.utils import convert_generated_data_to_df
+from endata.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
+from endata.generator.gan.acgan import ACGAN
+from endata.generator.normalizer import Normalizer
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 

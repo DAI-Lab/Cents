@@ -10,8 +10,8 @@ from hydra import compose, initialize_config_dir
 from sklearn.cluster import KMeans
 from torch.utils.data import Dataset
 
-from src.datasets.utils import encode_context_variables
-from src.generator.normalizer import Normalizer
+from endata.datasets.utils import encode_context_variables
+from endata.generator.normalizer import Normalizer
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

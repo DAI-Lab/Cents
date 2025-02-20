@@ -11,8 +11,8 @@ from dtaidistance import dtw
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-from eval.loss import gaussian_kernel_matrix, maximum_mean_discrepancy
-from eval.t2vec.t2vec import TS2Vec
+from endata.eval.loss import gaussian_kernel_matrix, maximum_mean_discrepancy
+from endata.eval.t2vec.t2vec import TS2Vec
 
 
 def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float]:

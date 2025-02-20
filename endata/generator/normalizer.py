@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader, Dataset
 
-from src.generator.context import ContextModule
+from endata.generator.context import ContextModule
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

@@ -15,8 +15,8 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.mixture import GaussianMixture
 
-from src.eval.discriminative_metric import discriminative_score_metrics
-from src.eval.metrics import (
+from endata.eval.discriminative_metric import discriminative_score_metrics
+from endata.eval.metrics import (
     Context_FID,
     calculate_mmd,
     calculate_period_bound_mse,
@@ -24,10 +24,9 @@ from src.eval.metrics import (
     plot_syn_and_real_comparison,
     visualization,
 )
-from src.eval.predictive_metric import predictive_score_metrics
-from src.generator.diffcharge.diffusion import DDPM
-from src.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
-from src.generator.gan.acgan import ACGAN
+from endata.eval.predictive_metric import predictive_score_metrics
+from endata.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
+from endata.generator.gan.acgan import ACGAN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger = logging.getLogger(__name__)
@@ -147,7 +146,6 @@ class Evaluator:
         real_data_inv = dataset.inverse_transform(real_data_subset)
         syn_data_inv = dataset.inverse_transform(syn_data_subset)
 
-        # Convert to numpy arrays
         real_data_array = np.stack(real_data_inv["timeseries"])
         syn_data_array = np.stack(syn_data_inv["timeseries"])
 
@@ -365,7 +363,6 @@ class Evaluator:
     def get_trained_model(self, dataset: Any) -> Any:
         model_dict = {
             "acgan": ACGAN,
-            "diffcharge": DDPM,
             "diffusion_ts": Diffusion_TS,
         }
         if self.model_name in model_dict:
