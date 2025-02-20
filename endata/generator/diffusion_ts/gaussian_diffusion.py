@@ -482,9 +482,27 @@ class Diffusion_TS(nn.Module):
         print(f"Saved diffusion model checkpoint to {path}")
 
     def load(self, path: str):
-        ckp = torch.load(
-            path, map_location=lambda storage, loc: storage.cuda(self.device)
-        )
+
+        if isinstance(self.device, str):
+            if self.device == "cpu":
+                map_location = torch.device("cpu")
+            else:
+                raise ValueError(f"Invalid device string: {self.device}")
+        elif isinstance(self.device, int):
+            if (
+                torch.cuda.is_available()
+                and 0 <= self.device < torch.cuda.device_count()
+            ):
+                map_location = torch.device(f"cuda:{self.device}")
+            else:
+                raise ValueError(f"Invalid CUDA device index: {self.device}")
+        else:
+            raise TypeError(
+                f"Device should be a string or an integer, but got {type(self.device)}"
+            )
+
+        ckp = torch.load(path, map_location=map_location)
+
         if "model_state_dict" in ckp:
             self.load_state_dict(ckp["model_state_dict"])
             print("Loaded model state.")
