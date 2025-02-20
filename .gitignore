@@ -107,7 +107,6 @@ ENV/
 
 # Repository Specific
 endata/data/pecanstreet/csv
-endata/data/openpower/csv
 .DS_Store
 .ipynb_checkpoints
 endata/.DS_Store
@@ -120,3 +119,4 @@ endata/checkpoints/*
 endata/data/custom
 tutorials/outputs
 checkpoints
+bfg.jar
