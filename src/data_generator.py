@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import boto3
+import botocore
 import torch
 import torch.nn as nn
 from hydra import compose, initialize_config_dir
@@ -175,32 +177,61 @@ class DataGenerator:
             dataset_cfg=self.cfg.dataset, dataset=None, normalizer_path=normalizer_path
         )
 
-    def _get_model_checkpoint_path(self):
-        project_root = str(Path(__file__).resolve().parent)
-        checkpoint_dir = os.path.join(
-            project_root, f"checkpoints/{self.dataset_name}/{self.model_name}"
-        )
-        time_series_dims = self.cfg.dataset.time_series_dims
-        if self.model_name == "diffusion_ts":
-            checkpoint_name = (
-                f"diffusion_ts_checkpoint_dim_{time_series_dims}_cond_01_5000.pt"
-            )
-        elif self.model_name == "acgan":
-            checkpoint_name = (
-                f"acgan_checkpoint_dim_{time_series_dims}_cond_01_aux_1_5000.pt"
-            )
-        else:
-            raise ValueError(f"No model checkpoint found for {self.model_name}.")
-        return os.path.join(checkpoint_dir, checkpoint_name)
+    def download_from_s3(self, bucket: str, s3_key: str, local_path: str) -> str:
+        """
+        Check if a file exists locally; if not, download it from S3.
 
-    def _get_normalizer_checkpoint_path(self):
-        project_root = str(Path(__file__).resolve().parent)
-        checkpoint_dir = os.path.join(
-            project_root, f"checkpoints/{self.dataset_name}/normalizer"
+        Args:
+            bucket (str): Name of the S3 bucket.
+            s3_key (str): S3 key (path) for the file.
+            local_path (str): Local path where the file should be stored.
+
+        Returns:
+            str: The local path to the downloaded file.
+        """
+        if not os.path.exists(local_path):
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            s3 = boto3.client(
+                "s3", config=botocore.config.Config(signature_version=botocore.UNSIGNED)
+            )
+            print(f"Downloading {s3_key} from to {local_path}...")
+            s3.download_file(bucket, s3_key, local_path)
+        else:
+            print(f"Using cached file at {local_path}")
+        return local_path
+
+    def _get_model_checkpoint_path(self) -> str:
+        dimensions = self.cfg.dataset.time_series_dims
+        checkpoint_name = f"{self.model_name}_dim_{dimensions}.pt"
+        bucket = "dai-watts"
+        s3_key = f"{self.dataset_name}/{self.model_name}/{checkpoint_name}"
+
+        local_cache_dir = os.path.join(
+            Path.home(),
+            ".cache",
+            "endata",
+            "checkpoints",
+            self.dataset_name,
+            self.model_name,
         )
-        time_series_dims = self.cfg.dataset.time_series_dims
+        local_filename = checkpoint_name
+        local_path = os.path.join(local_cache_dir, local_filename)
+        return self.download_from_s3(bucket, s3_key, local_path)
+
+    def _get_normalizer_checkpoint_path(self) -> str:
+        dimensions = self.cfg.dataset.time_series_dims
         scale = self.cfg.dataset.scale
-        return os.path.join(
-            checkpoint_dir,
-            f"{self.dataset_name}_dim_{time_series_dims}_scale_{scale}_normalizer.pt",
+        checkpoint_name = f"normalizer_dim_{dimensions}_scale_{scale}.pt"
+        bucket = "dai-watts"
+        s3_key = f"{self.dataset_name}/normalizer/{checkpoint_name}"
+        local_cache_dir = os.path.join(
+            Path.home(),
+            ".cache",
+            "endata",
+            "checkpoints",
+            self.dataset_name,
+            self.model_name,
         )
+        local_filename = checkpoint_name
+        local_path = os.path.join(local_cache_dir, local_filename)
+        return self.download_from_s3(bucket, s3_key, local_path)
