@@ -5,7 +5,7 @@
 
 [![PyPI Shield](https://img.shields.io/pypi/v/EnData.svg)](https://pypi.python.org/pypi/endata)
 [![Downloads](https://pepy.tech/badge/endata)](https://pepy.tech/project/endata)
-[![GitHub Actions Build Status](https://github.com/michael-fuest/EnData/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/michael-fuest/EnData/actions)
+[![GitHub Actions Build Status](https://github.com/DAI-Lab/EnData/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DAI-Lab/EnData/actions)
 
 
 # EnData
