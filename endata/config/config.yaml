@@ -5,7 +5,7 @@ defaults:
   - normalizer: default
   - _self_
 
-device: cpu
+device: null
 
 job_name: ${model.name}_${dataset.name}_${dataset.user_group}
 run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}

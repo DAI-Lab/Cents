@@ -15,6 +15,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
+from endata.generator.base_generator import BaseGenerator
 from endata.generator.context import ContextModule
 from endata.generator.diffusion_ts.model_utils import default, extract, identity
 from endata.generator.diffusion_ts.transformer import Transformer
@@ -68,7 +69,7 @@ class EMA:
         return self.ema_model(x)
 
 
-class Diffusion_TS(nn.Module):
+class Diffusion_TS(nn.Module, BaseGenerator):
 
     def __init__(self, cfg: DictConfig):
         super().__init__()
@@ -531,6 +532,4 @@ class Diffusion_TS(nn.Module):
             print(f"Loaded epoch number: {ckp['epoch']}")
 
         self.to(self.device)
-
-        # self.ema.ema_model.to(self.device)
         print(f"Model + EMA moved to {self.device}.")

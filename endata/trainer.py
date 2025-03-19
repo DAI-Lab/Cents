@@ -1,7 +1,7 @@
 # trainer.py
 
 import os
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import torch
 from hydra import compose, initialize_config_dir
@@ -9,19 +9,50 @@ from omegaconf import DictConfig, OmegaConf
 
 from endata.data_generator import DataGenerator
 from endata.datasets.timeseries_dataset import TimeSeriesDataset
+from endata.eval.evaluator import Evaluator
 from endata.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from endata.generator.gan.acgan import ACGAN
+from endata.utils.device import get_device
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class Trainer:
-    def __init__(self, model_name: str, dataset: TimeSeriesDataset, cfg=None):
+    def __init__(
+        self,
+        model_name: str,
+        dataset: TimeSeriesDataset,
+        cfg=None,
+        model_overrides: dict = None,
+    ):
+        self.model_registry = {
+            "acgan": ACGAN,
+            "diffusion_ts": Diffusion_TS,
+        }
         self.model_name = model_name
         self.dataset = dataset
         self.cfg = self._load_config() if not cfg else cfg
+
+        if model_overrides:
+            self.cfg.model = OmegaConf.merge(
+                self.cfg.model, OmegaConf.create(model_overrides)
+            )
+
+        self.device = get_device(self.cfg.get("device", None))
         self.model = None
         self._initialize_model()
+        self.evaluator = None
+
+    @classmethod
+    def register_model(cls, name: str, model_class: type):
+        cls._model_registry[name] = model_class
+
+    def _initialize_model(self):
+        if self.model_name in self.model_registry:
+            model_class = self.model_registry[self.model_name]
+            self.model = model_class(self.cfg).to(self.cfg.device)
+        else:
+            raise ValueError(f"Model {self.model_name} not recognized.")
 
     def _load_config(self) -> DictConfig:
         config_dir = os.path.join(ROOT_DIR, "config")
@@ -49,17 +80,6 @@ class Trainer:
                 )
         return cfg
 
-    def _initialize_model(self):
-        model_dict = {
-            "acgan": ACGAN,
-            "diffusion_ts": Diffusion_TS,
-        }
-        if self.model_name in model_dict:
-            model_class = model_dict[self.model_name]
-            self.model = model_class(self.cfg).to(self.cfg.device)
-        else:
-            raise ValueError(f"Model {self.model_name} not recognized.")
-
     def fit(self):
         if not self.dataset:
             raise ValueError("Dataset not specified or None.")
@@ -82,3 +102,30 @@ class Trainer:
             normalizer=self.dataset._normalizer,
         )
         return data_generator
+
+    def evaluate(self, eval_config: dict = None) -> Dict:
+        """
+        Evaluate the trained model.
+
+        Args:
+            eval_config (dict, optional): Configuration overrides for evaluation.
+            user_id (int, optional): Specific user to evaluate. If None, evaluates on all users.
+
+        Returns:
+            Dict: Evaluation results
+
+        Raises:
+            ValueError: If model is not trained
+        """
+        if not self.model:
+            raise ValueError("Model not trained. Call fit() first.")
+
+        if eval_config:
+            self.cfg.evaluator = OmegaConf.merge(
+                self.cfg.evaluator, OmegaConf.create(eval_config)
+            )
+
+        if not self.evaluator:
+            self.evaluator = Evaluator(self.cfg, self.dataset)
+
+        return self.evaluator.evaluate_model(model=self.model)

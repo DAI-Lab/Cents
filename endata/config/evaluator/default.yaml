@@ -1,6 +1,5 @@
 model_name: ${model.name}
-eval_pv_shift: True
+eval_pv_shift: False
 eval_metrics: True
 eval_vis: True
-eval_cond: True
-eval_gmm: False
+eval_context_sparse: False

@@ -45,23 +45,53 @@ def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[float, floa
 
 
 def get_period_bounds(
-    df: pd.DataFrame, month: int, weekday: int
+    df: pd.DataFrame,
+    month: int,
+    weekday: int,
+    time_column: str = "timeseries",  # Make column name configurable
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get the minimum and maximum bounds for time series values within a specified month and weekday.
 
     Args:
-        df: DataFrame containing time series data.
-        month: The month to filter on.
-        weekday: The weekday to filter on.
+        df: DataFrame containing time series data
+        month: The month to filter on
+        weekday: The weekday to filter on
+        time_column: Name of the column containing time series data
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]: Arrays containing the minimum and maximum values for each timestamp.
+        Tuple[np.ndarray, np.ndarray]: Arrays containing the minimum and maximum values for each timestamp
     """
+    if time_column not in df.columns:
+        raise ValueError(f"Column '{time_column}' not found in DataFrame")
+
     df_filtered = df[(df["month"] == month) & (df["weekday"] == weekday)].copy()
-    array_timeseries = np.array(df_filtered["timeseries"].to_list())
-    min_values = np.min(array_timeseries, axis=0)
-    max_values = np.max(array_timeseries, axis=0)
+    if df_filtered.empty:
+        return None, None
+
+    # Get maximum length across all sequences
+    max_length = max(ts.shape[0] for ts in df_filtered[time_column])
+
+    # Pad all sequences to max length
+    padded_sequences = []
+    for ts in df_filtered[time_column]:
+        if ts.shape[0] < max_length:
+            padded = np.pad(
+                ts,
+                ((0, max_length - ts.shape[0]), (0, 0)),
+                mode="constant",
+                constant_values=np.nan,
+            )
+        else:
+            padded = ts
+        padded_sequences.append(padded)
+
+    array_timeseries = np.array(padded_sequences)
+
+    # Calculate min/max excluding NaN values
+    min_values = np.nanmin(array_timeseries, axis=0)
+    max_values = np.nanmax(array_timeseries, axis=0)
+
     return min_values, max_values
 
 
@@ -191,177 +221,317 @@ def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
 
 
 def visualization(
-    ori_data: np.ndarray, generated_data: np.ndarray, analysis: str, compare: int = 3000
+    ori_data: np.ndarray,
+    generated_data: np.ndarray,
+    analysis: str,
+    compare: int = 3000,
+    value_label: str = "Value",
 ):
+    """
+    Create visualizations comparing original and generated time series data.
+
+    Args:
+        ori_data: Original time series data
+        generated_data: Generated time series data
+        analysis: Type of analysis ('pca', 'tsne', or 'kernel')
+        compare: Maximum number of samples to compare
+        value_label: Label for the value axis
+    """
     analysis_sample_no = min([compare, ori_data.shape[0]])
     idx = np.random.permutation(ori_data.shape[0])[:analysis_sample_no]
     ori_data = ori_data[idx]
     generated_data = generated_data[idx]
-    no, seq_len, dim = ori_data.shape
+
+    # Get maximum length across all samples
+    max_length = max(
+        max(ts.shape[0] for ts in ori_data), max(ts.shape[0] for ts in generated_data)
+    )
+
+    # Pad all sequences to max length
+    padded_ori = np.zeros((analysis_sample_no, max_length, ori_data.shape[-1]))
+    padded_gen = np.zeros((analysis_sample_no, max_length, generated_data.shape[-1]))
+
+    for i in range(analysis_sample_no):
+        ori_len = ori_data[i].shape[0]
+        gen_len = generated_data[i].shape[0]
+        padded_ori[i, :ori_len] = ori_data[i]
+        padded_gen[i, :gen_len] = generated_data[i]
+
+    no, seq_len, dim = padded_ori.shape
     plots = []
+
     for d in range(dim):
-        prep_data = np.array([ori_data[i, :, d] for i in range(analysis_sample_no)])
+        prep_data = np.array([padded_ori[i, :, d] for i in range(analysis_sample_no)])
         prep_data_hat = np.array(
-            [generated_data[i, :, d] for i in range(analysis_sample_no)]
+            [padded_gen[i, :, d] for i in range(analysis_sample_no)]
         )
-        colors = ["red"] * analysis_sample_no + ["blue"] * analysis_sample_no
+
         if analysis == "pca":
+            # Remove any NaN values before PCA
+            valid_mask = ~np.isnan(prep_data).any(axis=1) & ~np.isnan(
+                prep_data_hat
+            ).any(axis=1)
+            if not np.any(valid_mask):
+                continue
+
             pca = PCA(n_components=2)
-            pca_results = pca.fit_transform(prep_data)
-            pca_hat_results = pca.transform(prep_data_hat)
+            pca_results = pca.fit_transform(prep_data[valid_mask])
+            pca_hat_results = pca.transform(prep_data_hat[valid_mask])
+
             f, ax = plt.subplots(1)
             ax.scatter(
                 pca_results[:, 0],
                 pca_results[:, 1],
-                c=colors[:analysis_sample_no],
+                c="red",
                 alpha=0.2,
             )
             ax.scatter(
                 pca_hat_results[:, 0],
                 pca_hat_results[:, 1],
-                c=colors[analysis_sample_no:],
+                c="blue",
                 alpha=0.2,
             )
-            font_size = 18
-            ax.tick_params(axis="both", which="major", labelsize=font_size)
-            ax.set_xlabel("PC1", fontsize=font_size)
-            ax.set_ylabel("PC2", fontsize=font_size)
-            leg = ax.legend(["Real", "Synthetic"])
-            leg.prop.set_size(font_size)
-            plots.append(f)
+
         elif analysis == "tsne":
-            prep_data_final = np.concatenate((prep_data, prep_data_hat), axis=0)
+            # Remove any NaN values before t-SNE
+            valid_mask = ~np.isnan(prep_data).any(axis=1) & ~np.isnan(
+                prep_data_hat
+            ).any(axis=1)
+            if not np.any(valid_mask):
+                continue
+
+            prep_data_final = np.concatenate(
+                (prep_data[valid_mask], prep_data_hat[valid_mask]), axis=0
+            )
+
+            # Adjust perplexity based on data size
+            n_samples = prep_data_final.shape[0]
+            perplexity = min(5, n_samples - 1) if n_samples > 1 else 1
+
             tsne = TSNE(
                 n_components=2,
                 learning_rate="auto",
                 init="pca",
                 verbose=0,
-                perplexity=5,
+                perplexity=perplexity,
                 n_iter=300,
                 early_exaggeration=5.0,
             )
             tsne_results = tsne.fit_transform(prep_data_final)
+
             f, ax = plt.subplots(1)
+            n_valid = np.sum(valid_mask)
             ax.scatter(
-                tsne_results[:analysis_sample_no, 0],
-                tsne_results[:analysis_sample_no, 1],
-                c=colors[:analysis_sample_no],
+                tsne_results[:n_valid, 0],
+                tsne_results[:n_valid, 1],
+                c="red",
                 alpha=0.2,
             )
             ax.scatter(
-                tsne_results[analysis_sample_no:, 0],
-                tsne_results[analysis_sample_no:, 1],
-                c=colors[analysis_sample_no:],
+                tsne_results[n_valid:, 0],
+                tsne_results[n_valid:, 1],
+                c="blue",
                 alpha=0.2,
             )
-            font_size = 18
-            ax.tick_params(axis="both", which="major", labelsize=font_size)
-            ax.set_xlabel("t-SNE dim 1", fontsize=font_size)
-            ax.set_ylabel("t-SNE dim 2", fontsize=font_size)
-            leg = ax.legend(["Real", "Synthetic"])
-            leg.prop.set_size(font_size)
-            plots.append(f)
+
         elif analysis == "kernel":
+            # For kernel density estimation, we'll use only the valid values
+            valid_ori = prep_data[~np.isnan(prep_data)]
+            valid_gen = prep_data_hat[~np.isnan(prep_data_hat)]
+
+            if len(valid_ori) == 0 or len(valid_gen) == 0:
+                continue
+
             f, ax = plt.subplots(1)
-            sns.kdeplot(data=prep_data.flatten(), fill=True, color="red", ax=ax)
+            sns.kdeplot(data=valid_ori, fill=True, color="red", ax=ax)
             sns.kdeplot(
-                data=prep_data_hat.flatten(),
+                data=valid_gen,
                 fill=True,
                 color="blue",
                 ax=ax,
                 linestyle="--",
             )
-            font_size = 18
-            ax.tick_params(axis="both", which="major", labelsize=font_size)
-            ax.set_xlabel("kWh", fontsize=font_size)
-            ax.set_ylabel("Density", fontsize=font_size)
-            leg = ax.legend(["Real", "Synthetic"])
-            leg.prop.set_size(font_size)
-            plots.append(f)
+
+        # Set common plot properties
+        font_size = 18
+        ax.tick_params(axis="both", which="major", labelsize=font_size)
+        ax.set_xlabel(
+            (
+                "PC1"
+                if analysis == "pca"
+                else "t-SNE dim 1" if analysis == "tsne" else value_label
+            ),
+            fontsize=font_size,
+        )
+        ax.set_ylabel(
+            (
+                "PC2"
+                if analysis == "pca"
+                else "t-SNE dim 2" if analysis == "tsne" else "Density"
+            ),
+            fontsize=font_size,
+        )
+        leg = ax.legend(["Real", "Synthetic"])
+        leg.prop.set_size(font_size)
+        plots.append(f)
+
     return plots
 
 
 def plot_syn_and_real_comparison(
     df: pd.DataFrame, syn_df: pd.DataFrame, context_vars: dict, dimension: int = 0
 ):
+    """
+    Plot comparison between synthetic and real time series data.
+
+    Args:
+        df: DataFrame containing real time series data
+        syn_df: DataFrame containing synthetic time series data
+        context_vars: Dictionary of context variables to filter data
+        dimension: Dimension of time series to plot
+    """
     cpu_context_vars = {}
     for k, v in context_vars.items():
         if isinstance(v, torch.Tensor):
             v = v[0].cpu().item()
         cpu_context_vars[k] = v
+
     fields = list(cpu_context_vars.keys())
     condition = df[fields].eq(pd.Series(cpu_context_vars)).all(axis=1)
     filtered_df = df[condition]
-    array_data = np.array([ts[:, dimension] for ts in filtered_df["timeseries"]])
-    if array_data.size == 0:
+
+    if filtered_df.empty:
         return None, None
-    min_values = np.min(array_data, axis=0)
-    max_values = np.max(array_data, axis=0)
+
+    # Get the maximum length from both real and synthetic data
+    real_lengths = [ts.shape[0] for ts in filtered_df["timeseries"]]
+    syn_lengths = [ts.shape[0] for ts in syn_df["timeseries"]]
+    max_length = max(max(real_lengths), max(syn_lengths))
+
+    # Extract and pad data if necessary
+    array_data = []
+    for ts in filtered_df["timeseries"]:
+        if ts.shape[0] < max_length:
+            padded = np.pad(
+                ts[:, dimension],
+                (0, max_length - ts.shape[0]),
+                mode="constant",
+                constant_values=np.nan,
+            )
+        else:
+            padded = ts[:, dimension]
+        array_data.append(padded)
+    array_data = np.array(array_data)
+
+    # Calculate min/max excluding NaN values
+    min_values = np.nanmin(array_data, axis=0)
+    max_values = np.nanmax(array_data, axis=0)
+
+    # Filter synthetic data
     syn_condition = syn_df[fields].eq(pd.Series(cpu_context_vars)).all(axis=1)
     syn_filtered_df = syn_df[syn_condition]
+
     if syn_filtered_df.empty:
         return None, None
-    syn_values = np.array([ts[:, dimension] for ts in syn_filtered_df["timeseries"]])
-    timestamps = pd.date_range(start="00:00", end="23:45", freq="15min")
-    hourly_positions = np.arange(0, len(timestamps), 4)
-    hourly_labels = [timestamps[i].strftime("%H:%M") for i in hourly_positions]
+
+    # Extract and pad synthetic data
+    syn_values = []
+    for ts in syn_filtered_df["timeseries"]:
+        if ts.shape[0] < max_length:
+            padded = np.pad(
+                ts[:, dimension],
+                (0, max_length - ts.shape[0]),
+                mode="constant",
+                constant_values=np.nan,
+            )
+        else:
+            padded = ts[:, dimension]
+        syn_values.append(padded)
+    syn_values = np.array(syn_values)
+
+    # Create time step labels
+    time_steps = np.arange(1, max_length + 1)
+    # Show every 4th label to avoid overcrowding
+    label_positions = np.arange(0, max_length, 4)
+    time_labels = [f"t={i+1}" for i in label_positions]
+
+    # Create range plot
     fig_range, ax_range = plt.subplots(figsize=(15, 6))
     ax_range.fill_between(
-        range(len(timestamps)),
+        time_steps,
         min_values,
         max_values,
         color="gray",
         alpha=0.5,
         label="Range of real time series",
     )
+
+    # Plot synthetic data
     synthetic_label_used = False
-    for index in range(syn_values.shape[0]):
-        ax_range.plot(
-            range(len(timestamps)),
-            syn_values[index],
-            color="blue",
-            marker="o",
-            markersize=2,
-            linestyle="-",
-            alpha=0.6,
-            label="Synthetic time series" if not synthetic_label_used else None,
-        )
-        synthetic_label_used = True
+    for syn_ts in syn_values:
+        valid_mask = ~np.isnan(syn_ts)
+        if np.any(valid_mask):
+            ax_range.plot(
+                time_steps[valid_mask],
+                syn_ts[valid_mask],
+                color="blue",
+                marker="o",
+                markersize=2,
+                linestyle="-",
+                alpha=0.6,
+                label="Synthetic time series" if not synthetic_label_used else None,
+            )
+            synthetic_label_used = True
+
+    # Set plot properties
     font_size = 22
     ax_range.tick_params(axis="both", which="major", labelsize=font_size)
-    ax_range.set_xlabel("Time of day", fontsize=font_size)
-    ax_range.set_ylabel("kWh", fontsize=font_size)
+    ax_range.set_xlabel("Time step", fontsize=font_size)
+    ax_range.set_ylabel("Value", fontsize=font_size)
     leg_range = ax_range.legend()
     leg_range.prop.set_size(font_size)
-    ax_range.set_xticks(hourly_positions)
-    ax_range.set_xticklabels(hourly_labels, rotation=45)
+    ax_range.set_xticks(label_positions + 1)
+    ax_range.set_xticklabels(time_labels, rotation=45)
+
+    # Create closest match plot
     fig_closest, ax_closest = plt.subplots(figsize=(15, 6))
     synthetic_plotted = False
     real_plotted = False
-    for index in range(syn_values.shape[0]):
-        syn_ts = syn_values[index]
+
+    for syn_ts in syn_values:
+        valid_mask = ~np.isnan(syn_ts)
+        if not np.any(valid_mask):
+            continue
+
+        syn_valid = syn_ts[valid_mask]
         min_dtw_distance = float("inf")
         closest_real_ts = None
+
         for real_ts in array_data:
-            distance = dtw.distance(syn_ts, real_ts)
+            real_valid = real_ts[valid_mask]
+            if not np.any(~np.isnan(real_valid)):
+                continue
+            distance = dtw.distance(syn_valid, real_valid)
             if distance < min_dtw_distance:
                 min_dtw_distance = distance
                 closest_real_ts = real_ts
-        ax_closest.plot(
-            range(len(timestamps)),
-            syn_ts,
-            color="blue",
-            marker="o",
-            markersize=2,
-            linestyle="-",
-            alpha=0.6,
-            label="Synthetic time series" if not synthetic_plotted else None,
-        )
-        synthetic_plotted = True
+
         if closest_real_ts is not None:
             ax_closest.plot(
-                range(len(timestamps)),
-                closest_real_ts,
+                time_steps[valid_mask],
+                syn_valid,
+                color="blue",
+                marker="o",
+                markersize=2,
+                linestyle="-",
+                alpha=0.6,
+                label="Synthetic time series" if not synthetic_plotted else None,
+            )
+            synthetic_plotted = True
+
+            ax_closest.plot(
+                time_steps[valid_mask],
+                closest_real_ts[valid_mask],
                 color="red",
                 marker="x",
                 markersize=2,
@@ -370,13 +540,16 @@ def plot_syn_and_real_comparison(
                 label="Real time series" if not real_plotted else None,
             )
             real_plotted = True
+
+    # Set plot properties
     ax_closest.tick_params(axis="both", which="major", labelsize=font_size)
-    ax_closest.set_xlabel("Time of day", fontsize=font_size)
-    ax_closest.set_ylabel("kWh", fontsize=font_size)
+    ax_closest.set_xlabel("Time step", fontsize=font_size)
+    ax_closest.set_ylabel("Value", fontsize=font_size)
     leg_closest = ax_closest.legend()
     leg_closest.prop.set_size(font_size)
-    ax_closest.set_xticks(hourly_positions)
-    ax_closest.set_xticklabels(hourly_labels, rotation=45)
+    ax_closest.set_xticks(label_positions + 1)
+    ax_closest.set_xticklabels(time_labels, rotation=45)
+
     fig_range.tight_layout()
     fig_closest.tight_layout()
     return fig_range, fig_closest

@@ -13,8 +13,9 @@ Note: Please ensure compliance with the repository's license and credit the orig
 
 import numpy as np
 import torch
-from eval.t2vec.dilated_conv import DilatedConvEncoder
 from torch import nn
+
+from endata.eval.t2vec.dilated_conv import DilatedConvEncoder
 
 
 def generate_continuous_mask(B, T, n=5, l=0.1):

@@ -6,7 +6,7 @@ include_auxiliary_losses: True
 
 batch_size: 1024
 sampling_batch_size: 4096
-n_epochs: 5
+n_epochs: 5000
 save_cycle: 5000
 lr_gen: 3e-4
 lr_discr: 1e-4

@@ -35,10 +35,9 @@ class ContextModule(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(total_dim, 128),
             nn.ReLU(),
-            nn.Linear(128, embedding_dim),  # Final embedding dimension
+            nn.Linear(128, embedding_dim),
         ).to(device)
 
-        # Classification heads (one per context var)
         self.classification_heads = nn.ModuleDict()
         for var_name, num_categories in context_vars.items():
             self.classification_heads[var_name] = nn.Linear(

@@ -24,6 +24,7 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 
 from endata.datasets.utils import prepare_dataloader
+from endata.generator.base_generator import BaseGenerator
 from endata.generator.context import ContextModule
 
 
@@ -177,7 +178,7 @@ class Discriminator(nn.Module):
         return validity, aux_outputs
 
 
-class ACGAN(nn.Module):
+class ACGAN(nn.Module, BaseGenerator):
     def __init__(self, cfg: DictConfig):
         super(ACGAN, self).__init__()
         self.cfg = cfg

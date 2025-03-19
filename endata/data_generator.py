@@ -10,10 +10,13 @@ import torch.nn as nn
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
+from endata.datasets.timeseries_dataset import TimeSeriesDataset
 from endata.datasets.utils import convert_generated_data_to_df
+from endata.eval.evaluator import Evaluator
 from endata.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
 from endata.generator.gan.acgan import ACGAN
 from endata.generator.normalizer import Normalizer
+from endata.utils.device import get_device
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -24,6 +27,7 @@ class DataGenerator:
         model_name: str,
         context_var_codes: dict = None,
         cfg: DictConfig = None,
+        model_overrides: dict = None,
     ):
         self.model_name = model_name
         self.context_var_codes = context_var_codes
@@ -33,6 +37,13 @@ class DataGenerator:
             self.cfg = self._load_config()
 
         self.context_var_buffer = {}
+
+        if model_overrides:
+            self.cfg.model = OmegaConf.merge(
+                self.cfg.model, OmegaConf.create(model_overrides)
+            )
+
+        self.device = get_device(self.cfg.get("device", None))
 
     def _load_config(self) -> DictConfig:
         config_dir = os.path.join(ROOT_DIR, "config")
@@ -51,7 +62,7 @@ class DataGenerator:
         }
         if self.model_name in model_dict:
             model_class = model_dict[self.model_name]
-            self.model = model_class(self.cfg).to(self.cfg.device)
+            self.model = model_class(self.cfg).to(self.device)
             self.model.load(model_path)
         else:
             raise ValueError(f"Model {self.model_name} not recognized.")
@@ -117,12 +128,9 @@ class DataGenerator:
                     f"Invalid code '{code}' for context variable '{var_name}'. Possible values: {possible_values}"
                 )
         self.context_var_buffer = {
-            key: torch.tensor(value, dtype=torch.long, device=self.cfg.device)
+            key: torch.tensor(value, dtype=torch.long, device=self.device)
             for key, value in context_vars.items()
         }
-
-    def set_device(self, device: torch.device):
-        self.model.to(device)
 
     def generate(self, num_samples=100):
 
@@ -134,7 +142,7 @@ class DataGenerator:
         context_vars = {}
         for var_name, code in self.context_var_buffer.items():
             context_vars[var_name] = torch.full(
-                (num_samples,), code, dtype=torch.long, device=self.cfg.device
+                (num_samples,), code, dtype=torch.long, device=self.device
             )
 
         data = self.model.generate(context_vars)
@@ -238,3 +246,25 @@ class DataGenerator:
         local_filename = checkpoint_name
         local_path = os.path.join(local_cache_dir, local_filename)
         return self.download_from_s3(bucket, s3_key, local_path)
+
+    def evaluate(self, dataset: TimeSeriesDataset, eval_config: dict = None):
+        """
+        Evaluate the model's performance on a dataset.
+
+        Args:
+            dataset: The dataset to evaluate on
+            user_id: Optional user ID to evaluate on specific user
+            eval_config: Optional configuration overrides for evaluation
+        """
+        if not hasattr(self, "model"):
+            raise ValueError("Model not loaded. Call load_model() first.")
+
+        if eval_config:
+            self.cfg.evaluator = OmegaConf.merge(
+                self.cfg.evaluator, OmegaConf.create(eval_config)
+            )
+
+        if not self.evaluator:
+            self.evaluator = Evaluator(self.cfg, dataset)
+
+        self.evaluator.evaluate_model(model=self.model)
