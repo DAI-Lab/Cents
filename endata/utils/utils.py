@@ -7,18 +7,22 @@ from omegaconf import OmegaConf
 ROOT_DIR = Path(__file__).parent.parent
 
 
+def _ckpt_name(dataset: str, model: str, dims: int, *, ext: str = "ckpt") -> str:
+    return f"{dataset}_{model}_dim{dims}.{ext}"
+
+
 def get_device(pref: str = None) -> torch.device:
     if pref in (None, "auto"):
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(pref)
 
 
-def get_default_normalizer_config():
+def get_normalizer_training_config():
     config_path = os.path.join(
         ROOT_DIR,
         "config",
-        "normalizer",
-        "default.yaml",
+        "trainer",
+        "normalizer.yaml",
     )
     return OmegaConf.load(config_path)
 

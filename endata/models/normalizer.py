@@ -49,9 +49,9 @@ class _NormalizerModule(nn.Module):
     def __init__(
         self,
         cond_module: nn.Module,
-        hidden_dim: int,
-        time_series_dims: int,
-        do_scale: bool,
+        hidden_dim: int = 512,
+        time_series_dims: int = 2,
+        do_scale: bool = True,
     ):
         super().__init__()
         self.cond_module = cond_module
@@ -69,12 +69,12 @@ class _NormalizerModule(nn.Module):
 
 
 class Normalizer(pl.LightningModule):
-    def __init__(self, dataset_cfg, normalizer_cfg, dataset):
+    def __init__(self, dataset_cfg, normalizer_training_cfg, dataset):
         super().__init__()
         self.save_hyperparameters(ignore=["dataset"])
 
         self.dataset_cfg = dataset_cfg
-        self.normalizer_cfg = normalizer_cfg
+        self.normalizer_training_cfg = normalizer_training_cfg
         self.dataset = dataset
 
         self.context_vars = list(dataset_cfg.context_vars.keys())
@@ -84,12 +84,12 @@ class Normalizer(pl.LightningModule):
 
         self.context_module = ContextModule(
             dataset_cfg.context_vars,
-            normalizer_cfg.embedding_dim,
+            256,
         )
 
         self.normalizer_model = _NormalizerModule(
             cond_module=self.context_module,
-            hidden_dim=normalizer_cfg.hidden_dim,
+            hidden_dim=512,
             time_series_dims=self.time_series_dims,
             do_scale=self.do_scale,
         )
@@ -119,11 +119,13 @@ class Normalizer(pl.LightningModule):
         return total_loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.normalizer_cfg.lr)
+        return torch.optim.Adam(self.parameters(), lr=self.normalizer_training_cfg.lr)
 
     def train_dataloader(self):
         ds = self._create_training_dataset()
-        return DataLoader(ds, batch_size=self.normalizer_cfg.batch_size, shuffle=True)
+        return DataLoader(
+            ds, batch_size=self.normalizer_training_cfg.batch_size, shuffle=True
+        )
 
     def _compute_group_stats(self):
         df = self.dataset.data.copy()

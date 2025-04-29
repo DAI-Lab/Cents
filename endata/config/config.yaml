@@ -2,7 +2,6 @@ defaults:
   - model: acgan
   - dataset: pecanstreet
   - evaluator: default
-  - normalizer: default
   - trainer: acgan
   - _self_
 

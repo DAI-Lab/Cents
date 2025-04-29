@@ -2,6 +2,7 @@ batch_size: 1024
 n_epochs: 5
 save_cycle: 5000
 base_lr: 1e-4
+strategy: ddp_find_unused_parameters_true
 
 lr_scheduler_params:
   factor: 0.5

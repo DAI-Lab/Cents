@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from endata.datasets.utils import encode_context_variables
 from endata.models.normalizer import Normalizer
-from endata.utils.utils import get_default_normalizer_config
+from endata.utils.utils import get_normalizer_training_config
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -281,10 +281,10 @@ class TimeSeriesDataset(Dataset):
             f"{self.name}_dim_{self.time_series_dims}_scale_{self.scale}_normalizer.pt",
         )
 
-        normalizer_cfg = get_default_normalizer_config()
+        normalizer_training_cfg = get_normalizer_training_config()
         self._normalizer = Normalizer(
             dataset_cfg=self.cfg,
-            normalizer_cfg=normalizer_cfg,
+            normalizer_training_cfg=normalizer_training_cfg,
             dataset=self,
         )
 
@@ -292,10 +292,11 @@ class TimeSeriesDataset(Dataset):
 
             print("[EnData] No cached normaliser found – training a new one…")
             trainer = pl.Trainer(
-                max_epochs=normalizer_cfg.n_epochs,
-                accelerator="auto",
-                devices="auto",
-                log_every_n_steps=1,
+                max_epochs=normalizer_training_cfg.n_epochs,
+                accelerator=normalizer_training_cfg.accelerator,
+                devices=normalizer_training_cfg.devices,
+                strategy=normalizer_training_cfg.strategy,
+                log_every_n_steps=normalizer_training_cfg.log_every_n_steps,
                 callbacks=[
                     ModelCheckpoint(
                         dirpath=os.path.dirname(cache_path),

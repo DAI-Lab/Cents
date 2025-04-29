@@ -1,6 +1,10 @@
+strategy: ddp_find_unused_parameters_true
+accelerator: auto
+devices: auto
+log_every_n_steps: 1
 hidden_dim: 512
 embedding_dim: 256
-n_epochs: 20
+n_epochs: 1000
 batch_size: 4096
 lr: 3e-4
-save_cycle: 20
+save_cycle: 1000

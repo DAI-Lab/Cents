@@ -18,7 +18,7 @@ from endata.eval.eval import Evaluator
 from endata.models.acgan import ACGAN
 from endata.models.diffusion_ts import Diffusion_TS
 from endata.models.normalizer import Normalizer
-from endata.utils.utils import get_default_normalizer_config, get_device
+from endata.utils.utils import _ckpt_name, get_device, get_normalizer_training_config
 
 PKG_ROOT = Path(__file__).resolve().parent
 CONF_DIR = PKG_ROOT / "config"
@@ -78,6 +78,21 @@ class Trainer:
                 batch_size=self.cfg.trainer.batch_size, shuffle=True, num_workers=4
             )
             self.pl_trainer.fit(self.model, train_loader, None)
+
+        dims = self.cfg.dataset.time_series_dims
+        ckpt_dir = (
+            Path.home()
+            / ".cache"
+            / "endata"
+            / "checkpoints"
+            / self.dataset.name
+            / self.model_key
+        )
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_path = ckpt_dir / _ckpt_name(self.dataset.name, self.model_key, dims)
+        self.pl_trainer.save_checkpoint(ckpt_path)
+        print(f"[EnData] Saved final checkpoint → {ckpt_path}")
+
         return self
 
     def get_data_generator(self) -> DataGenerator:
@@ -120,10 +135,10 @@ class Trainer:
     def _instantiate_model(self):
         ModelCls = self._MODEL_REGISTRY[self.model_key]
         if self.model_key == "normalizer":
-            nm_cfg = get_default_normalizer_config()
+            nm_cfg = get_normalizer_training_config()
             mdl = ModelCls(
                 dataset_cfg=self.cfg.dataset,
-                normalizer_cfg=nm_cfg,
+                normalizer_training_cfg=nm_cfg,
                 dataset=self.dataset,
             )
         else:
@@ -167,9 +182,11 @@ class Trainer:
         else:
             logger = CSVLogger(save_dir=self.cfg.run_dir, name="logs")
 
+        print(f"Strategy: {tc.strategy}")
         return pl.Trainer(
             max_epochs=tc.max_epochs,
             accelerator=tc.accelerator,
+            strategy=tc.strategy,
             devices=tc.devices,
             precision=tc.precision,
             log_every_n_steps=tc.get("log_every_n_steps", 1),

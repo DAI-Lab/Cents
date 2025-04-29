@@ -47,17 +47,14 @@ class PecanStreetDataset(TimeSeriesDataset):
             time_series_column_names.append("solar")
 
         context_vars = list(self.cfg.context_vars.keys())
-        normalization_group_keys = []
 
         super().__init__(
             data=self.data,
-            entity_column_name="dataid",
             time_series_column_names=time_series_column_names,
             context_var_column_names=context_vars,
             seq_len=self.cfg.seq_len,
             normalize=self.cfg.normalize,
             scale=self.cfg.scale,
-            normalization_group_keys=normalization_group_keys,
         )
 
     def _load_data(self) -> pd.DataFrame:

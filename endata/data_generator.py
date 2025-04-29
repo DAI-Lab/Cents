@@ -1,8 +1,4 @@
-# endata/data_generator.py
-from __future__ import annotations
-
 import json
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -11,15 +7,14 @@ import botocore
 import pytorch_lightning as pl
 import torch
 from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 
 from endata.datasets.timeseries_dataset import TimeSeriesDataset
 from endata.datasets.utils import convert_generated_data_to_df
-from endata.eval.eval import Evaluator
 from endata.models.acgan import ACGAN
 from endata.models.diffusion_ts import Diffusion_TS
 from endata.models.normalizer import Normalizer
-from endata.utils.utils import get_default_normalizer_config, get_device
+from endata.utils.utils import _ckpt_name, get_device, get_normalizer_training_config
 
 PKG_ROOT = Path(__file__).resolve().parent
 CONF_DIR = PKG_ROOT / "config"
@@ -62,6 +57,13 @@ class DataGenerator:
         self.normalizer = normalizer
         self._ctx_buff = {}
 
+    def _default_cfg(self) -> DictConfig:
+        with initialize_config_dir(str(CONF_DIR), version_base=None):
+            return compose(
+                config_name="config",
+                overrides=[f"model={self.model_name}"],
+            )
+
     def set_dataset_spec(self, dataset_cfg: DictConfig, ctx_codes: dict[str, dict]):
         """Tell the generator which dataset it belongs to (important for decoding)."""
         self.cfg.dataset = dataset_cfg
@@ -92,9 +94,8 @@ class DataGenerator:
 
     def load_from_checkpoint(
         self,
-        ckpt: str | Path | Dict[str, Any] | pl.LightningModule,
-        *,
-        normalizer_ckpt: str | Path | None = None,
+        ckpt: Any,
+        normalizer_ckpt: Any = None,
     ):
         """
         `ckpt` may be …
@@ -123,7 +124,7 @@ class DataGenerator:
         if normalizer_ckpt:
             self.normalizer = Normalizer(
                 dataset_cfg=self.cfg.dataset,
-                normalizer_cfg=get_default_normalizer_config(),
+                normalizer_training_cfg=get_normalizer_training_config(),
                 dataset=None,
             )
             self.normalizer.load_state_dict(
@@ -132,34 +133,20 @@ class DataGenerator:
             )
             self.normalizer.eval()
 
-    def download_pretrained(
-        self,
-        dataset_name: str,
-        bucket: str = "dai-watts",
-    ):
-        """
-        Pull a checkpoint we host on S3.
-        Path convention must match what `endata.Trainer` writes:
+    def download_pretrained(self, dataset_name: str, bucket: str = "dai-watts"):
+        dims = self.cfg.dataset.time_series_dims
+        fname = _ckpt_name(dataset_name, self.model_name, dims)
 
-        s3://{bucket}/{dataset}/{model}/last.ckpt
-        s3://{bucket}/{dataset}/normalizer/last.ckpt
-        """
-        remote = f"{dataset_name}/{self.model_name}/last.ckpt"
-        local = CACHE_DIR / dataset_name / self.model_name / "last.ckpt"
+        remote = f"{dataset_name}/{self.model_name}/{fname}"
+        local = CACHE_DIR / dataset_name / self.model_name / fname
         ckpt = self._download_s3(bucket, remote, local)
 
-        n_remote = f"{dataset_name}/normalizer/last.ckpt"
-        n_local = CACHE_DIR / dataset_name / "normalizer" / "last.ckpt"
+        n_fname = _ckpt_name(dataset_name, "normalizer", dims)
+        n_remote = f"{dataset_name}/normalizer/{n_fname}"
+        n_local = CACHE_DIR / dataset_name / "normalizer" / n_fname
         n_ckpt = self._download_s3(bucket, n_remote, n_local, must_exist=False)
 
         self.load_from_checkpoint(ckpt, normalizer_ckpt=n_ckpt)
-
-    def _default_cfg(self) -> DictConfig:
-        with initialize_config_dir(str(CONF_DIR), version_base=None):
-            return compose(
-                config_name="config",
-                overrides=[f"model={self.model_name}", "trainer=null"],
-            )
 
     @staticmethod
     def _resolve_ckpt(src: Union[str, Path, Dict[str, Any]]):
@@ -195,3 +182,48 @@ class DataGenerator:
             else:
                 return None
         return tgt
+
+    def load_model(
+        self,
+        dataset_name: str,
+        ckpt_path: Optional[Union[str, Path]] = None,
+        local_root: Optional[Union[str, Path]] = None,
+        cfg_override: Optional[DictConfig] = None,
+        bucket: str = "dai-watts",
+    ):
+        root = Path(local_root) if local_root else CACHE_DIR
+        dims = self.cfg.dataset.time_series_dims
+        fname = _ckpt_name(dataset_name, self.model_name, dims)
+
+        if ckpt_path is None:
+            ckpt_path = root / dataset_name / self.model_name / fname
+            if not ckpt_path.exists():
+                self.download_pretrained(dataset_name, bucket=bucket)
+
+        if not Path(ckpt_path).exists():
+            raise RuntimeError(f"No checkpoint found at {ckpt_path}")
+
+        n_fname = _ckpt_name(dataset_name, "normalizer", dims)
+        n_ckpt = root / dataset_name / "normalizer" / n_fname
+        n_ckpt = n_ckpt if n_ckpt.exists() else None
+
+        self.load_from_checkpoint(ckpt_path, normalizer_ckpt=n_ckpt)
+
+        if cfg_override is None:
+            dataset_cfg_file = PKG_ROOT / "config" / "dataset" / f"{dataset_name}.yaml"
+            if dataset_cfg_file.exists():
+                with initialize_config_dir(
+                    str(dataset_cfg_file.parent), version_base=None
+                ):
+                    cfg_override = compose(config_name=dataset_name)
+        if cfg_override is not None:
+            self.set_dataset_spec(cfg_override, self._read_ctx_codes(dataset_name))
+        return self
+
+    @staticmethod
+    def _read_ctx_codes(dataset_name: str) -> Dict[str, Dict[int, str]]:
+        path = PKG_ROOT / "data" / dataset_name / "context_var_codes.json"
+        if path.exists():
+            raw = json.loads(path.read_text())
+            return {k: {int(i): v for i, v in d.items()} for k, d in raw.items()}
+        return {}

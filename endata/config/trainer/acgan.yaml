@@ -1,8 +1,8 @@
-# trainer/acgan.yaml
 max_epochs: 5000
 batch_size: 1024
 sampling_batch_size: 4096
 gradient_accumulate_every: 1
+strategy: ddp_find_unused_parameters_true
 
 optimizer:
   generator:
@@ -22,11 +22,6 @@ lr_scheduler_params:
   min_lr: 1e-5
   threshold: 0.1
   threshold_mode: rel
-
-checkpoint:
-  monitor: val_loss
-  mode: min
-  save_top_k: 3
 
 precision: "16-mixed"
 accelerator: auto
