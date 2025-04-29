@@ -75,7 +75,7 @@ class PecanStreetDataset(TimeSeriesDataset):
             metadata_csv_path, usecols=self.cfg.metadata_columns
         )
 
-        if "solar" in self.metadata.columns:  # naming conflicts
+        if "solar" in self.metadata.columns:
             self.metadata.rename(columns={"solar": "has_solar"}, inplace=True)
 
         if self.geography:
@@ -227,39 +227,31 @@ class PecanStreetDataset(TimeSeriesDataset):
             group_vars = [v for v in self.context_vars if v != pv_col]
 
         df = self.data.copy()
-        # We'll group by group_vars. Then within each group, we see if we have pv=0 and pv=1.
         grouped = df.groupby(group_vars)
 
         # We accumulate the difference (pv=1 - pv=0) for each group that has both states
         # Then average over all those differences
         shift_accumulator = []
         for group_vals, subdf in grouped:
-            # subdf might contain rows with different pv states
+
             unique_pv_states = subdf[pv_col].unique()
             if len(set(unique_pv_states).intersection({0, 1})) == 2:
-                # both pv=0 and pv=1 present
-                # Let's compute the mean timeseries for pv=0 and for pv=1
-                # We assume the "timeseries" column is shape (seq_len, n_dim)
-                # If it's single-dim, n_dim=1. If multiple dims, adjust logic or pick dimension 0
                 sub_pv0 = subdf[subdf[pv_col] == 0]["timeseries"]
                 sub_pv1 = subdf[subdf[pv_col] == 1]["timeseries"]
 
-                # Compute an average timeseries for each
                 # shape: (seq_len, n_dim)
                 mean_ts_pv0 = np.mean(np.stack(sub_pv0.to_numpy()), axis=0)
                 mean_ts_pv1 = np.mean(np.stack(sub_pv1.to_numpy()), axis=0)
 
-                # difference: shape (seq_len, n_dim)
                 diff_ts = mean_ts_pv1 - mean_ts_pv0
-                # If you only have 1 dimension for "grid", diff_ts is shape (seq_len,1).
-                # let's flatten or pick dimension 0 if needed
+
                 if diff_ts.ndim == 2 and diff_ts.shape[1] == 1:
                     diff_ts = diff_ts[:, 0]
 
                 shift_accumulator.append(diff_ts)
 
         if len(shift_accumulator) == 0:
-            print("Warning: Found no groups that contain both pv=0 and pv=1!")
+            print("[EnData] Warning: Found no groups that contain both pv=0 and pv=1!")
             return np.zeros((self.seq_len,))
 
         # shape after stacking: (num_groups, seq_len)
@@ -293,26 +285,20 @@ class PecanStreetDataset(TimeSeriesDataset):
 
         test_contexts = []
         for group_vals, subdf in grouped:
-            # Check which PV states appear
+
             unique_pv_states = subdf[pv_col].unique()
             if len(unique_pv_states) == 1:
-                # This group has only pv=0 or only pv=1
-                # We can test generating the "missing" state
+
                 the_pv_value_present = int(unique_pv_states[0])
                 missing_pv = 1 - the_pv_value_present
 
-                # Build a context dict. group_vals is something like (month='Jan', weekday='Mon', etc.)
-                # We need to map them back to var_name => category index (which the model uses).
                 ctx_dict = {}
                 if len(group_vars) == 1:
-                    ctx_dict[group_vars[0]] = (
-                        group_vals  # if group_vals is just one val
-                    )
+                    ctx_dict[group_vars[0]] = group_vals
                 else:
                     for var_name, val in zip(group_vars, group_vals):
                         ctx_dict[var_name] = val
 
-                # Add the known existing pv state
                 ctx_dict[pv_col] = the_pv_value_present
 
                 test_contexts.append(

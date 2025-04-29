@@ -1,11 +1,9 @@
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ContextModule(nn.Module):
-    def __init__(self, context_vars, embedding_dim, device):
+    def __init__(self, context_vars, embedding_dim):
         """
         A context module that:
           - Learns separate embeddings for each context variable.
@@ -17,18 +15,16 @@ class ContextModule(nn.Module):
         Args:
             context_vars (dict): {var_name: num_categories} for each context variable.
             embedding_dim (int): Dimension of the shared latent embedding for each context variable.
-            device: Torch device (CPU or GPU).
         """
         super().__init__()
         self.embedding_dim = embedding_dim
-        self.device = device
 
         self.context_embeddings = nn.ModuleDict(
             {
                 name: nn.Embedding(num_categories, embedding_dim)
                 for name, num_categories in context_vars.items()
             }
-        ).to(device)
+        )
 
         total_dim = len(context_vars) * embedding_dim
 
@@ -36,13 +32,13 @@ class ContextModule(nn.Module):
             nn.Linear(total_dim, 128),
             nn.ReLU(),
             nn.Linear(128, embedding_dim),
-        ).to(device)
+        )
 
         self.classification_heads = nn.ModuleDict()
         for var_name, num_categories in context_vars.items():
             self.classification_heads[var_name] = nn.Linear(
                 embedding_dim, num_categories
-            ).to(device)
+            )
 
     def forward(self, context_vars):
         """
@@ -59,7 +55,7 @@ class ContextModule(nn.Module):
         """
         embeddings = []
         for name, embedding_layer in self.context_embeddings.items():
-            cat_tensor = context_vars[name].to(self.device)
+            cat_tensor = context_vars[name]
             embeddings.append(embedding_layer(cat_tensor))
 
         context_matrix = torch.cat(embeddings, dim=1)

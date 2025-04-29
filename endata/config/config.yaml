@@ -3,9 +3,10 @@ defaults:
   - dataset: pecanstreet
   - evaluator: default
   - normalizer: default
+  - trainer: acgan
   - _self_
 
-device: null
+device: auto
 
 job_name: ${model.name}_${dataset.name}_${dataset.user_group}
 run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}
@@ -28,7 +29,17 @@ hydra:
     dir: ${run_dir}
 
 
-wandb_enabled: False
 wandb:
+  enabled: false
   project: null
   entity: null
+  name: ${job_name}
+
+python_logging:
+  level: INFO
+
+checkpoint:
+  dir: checkpoints/${job_name}
+  every_n_train_steps: 25000
+  save_last: true
+  extra_intervals: []

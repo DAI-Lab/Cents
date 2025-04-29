@@ -1,33 +1,31 @@
 import datetime
+import glob
 import json
 import logging
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-from mpl_toolkits.mplot3d import Axes3D
+import wandb
 from omegaconf import DictConfig, OmegaConf
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 
-from endata.eval.discriminative_metric import discriminative_score_metrics
-from endata.eval.metrics import (
+from endata.eval.discriminative_score import discriminative_score_metrics
+from endata.eval.eval_metrics import (
     Context_FID,
     calculate_mmd,
     calculate_period_bound_mse,
     dynamic_time_warping_dist,
-    plot_syn_and_real_comparison,
-    visualization,
 )
-from endata.eval.predictive_metric import predictive_score_metrics
-from endata.generator.diffusion_ts.gaussian_diffusion import Diffusion_TS
-from endata.generator.gan.acgan import ACGAN
-from endata.utils.device import get_device
+from endata.eval.eval_utils import plot_syn_and_real_comparison, visualization
+from endata.eval.predictive_score import predictive_score_metrics
+from endata.models.acgan import ACGAN
+from endata.models.diffusion_ts import Diffusion_TS
+from endata.utils.utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +302,7 @@ class Evaluator:
                     dtype=torch.long,
                     device=self.device,
                 )
-                for var_name in model.context_var_n_categories.keys()
+                for var_name in dataset.context_vars
             }
             generated_samples = model.generate(context_vars_sample).cpu().numpy()
             if generated_samples.ndim == 2:
@@ -314,11 +312,11 @@ class Evaluator:
             generated_samples_df = pd.DataFrame(
                 {
                     var_name: [sample_row[var_name]] * num_samples
-                    for var_name in model.context_var_n_categories.keys()
+                    for var_name in dataset.context_vars
                 }
             )
             generated_samples_df["timeseries"] = list(generated_samples)
-            # generated_samples_df["dataid"] = sample_row["dataid"]
+
             normalization_keys = (
                 dataset.normalization_group_keys
                 if hasattr(dataset, "normalization_group_keys")
@@ -450,7 +448,7 @@ class Evaluator:
             name: torch.tensor(
                 real_data_subset[name].values, dtype=torch.long, device=self.device
             )
-            for name in model.context_var_n_categories.keys()
+            for name in dataset.context_vars
         }
 
         generated_ts = model.generate(context_vars).cpu().numpy()

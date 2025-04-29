@@ -1,0 +1,33 @@
+# trainer/acgan.yaml
+max_epochs: 5000
+batch_size: 1024
+sampling_batch_size: 4096
+gradient_accumulate_every: 1
+
+optimizer:
+  generator:
+    _target_: torch.optim.Adam
+    lr: 3e-4
+    betas: [0.5, 0.999]
+
+  discriminator:
+    _target_: torch.optim.Adam
+    lr: 1e-4
+    betas: [0.5, 0.999]
+
+lr_scheduler_params:
+  _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+  factor: 0.5
+  patience: 200
+  min_lr: 1e-5
+  threshold: 0.1
+  threshold_mode: rel
+
+checkpoint:
+  monitor: val_loss
+  mode: min
+  save_top_k: 3
+
+precision: "16-mixed"
+accelerator: auto
+devices: auto

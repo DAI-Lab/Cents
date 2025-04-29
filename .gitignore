@@ -120,3 +120,4 @@ endata/data/custom
 tutorials/outputs
 checkpoints
 bfg.jar
+lightning_logs/*

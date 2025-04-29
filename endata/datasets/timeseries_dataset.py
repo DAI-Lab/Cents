@@ -1,22 +1,26 @@
 import json
 import os
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+from pathlib import Path
 from typing import Any, Dict, List
 
 import numpy as np
 import pandas as pd
+import pytorch_lightning as pl
 import torch
 from hydra import compose, initialize_config_dir
+from pytorch_lightning.callbacks import ModelCheckpoint
 from sklearn.cluster import KMeans
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
 
 from endata.datasets.utils import encode_context_variables
-from endata.generator.normalizer import Normalizer
+from endata.models.normalizer import Normalizer
+from endata.utils.utils import get_default_normalizer_config
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-class TimeSeriesDataset(Dataset, ABC):
+class TimeSeriesDataset(Dataset):
     def __init__(
         self,
         data: pd.DataFrame,
@@ -68,7 +72,7 @@ class TimeSeriesDataset(Dataset, ABC):
 
         if self.normalize:
             self._init_normalizer()
-            self.data = self._normalizer._transform()
+            self.data = self._normalizer.transform(self.data)
 
         self.data = self.merge_timeseries_columns(self.data)
         self.data = self.data.reset_index()
@@ -91,6 +95,11 @@ class TimeSeriesDataset(Dataset, ABC):
             for var in self.context_vars
         }
         return timeseries, context_vars_dict
+
+    def get_train_dataloader(self, batch_size, shuffle=True, num_workers=4):
+        return DataLoader(
+            self, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers
+        )
 
     def split_timeseries(self, df: pd.DataFrame) -> pd.DataFrame:
         if "timeseries" not in df.columns:
@@ -146,7 +155,7 @@ class TimeSeriesDataset(Dataset, ABC):
         if not self.normalize:
             return data
         df = self.split_timeseries(data)
-        df = self._normalizer._inverse_transform(df)
+        df = self._normalizer.inverse_transform(df)
         if merged:
             df = self.merge_timeseries_columns(df)
         return df
@@ -190,9 +199,7 @@ class TimeSeriesDataset(Dataset, ABC):
         context_vars = {}
         context_var_dict = self._get_context_var_dict(self.data)
         for var_name, num_categories in context_var_dict.items():
-            context_vars[var_name] = torch.randint(
-                0, num_categories, dtype=torch.long, device=self.device
-            )
+            context_vars[var_name] = torch.randint(0, num_categories, dtype=torch.long)
         return context_vars
 
     def get_context_var_combination_rarities(self, coverage_threshold=0.95):
@@ -264,20 +271,46 @@ class TimeSeriesDataset(Dataset, ABC):
         )
         return self.data
 
-    @property
-    def device(self):
-        return (
-            torch.device(self.cfg.device)
-            if "device" in self.cfg
-            else torch.device("cpu")
-        )
-
     def _init_normalizer(self):
-        normalizer_ckpt_path = os.path.join(
-            ROOT_DIR,
-            f"checkpoints/{self.name}/normalizer",
+        cache_path = os.path.join(
+            Path.home(),
+            ".cache",
+            "endata",
+            "checkpoints",
+            self.name,
             f"{self.name}_dim_{self.time_series_dims}_scale_{self.scale}_normalizer.pt",
         )
+
+        normalizer_cfg = get_default_normalizer_config()
         self._normalizer = Normalizer(
-            dataset=self, dataset_cfg=self.cfg, normalizer_path=normalizer_ckpt_path
+            dataset_cfg=self.cfg,
+            normalizer_cfg=normalizer_cfg,
+            dataset=self,
         )
+
+        if not os.path.exists(cache_path):
+
+            print("[EnData] No cached normaliser found – training a new one…")
+            trainer = pl.Trainer(
+                max_epochs=normalizer_cfg.n_epochs,
+                accelerator="auto",
+                devices="auto",
+                log_every_n_steps=1,
+                callbacks=[
+                    ModelCheckpoint(
+                        dirpath=os.path.dirname(cache_path),
+                        filename="last",
+                        save_last=True,
+                        save_top_k=0,
+                    )
+                ],
+            )
+            trainer.fit(self._normalizer)
+            torch.save(self._normalizer.state_dict(), cache_path)
+            print(f"[EnData] Saved trained normaliser → {cache_path}")
+        else:
+            state = torch.load(cache_path, map_location="cpu")
+            state_dict = state["state_dict"] if "state_dict" in state else state
+            self._normalizer.load_state_dict(state_dict, strict=True)
+            self._normalizer.eval()
+            print(f"[EnData] Loaded cached normaliser from {cache_path}")
