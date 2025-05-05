@@ -67,9 +67,9 @@ Ready to contribute? Here's how to set up `EnData` for local development.
 3. Install your local copy into a virtualenv. Assuming you have virtualenvwrapper installed,
    this is how you set up your fork for local development::
 
-    $ mkvirtualenv EnData
-    $ cd EnData/
-    $ make install-develop
+    $ virtualenv venv
+    $ source venv/bin/activate
+    $ pip install -e .
 
 4. Create a branch for local development::
 
@@ -86,21 +86,10 @@ Ready to contribute? Here's how to set up `EnData` for local development.
    unit tests, and that none of the old tests fail as a consequence of your changes.
    For this, make sure to run the tests suite and check the code coverage::
 
-    $ make lint       # Check code styling
-    $ make test       # Run the tests
-    $ make coverage   # Get the coverage report
+    $ pytest
 
-6. When you're done making changes, check that your changes pass all the styling checks and
-   tests, including other Python supported versions, using::
-
-    $ make test-all
-
-7. Make also sure to include the necessary documentation in the code as docstrings following
+7. Make sure to include the necessary documentation in the code as docstrings following
    the `Google docstrings style`_.
-   If you want to view how your documentation will look like when it is published, you can
-   generate and view the docs with this command::
-
-    $ make view-docs
 
 8. Commit your changes and push your branch to GitHub::
 
@@ -153,8 +142,8 @@ All the Unit Tests should comply with the following requirements:
    work properly as far as it is being passed the right values.
 
 6. Any third party tool that may have any kind of random behavior, such as some Machine
-   Learning models, databases or Web APIs, will be mocked using the ``mock`` library, and
-   the only thing that will be tested is that our code passes the right values to them.
+   Learning models, databases or Web APIs, should be mocked using the ``mock`` library, and
+   the only thing that will be tested is that our code passes the right values.
 
 7. Unit tests should not use anything from outside the test and the code being tested. This
    includes not reading or writing to any file system or database, which will be properly
@@ -171,66 +160,7 @@ To run a subset of tests::
 Release Workflow
 ----------------
 
-The process of releasing a new version involves several steps combining both ``git`` and
-``bumpversion`` which, briefly:
-
-1. Merge what is in ``master`` branch into ``stable`` branch.
-2. Update the version in ``setup.cfg``, ``endata/__init__.py`` and
-   ``HISTORY.md`` files.
-3. Create a new git tag pointing at the corresponding commit in ``stable`` branch.
-4. Merge the new commit from ``stable`` into ``master``.
-5. Update the version in ``setup.cfg`` and ``endata/__init__.py``
-   to open the next development iteration.
-
-.. note:: Before starting the process, make sure that ``HISTORY.md`` has been updated with a new
-          entry that explains the changes that will be included in the new version.
-          Normally this is just a list of the Pull Requests that have been merged to master
-          since the last release.
-
-Once this is done, run of the following commands:
-
-1. If you are releasing a patch version::
-
-    make release
-
-2. If you are releasing a minor version::
-
-    make release-minor
-
-3. If you are releasing a major version::
-
-    make release-major
-
-Release Candidates
-~~~~~~~~~~~~~~~~~~
-
-Sometimes it is necessary or convenient to upload a release candidate to PyPi as a pre-release,
-in order to make some of the new features available for testing on other projects before they
-are included in an actual full-blown release.
-
-In order to perform such an action, you can execute::
-
-    make release-candidate
-
-This will perform the following actions:
-
-1. Build and upload the current version to PyPi as a pre-release, with the format ``X.Y.Z.devN``
-
-2. Bump the current version to the next release candidate, ``X.Y.Z.dev(N+1)``
-
-After this is done, the new pre-release can be installed by including the ``dev`` section in the
-dependency specification, either in ``setup.py``::
-
-    install_requires = [
-        ...
-        'EnData>=X.Y.Z.dev',
-        ...
-    ]
-
-or in command line::
-
-    pip install 'EnData>=X.Y.Z.dev'
-
+tbd
 
 .. _GitHub issues page: https://github.com/michael-fuest/EnData/issues
 .. _Build Status page: https://github.com/michael-fuest/EnData/actions

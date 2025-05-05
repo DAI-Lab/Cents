@@ -12,3 +12,5 @@ save_cycle: 1000
 checkpoint:
   save_last: true
   save_top_k: 0
+  every_n_train_steps: null
+  every_n_epochs: null

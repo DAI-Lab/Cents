@@ -11,6 +11,8 @@ base_lr: 1e-4
 checkpoint:
   save_last: true
   save_top_k: 0
+  every_n_train_steps: null
+  every_n_epochs: null
 
 lr_scheduler_params:
   factor: 0.5

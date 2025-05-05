@@ -2,7 +2,7 @@ import json
 import os
 from abc import abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,6 +21,26 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class TimeSeriesDataset(Dataset):
+    """
+    A PyTorch Dataset for time series data with optional context variables,
+    normalization, and rarity-based filtering.
+
+    This class handles:
+    - Preprocessing raw DataFrame input.
+    - Encoding context variables.
+    - Normalizing time series via a trained Normalizer.
+    - Merging split time series columns into a single array per sample.
+    - Computing rarity flags based on frequency and clustering.
+
+    Args:
+        data (pd.DataFrame): Raw input dataframe containing time series and context columns.
+        time_series_column_names (Union[str, List[str]]): Column name(s) for time series data.
+        seq_len (int): Expected sequence length for each time series.
+        context_var_column_names (Optional[Union[str, List[str]]]): Column name(s) for context variables.
+        normalize (bool): If True, apply normalizer to data on init.
+        scale (bool): If True, scale data in Normalizer.
+    """
+
     def __init__(
         self,
         data: pd.DataFrame,
@@ -30,6 +50,7 @@ class TimeSeriesDataset(Dataset):
         normalize: bool = True,
         scale: bool = True,
     ):
+        # Initialize basic attributes
         self.time_series_column_names = (
             time_series_column_names
             if isinstance(time_series_column_names, list)
@@ -39,6 +60,7 @@ class TimeSeriesDataset(Dataset):
         self.context_vars = context_var_column_names or []
         self.seq_len = seq_len
 
+        # Load dataset-level config if not already set
         if not hasattr(self, "cfg"):
             with initialize_config_dir(
                 config_dir=os.path.join(ROOT_DIR, "config", "dataset"),
@@ -58,14 +80,14 @@ class TimeSeriesDataset(Dataset):
         self.numeric_context_bins = self.cfg.numeric_context_bins
         if not hasattr(self, "threshold"):
             self.threshold = (-self.cfg.threshold, self.cfg.threshold)
-
         if not hasattr(self, "name"):
             self.name = "custom"
 
         self.normalize = normalize
         self.scale = scale
-        self.data = self._preprocess_data(data)
 
+        # Preprocess and optionally encode context
+        self.data = self._preprocess_data(data)
         if self.context_vars:
             self.data, self.context_var_codes = self._encode_context_vars(self.data)
         self._save_context_var_codes()
@@ -82,12 +104,39 @@ class TimeSeriesDataset(Dataset):
 
     @abstractmethod
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Preprocess raw input DataFrame. Must be implemented
+        by subclasses to reshape and validate time series and context columns.
+
+        Args:
+            data (pd.DataFrame): Raw input data.
+
+        Returns:
+            pd.DataFrame: Cleaned and formatted DataFrame.
+        """
         pass
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """
+        Returns the number of samples after preprocessing and filtering.
+
+        Returns:
+            int: Dataset length.
+        """
         return len(self.data)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
+        """
+        Retrieve a single sample for training.
+
+        Args:
+            idx (int): Sample index.
+
+        Returns:
+            Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+                - timeseries: Tensor of shape (seq_len, dims).
+                - context_vars: Dict of context variable tensors.
+        """
         sample = self.data.iloc[idx]
         timeseries = torch.tensor(sample["timeseries"], dtype=torch.float32)
         context_vars_dict = {
@@ -96,182 +145,267 @@ class TimeSeriesDataset(Dataset):
         }
         return timeseries, context_vars_dict
 
-    def get_train_dataloader(self, batch_size, shuffle=True, num_workers=4):
+    def get_train_dataloader(
+        self, batch_size: int, shuffle: bool = True, num_workers: int = 4
+    ) -> DataLoader:
+        """
+        Create a PyTorch DataLoader for training.
+
+        Args:
+            batch_size (int): Batch size.
+            shuffle (bool): Whether to shuffle the data.
+            num_workers (int): Number of worker processes.
+
+        Returns:
+            DataLoader: Configured data loader.
+        """
         return DataLoader(
             self, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers
         )
 
     def split_timeseries(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Expand the merged 'timeseries' column into separate per-dimension columns.
+
+        Args:
+            df (pd.DataFrame): DataFrame containing a 'timeseries' np.ndarray column.
+
+        Returns:
+            pd.DataFrame: DataFrame with each dimension in its own column.
+
+        Raises:
+            ValueError: If input format is invalid.
+        """
         if "timeseries" not in df.columns:
             raise ValueError("Missing 'timeseries' column.")
-        first_timeseries = df["timeseries"].iloc[0]
-        if not isinstance(first_timeseries, np.ndarray):
+        first_ts = df["timeseries"].iloc[0]
+        if not isinstance(first_ts, np.ndarray):
             raise ValueError("'timeseries' entries must be numpy arrays.")
-        n_dim = first_timeseries.shape[1]
+        n_dim = first_ts.shape[1]
         if n_dim != len(self.time_series_column_names):
-            raise ValueError(
-                "Mismatch between time series column names and data shape."
-            )
+            raise ValueError("Mismatch between column names and data shape.")
         for idx, col_name in enumerate(self.time_series_column_names):
             df[col_name] = df["timeseries"].apply(lambda x: x[:, idx])
-        df = df.drop(columns=["timeseries"])
-        return df
+        return df.drop(columns=["timeseries"])
 
     def merge_timeseries_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        missing_cols = [
-            col_name
-            for col_name in self.time_series_column_names
-            if col_name not in df.columns
-        ]
+        """
+        Combine separate dimension columns back into a single 'timeseries' column.
+
+        Args:
+            df (pd.DataFrame): DataFrame with per-dimension columns.
+
+        Returns:
+            pd.DataFrame: DataFrame with merged 'timeseries' column.
+
+        Raises:
+            ValueError: If required columns are missing or malformed.
+        """
+        missing_cols = [c for c in self.time_series_column_names if c not in df.columns]
         if missing_cols:
             raise ValueError(f"Missing columns: {missing_cols}")
-        for col_name in self.time_series_column_names:
-            for idx, arr in df[col_name].items():
+        for col in self.time_series_column_names:
+            for idx, arr in df[col].items():
                 if not isinstance(arr, np.ndarray):
                     arr = np.array(arr)
-                    df.at[idx, col_name] = arr
+                    df.at[idx, col] = arr
                 if arr.ndim == 1:
-                    arr = arr.reshape(-1, 1)
-                    df.at[idx, col_name] = arr
+                    df.at[idx, col] = arr.reshape(-1, 1)
                 elif arr.ndim == 2:
-                    if arr.shape[0] != self.seq_len:
-                        raise ValueError("Incorrect sequence length in column.")
-                    if arr.shape[1] != 1:
-                        raise ValueError("Incorrect dimension in column.")
+                    if arr.shape != (self.seq_len, 1):
+                        raise ValueError("Incorrect array shape.")
                 else:
-                    raise ValueError("Array must have shape (seq_len, 1).")
-
-        def merge_row(row):
-            arrays = [row[col_name] for col_name in self.time_series_column_names]
-            return np.hstack(arrays)
-
-        df["timeseries"] = df.apply(merge_row, axis=1)
-        df = df.drop(columns=self.time_series_column_names)
-        return df
+                    raise ValueError("Array must have 2 dims.")
+        df["timeseries"] = df.apply(
+            lambda r: np.hstack([r[c] for c in self.time_series_column_names]), axis=1
+        )
+        return df.drop(columns=self.time_series_column_names)
 
     def inverse_transform(
         self, data: pd.DataFrame, merged: bool = True
     ) -> pd.DataFrame:
+        """
+        Apply inverse normalization and optionally re-merge time series.
+
+        Args:
+            data (pd.DataFrame): DataFrame with normalized values.
+            merged (bool): If True, returns merged time series column.
+
+        Returns:
+            pd.DataFrame: Denormalized DataFrame.
+        """
         if not self.normalize:
             return data
         df = self.split_timeseries(data)
         df = self._normalizer.inverse_transform(df)
-        if merged:
-            df = self.merge_timeseries_columns(df)
-        return df
+        return self.merge_timeseries_columns(df) if merged else df
 
-    def _encode_context_vars(self, data: pd.DataFrame):
-        columns_to_encode = self.context_vars
-        encoded_data, context_codes = encode_context_variables(
+    def _encode_context_vars(
+        self, data: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+        """
+        Encode and bin numeric or categorical context variables.
+
+        Args:
+            data (pd.DataFrame): Input DataFrame.
+
+        Returns:
+            Tuple of encoded DataFrame and mapping codes.
+        """
+        return encode_context_variables(
             data=data,
-            columns_to_encode=columns_to_encode,
+            columns_to_encode=self.context_vars,
             bins=self.numeric_context_bins,
         )
-        return encoded_data, context_codes
 
     def _get_context_var_dict(self, data: pd.DataFrame) -> Dict[str, int]:
-        context_var_dict = {}
-        for var_name in self.context_vars:
-            if pd.api.types.is_numeric_dtype(data[var_name]):
-                binned = pd.cut(
-                    data[var_name],
-                    bins=self.numeric_context_bins,
-                    include_lowest=True,
-                )
-                num_categories = binned.nunique()
-                context_var_dict[var_name] = num_categories
-            else:
-                num_categories = data[var_name].astype("category").nunique()
-                context_var_dict[var_name] = num_categories
-        return context_var_dict
+        """
+        Infer number of categories for each context variable.
 
-    def get_context_var_codes(self):
+        Args:
+            data (pd.DataFrame): Input DataFrame.
+
+        Returns:
+            dict: {var_name: num_categories}
+        """
+        context_dict = {}
+        for var in self.context_vars:
+            if pd.api.types.is_numeric_dtype(data[var]):
+                binned = pd.cut(
+                    data[var], bins=self.numeric_context_bins, include_lowest=True
+                )
+                context_dict[var] = binned.nunique()
+            else:
+                context_dict[var] = data[var].astype("category").nunique()
+        return context_dict
+
+    def get_context_var_codes(self) -> Dict[Any, Any]:
+        """
+        Retrieve the encoding codes for context variables.
+
+        Returns:
+            dict: Mapping codes per variable.
+        """
         return self.context_var_codes
 
-    def _save_context_var_codes(self):
+    def _save_context_var_codes(self) -> None:
+        """
+        Persist context variable codes to JSON under project data directory.
+        """
         dataset_dir = os.path.join(ROOT_DIR, "data", self.name)
         os.makedirs(dataset_dir, exist_ok=True)
-        context_codes_path = os.path.join(dataset_dir, "context_var_codes.json")
-        with open(context_codes_path, "w") as f:
+        with open(os.path.join(dataset_dir, "context_var_codes.json"), "w") as f:
             json.dump(self.context_var_codes, f, indent=4)
 
-    def sample_random_context_vars(self):
-        context_vars = {}
-        context_var_dict = self._get_context_var_dict(self.data)
-        for var_name, num_categories in context_var_dict.items():
-            context_vars[var_name] = torch.randint(0, num_categories, dtype=torch.long)
-        return context_vars
+    def sample_random_context_vars(self) -> Dict[str, torch.Tensor]:
+        """
+        Sample a random context vector for each variable.
 
-    def get_context_var_combination_rarities(self, coverage_threshold=0.95):
+        Returns:
+            dict: Random context index tensors.
+        """
+        ctx = {}
+        for var, n in self._get_context_var_dict(self.data).items():
+            ctx[var] = torch.randint(0, n, (), dtype=torch.long)
+        return ctx
+
+    def get_context_var_combination_rarities(
+        self, coverage_threshold: float = 0.95
+    ) -> pd.DataFrame:
+        """
+        Compute rarity flags based on cumulative coverage threshold.
+
+        Args:
+            coverage_threshold (float): Fraction cutoff for "rare".
+
+        Returns:
+            pd.DataFrame: Groups with count, coverage, and rarity boolean.
+        """
         grouped = self.data.groupby(self.context_vars).size().reset_index(name="count")
         grouped = grouped.sort_values(by="count", ascending=False)
-        grouped["coverage"] = grouped["count"].cumsum() / self.data.shape[0]
+        grouped["coverage"] = grouped["count"].cumsum() / len(self.data)
         grouped["rare"] = grouped["coverage"] > coverage_threshold
         return grouped
 
     def get_frequency_based_rarity(self) -> pd.DataFrame:
-        freq_counts = (
-            self.data.groupby(self.context_vars).size().reset_index(name="count")
-        )
-        threshold = freq_counts["count"].quantile(0.1)
-        freq_counts["is_frequency_rare"] = freq_counts["count"] < threshold
+        """
+        Label samples as rare if their context frequency is below 10th percentile.
+
+        Returns:
+            pd.DataFrame: DataFrame with 'is_frequency_rare' column.
+        """
+        freq = self.data.groupby(self.context_vars).size().reset_index(name="count")
+        threshold = freq["count"].quantile(0.1)
+        freq["is_frequency_rare"] = freq["count"] < threshold
         self.data = self.data.merge(
-            freq_counts[self.context_vars + ["is_frequency_rare"]],
+            freq[self.context_vars + ["is_frequency_rare"]],
             on=self.context_vars,
             how="left",
         )
         return self.data
 
     def get_clustering_based_rarity(self) -> pd.DataFrame:
-        try:
-            time_series_data = np.stack(self.data["timeseries"].values, axis=0)
-        except ValueError as e:
-            raise ValueError(f"Error stacking 'timeseries' data: {e}")
-        num_samples, seq_len, n_dim = time_series_data.shape
-        expected_n_dim = len(self.time_series_column_names)
-        if n_dim != expected_n_dim:
-            raise ValueError("Dimension mismatch in time series data.")
-        features = self.extract_features(time_series_data)
-        features_scaled = features
-        kmeans = KMeans(n_clusters=10, random_state=42)
-        cluster_labels = kmeans.fit_predict(features_scaled)
-        self.data["cluster"] = cluster_labels
-        cluster_sizes = self.data["cluster"].value_counts().to_dict()
-        size_threshold = np.percentile(list(cluster_sizes.values()), 100 * (0.9))
-        self.data["is_pattern_rare"] = (
-            self.data["cluster"].map(cluster_sizes) < size_threshold
-        )
+        """
+        Label samples as pattern-rare by KMeans over extracted features.
+
+        Returns:
+            pd.DataFrame: DataFrame with 'is_pattern_rare' column.
+        """
+        ts_data = np.stack(self.data["timeseries"].values)
+        n_samples, seq_len, nd = ts_data.shape
+        if nd != len(self.time_series_column_names):
+            raise ValueError("Dimension mismatch in time series.")
+        feats = self.extract_features(ts_data)
+        labels = KMeans(n_clusters=10, random_state=42).fit_predict(feats)
+        self.data["cluster"] = labels
+        sizes = self.data["cluster"].value_counts().to_dict()
+        cut = np.percentile(list(sizes.values()), 90)
+        self.data["is_pattern_rare"] = self.data["cluster"].map(sizes) < cut
         return self.data
 
     def extract_features(self, time_series: np.ndarray) -> np.ndarray:
-        num_samples, seq_len, n_dim = time_series.shape
+        """
+        Compute summary statistics and peak indices per sample.
+
+        Args:
+            time_series (np.ndarray): Array shape (n_samples, seq_len, dims).
+
+        Returns:
+            np.ndarray: Feature matrix (n_samples, feature_dim).
+        """
         features = []
         for ts in time_series:
-            mean = np.mean(ts, axis=0)
-            std = np.std(ts, axis=0)
-            max_val = np.max(ts, axis=0)
-            min_val = np.min(ts, axis=0)
+            mean = ts.mean(axis=0)
+            std = ts.std(axis=0)
+            max_v = ts.max(axis=0)
+            min_v = ts.min(axis=0)
             skew = pd.Series(ts[:, 0]).skew()
             kurt = pd.Series(ts[:, 0]).kurtosis()
-            peak_indices = np.argmax(ts, axis=0)
-            feature_vector = np.concatenate(
-                [mean, std, max_val, min_val, [skew], [kurt], peak_indices]
-            )
-            features.append(feature_vector)
-        features = np.array(features)
-        return features
+            peaks = np.argmax(ts, axis=0)
+            vec = np.concatenate([mean, std, max_v, min_v, [skew], [kurt], peaks])
+            features.append(vec)
+        return np.array(features)
 
     def get_combined_rarity(self) -> pd.DataFrame:
-        if "is_frequency_rare" not in self.data.columns:
-            self.data = self.get_frequency_based_rarity()
-        if "is_pattern_rare" not in self.data.columns:
-            self.data = self.get_clustering_based_rarity()
+        """
+        Compute joint rarity mask from frequency and pattern rarity.
+
+        Returns:
+            pd.DataFrame: DataFrame with 'is_rare' boolean column.
+        """
+        if "is_frequency_rare" not in self.data:
+            self.get_frequency_based_rarity()
+        if "is_pattern_rare" not in self.data:
+            self.get_clustering_based_rarity()
         self.data["is_rare"] = (
             self.data["is_frequency_rare"] & self.data["is_pattern_rare"]
         )
         return self.data
 
-    def _init_normalizer(self):
+    def _init_normalizer(self) -> None:
+        """
+        Initialize or load a cached Normalizer for this dataset.
+        """
         cache_path = os.path.join(
             Path.home(),
             ".cache",
@@ -280,23 +414,20 @@ class TimeSeriesDataset(Dataset):
             self.name,
             f"{self.name}_dim_{self.time_series_dims}_scale_{self.scale}_normalizer.pt",
         )
-
-        normalizer_training_cfg = get_normalizer_training_config()
+        ncfg = get_normalizer_training_config()
         self._normalizer = Normalizer(
             dataset_cfg=self.cfg,
-            normalizer_training_cfg=normalizer_training_cfg,
+            normalizer_training_cfg=ncfg,
             dataset=self,
         )
-
         if not os.path.exists(cache_path):
-
-            print("[EnData] No cached normalizer found – training a new one…")
+            print("[EnData] Training normalizer…")
             trainer = pl.Trainer(
-                max_epochs=normalizer_training_cfg.n_epochs,
-                accelerator=normalizer_training_cfg.accelerator,
-                devices=normalizer_training_cfg.devices,
-                strategy=normalizer_training_cfg.strategy,
-                log_every_n_steps=normalizer_training_cfg.log_every_n_steps,
+                max_epochs=ncfg.n_epochs,
+                accelerator=ncfg.accelerator,
+                devices=ncfg.devices,
+                strategy=ncfg.strategy,
+                log_every_n_steps=ncfg.log_every_n_steps,
                 callbacks=[
                     ModelCheckpoint(
                         dirpath=os.path.dirname(cache_path),
@@ -308,10 +439,10 @@ class TimeSeriesDataset(Dataset):
             )
             trainer.fit(self._normalizer)
             torch.save(self._normalizer.state_dict(), cache_path)
-            print(f"[EnData] Saved trained normalizer → {cache_path}")
+            print(f"[EnData] Saved normalizer to {cache_path}")
         else:
             state = torch.load(cache_path, map_location="cpu")
-            state_dict = state["state_dict"] if "state_dict" in state else state
-            self._normalizer.load_state_dict(state_dict, strict=True)
+            sd = state.get("state_dict", state)
+            self._normalizer.load_state_dict(sd)
             self._normalizer.eval()
-            print(f"[EnData] Loaded cached normalizer from {cache_path}")
+            print(f"[EnData] Loaded normalizer from {cache_path}")

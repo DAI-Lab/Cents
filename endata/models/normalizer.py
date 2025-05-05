@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
@@ -10,9 +12,28 @@ from endata.models.context import ContextModule
 
 
 class _StatsHead(nn.Module):
+    """
+    Head module predicting summary statistics (mean, std, and optionally min/max z-scores) from context embedding.
+    """
+
     def __init__(
-        self, embedding_dim, hidden_dim, time_series_dims, do_scale, n_layers=3
+        self,
+        embedding_dim: int,
+        hidden_dim: int,
+        time_series_dims: int,
+        do_scale: bool,
+        n_layers: int = 3,
     ):
+        """
+        Initializes the statistics head network.
+
+        Args:
+            embedding_dim: Dimensionality of the input context embedding.
+            hidden_dim: Number of units in each hidden layer.
+            time_series_dims: Number of dimensions in the original time series.
+            do_scale: Whether to predict scaling min/max parameters.
+            n_layers: Number of hidden linear layers before the output.
+        """
         super().__init__()
         self.time_series_dims = time_series_dims
         self.do_scale = do_scale
@@ -27,6 +48,18 @@ class _StatsHead(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, z: torch.Tensor):
+        """
+        Forward pass to compute predicted statistics.
+
+        Args:
+            z: Context embedding tensor of shape (batch_size, embedding_dim).
+
+        Returns:
+            pred_mu: Predicted means, shape (batch_size, time_series_dims).
+            pred_sigma: Predicted standard deviations, shape (batch_size, time_series_dims).
+            pred_z_min: Predicted min z-scores, or None if do_scale=False.
+            pred_z_max: Predicted max z-scores, or None if do_scale=False.
+        """
         out = self.net(z)
         batch_size = out.size(0)
         if self.do_scale:
@@ -46,6 +79,10 @@ class _StatsHead(nn.Module):
 
 
 class _NormalizerModule(nn.Module):
+    """
+    Wrapper module combining a context embedding and stats head for normalization.
+    """
+
     def __init__(
         self,
         cond_module: nn.Module,
@@ -53,6 +90,13 @@ class _NormalizerModule(nn.Module):
         time_series_dims: int = 2,
         do_scale: bool = True,
     ):
+        """
+        Args:
+            cond_module: ContextModule instance for embedding context variables.
+            hidden_dim: Hidden dimension size for the stats head.
+            time_series_dims: Number of time series dimensions.
+            do_scale: Whether to include scaling predictions.
+        """
         super().__init__()
         self.cond_module = cond_module
         self.embedding_dim = cond_module.embedding_dim
@@ -63,13 +107,39 @@ class _NormalizerModule(nn.Module):
             do_scale=do_scale,
         )
 
-    def forward(self, cat_vars_dict):
+    def forward(self, cat_vars_dict: dict):
+        """
+        Compute normalization parameters from categorical context.
+
+        Args:
+            cat_vars_dict: Mapping of context variable names to label tensors.
+
+        Returns:
+            Tuple of (pred_mu, pred_sigma, pred_z_min, pred_z_max).
+        """
         embedding, _ = self.cond_module(cat_vars_dict)
         return self.stats_head(embedding)
 
 
 class Normalizer(pl.LightningModule):
-    def __init__(self, dataset_cfg, normalizer_training_cfg, dataset):
+    """
+    Learns group-wise normalization parameters (mean, std, optional min/max) for time series by context.
+    """
+
+    def __init__(
+        self,
+        dataset_cfg,
+        normalizer_training_cfg,
+        dataset,
+    ):
+        """
+        Initializes the Normalizer training module.
+
+        Args:
+            dataset_cfg: OmegaConf dataset config (provides context_vars, columns).
+            normalizer_training_cfg: Config for normalizer training (lr, batch_size).
+            dataset: Instance of TimeSeriesDataset containing data DataFrame.
+        """
         super().__init__()
         self.save_hyperparameters(ignore=["dataset"])
 
@@ -94,15 +164,38 @@ class Normalizer(pl.LightningModule):
             do_scale=self.do_scale,
         )
 
+        # Will be populated in setup()
         self.group_stats = {}
 
-    def setup(self, stage=None):
+    def setup(self, stage: Optional[str] = None):
+        """
+        Lightning hook: compute group statistics before training.
+        """
         self.group_stats = self._compute_group_stats()
 
-    def forward(self, cat_vars_dict):
+    def forward(self, cat_vars_dict: dict):
+        """
+        Predict normalization parameters for a batch of categorical contexts.
+
+        Args:
+            cat_vars_dict: Mapping of context variable names to label tensors.
+
+        Returns:
+            Tuple of (pred_mu, pred_sigma, pred_z_min, pred_z_max).
+        """
         return self.normalizer_model(cat_vars_dict)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx: int):
+        """
+        Training step: regress predicted stats against true group stats.
+
+        Args:
+            batch: Tuple of (cat_vars_dict, mu, sigma, zmin, zmax).
+            batch_idx: Batch index.
+
+        Returns:
+            loss tensor.
+        """
         cat_vars_dict, mu_t, sigma_t, zmin_t, zmax_t = batch
         pred_mu, pred_sigma, pred_z_min, pred_z_max = self(cat_vars_dict)
 
@@ -119,15 +212,32 @@ class Normalizer(pl.LightningModule):
         return total_loss
 
     def configure_optimizers(self):
+        """
+        Configure optimizer for normalizer training.
+
+        Returns:
+            Adam optimizer instance.
+        """
         return torch.optim.Adam(self.parameters(), lr=self.normalizer_training_cfg.lr)
 
     def train_dataloader(self):
+        """
+        Returns a DataLoader over per-group statistics samples.
+        """
         ds = self._create_training_dataset()
         return DataLoader(
-            ds, batch_size=self.normalizer_training_cfg.batch_size, shuffle=True
+            ds,
+            batch_size=self.normalizer_training_cfg.batch_size,
+            shuffle=True,
         )
 
-    def _compute_group_stats(self):
+    def _compute_group_stats(self) -> dict:
+        """
+        Compute per-group (context combination) statistics from raw data.
+
+        Returns:
+            Mapping from context tuple to (mu_array, std_array, zmin_array, zmax_array).
+        """
         df = self.dataset.data.copy()
         grouped_stats = {}
         for group_vals, group_df in df.groupby(self.context_vars):
@@ -170,7 +280,13 @@ class Normalizer(pl.LightningModule):
             )
         return grouped_stats
 
-    def _create_training_dataset(self):
+    def _create_training_dataset(self) -> Dataset:
+        """
+        Build an internal Dataset yielding true stats for each context group.
+
+        Returns:
+            PyTorch Dataset of samples (cat_vars_dict, mu, sigma, zmin, zmax).
+        """
         data_tuples = [
             (ctx_tuple, mu_arr, sigma_arr, zmin_arr, zmax_arr)
             for ctx_tuple, (
@@ -182,15 +298,32 @@ class Normalizer(pl.LightningModule):
         ]
 
         class _TrainSet(Dataset):
+            """
+            Adapter Dataset to wrap group_stats tuples for DataLoader.
+            """
+
             def __init__(self, samples, context_vars, do_scale):
                 self.samples = samples
                 self.context_vars = context_vars
                 self.do_scale = do_scale
 
-            def __len__(self):
+            def __len__(self) -> int:
                 return len(self.samples)
 
-            def __getitem__(self, idx):
+            def __getitem__(self, idx: int):
+                """
+                Returns one training sample.
+
+                Args:
+                    idx: Index of the sample.
+
+                Returns:
+                    cat_vars_dict: Tensor dict of context labels.
+                    mu_t: True mean tensor.
+                    sigma_t: True std tensor.
+                    zmin_t: True min z-score tensor or None.
+                    zmax_t: True max z-score tensor or None.
+                """
                 ctx_tuple, mu_arr, sigma_arr, zmin_arr, zmax_arr = self.samples[idx]
                 cat_vars_dict = {
                     var_name: torch.tensor(ctx_tuple[i], dtype=torch.long)
@@ -204,7 +337,18 @@ class Normalizer(pl.LightningModule):
 
         return _TrainSet(data_tuples, self.context_vars, self.do_scale)
 
-    def transform(self, df: pd.DataFrame):
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Normalize a DataFrame of time series using learned parameters.
+
+        Pads or splits if needed, then applies z-score and min-max scaling.
+
+        Args:
+            df: Input DataFrame with raw time series columns.
+
+        Returns:
+            DataFrame with normalized series in same columns.
+        """
         missing = [c for c in self.time_series_cols if c not in df.columns]
 
         if missing:
@@ -212,9 +356,8 @@ class Normalizer(pl.LightningModule):
             missing = [c for c in self.time_series_cols if c not in df.columns]
 
         assert not missing, (
-            "Normalizer.transform expects the DataFrame to ALREADY be in **split** "
-            f"format with per-dimension columns {self.time_series_cols}. "
-            "Call the dataset’s `split_timeseries(df)` helper first."
+            "Normalizer.transform expects data in split format with columns "
+            f"{self.time_series_cols}."
         )
 
         df_out = df.copy()
@@ -238,7 +381,16 @@ class Normalizer(pl.LightningModule):
                     df_out.at[i, col] = z
         return df_out
 
-    def inverse_transform(self, df: pd.DataFrame):
+    def inverse_transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Denormalize a DataFrame of z-scored series back to original scale.
+
+        Args:
+            df: DataFrame with normalized series columns.
+
+        Returns:
+            DataFrame with denormalized series.
+        """
         missing = [c for c in self.time_series_cols if c not in df.columns]
 
         if missing:
@@ -246,9 +398,8 @@ class Normalizer(pl.LightningModule):
             missing = [c for c in self.time_series_cols if c not in df.columns]
 
         assert not missing, (
-            "Normalizer.inverse_transform expects the DataFrame to ALREADY be in "
-            f"split format with per-dimension columns {self.time_series_cols}. "
-            "Call the dataset’s `split_timeseries(df)` helper first."
+            "Normalizer.inverse_transform expects split format with columns "
+            f"{self.time_series_cols}."
         )
 
         df_out = df.copy()

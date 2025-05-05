@@ -1,4 +1,3 @@
-# endata/trainer.py
 import inspect
 import os
 import warnings
@@ -26,15 +25,16 @@ CONF_DIR = PKG_ROOT / "config"
 
 class Trainer:
     """
-    Facade that hides Hydra + Lightning while supporting ACGAN, Diffusion_TS
-    and the parametric Normalizer.
+    Facade for training and evaluating generative time-series models.
 
-    Parameters
-    ----------
-    model        : str        # "acgan" | "diffusion_ts" | "normalizer"
-    dataset      : TimeSeriesDataset | None
-    cfg          : DictConfig | None   # override *whole* cfg (advanced)
-    overrides    : list[str] | None    # Hydra-style dot-list overrides
+    Supports ACGAN, Diffusion_TS and Normalizer via PyTorch Lightning and Hydra.
+
+    Attributes:
+        model_key: Identifier of the model to train/evaluate.
+        dataset: TimeSeriesDataset used for training and evaluation.
+        cfg: Hydra configuration object.
+        model: Instantiated model object.
+        pl_trainer: PyTorch Lightning Trainer.
     """
 
     _MODEL_REGISTRY = {
@@ -50,6 +50,18 @@ class Trainer:
         cfg: Optional[DictConfig] = None,
         overrides: Optional[List[str]] = None,
     ):
+        """
+        Initialize the Trainer.
+
+        Args:
+            model_name: Key of the model ("acgan", "diffusion_ts", or "normalizer").
+            dataset: Dataset object required for generative models; optional for normalizer.
+            cfg: Full OmegaConf DictConfig; if None, composed via Hydra.
+            overrides: List of Hydra override strings.
+
+        Raises:
+            ValueError: If model_name is unknown or dataset requirements are not met.
+        """
         if model_name not in self._MODEL_REGISTRY:
             raise ValueError(
                 f"Unknown model '{model_name}'. "
@@ -69,19 +81,34 @@ class Trainer:
         self.model = self._instantiate_model()
         self.pl_trainer = self._instantiate_trainer()
 
-    def fit(self):
-        """Start training. Returns self for chaining."""
+    def fit(self) -> "Trainer":
+        """
+        Start training.
+
+        Returns:
+            Self, to allow method chaining.
+        """
         if self.model_key == "normalizer":
             self.pl_trainer.fit(self.model)
         else:
             train_loader = self.dataset.get_train_dataloader(
-                batch_size=self.cfg.trainer.batch_size, shuffle=True, num_workers=4
+                batch_size=self.cfg.trainer.batch_size,
+                shuffle=True,
+                num_workers=4,
             )
             self.pl_trainer.fit(self.model, train_loader, None)
         return self
 
     def get_data_generator(self) -> DataGenerator:
-        """Return a ready-to-use DataGenerator bound to this trained model."""
+        """
+        Create a DataGenerator for sampling from the trained generative model.
+
+        Returns:
+            DataGenerator bound to the trained model and dataset.
+
+        Raises:
+            RuntimeError: If called for the normalizer model (non-generative).
+        """
         if self.model_key == "normalizer":
             raise RuntimeError("Normalizer is not a generative model.")
 
@@ -99,16 +126,29 @@ class Trainer:
         )
         return gen
 
-    def evaluate(self, **kwargs):
+    def evaluate(self, **kwargs) -> Dict:
+        """
+        Run evaluation of the trained model using Evaluator.
+
+        Args:
+            **kwargs: Passed to Evaluator.evaluate_model (e.g. user_id).
+
+        Returns:
+            Dictionary of evaluation results.
+        """
         evaluator = Evaluator(self.cfg, self.dataset)
         return evaluator.evaluate_model(model=self.model, **kwargs)
 
     def _compose_cfg(self, ov: List[str]) -> DictConfig:
         """
-        1. load root config.yaml
-        2. inject `model=<key>` and `trainer=<key>` defaults
-        3. merge dataset-specific cfg (already present inside dataset)
-        4. apply CLI overrides if any
+        Compose the full Hydra configuration by merging defaults,
+        dataset-specific config, and any user overrides.
+
+        Args:
+            ov: List of Hydra-style overrides.
+
+        Returns:
+            OmegaConf DictConfig.
         """
         base_ov = [f"model={self.model_key}", f"trainer={self.model_key}"]
         with initialize_config_dir(str(CONF_DIR), version_base=None):
@@ -118,33 +158,45 @@ class Trainer:
         return cfg
 
     def _instantiate_model(self):
+        """
+        Instantiate the model class from the registry based on model_key.
+
+        Returns:
+            Instantiated model object.
+        """
         ModelCls = self._MODEL_REGISTRY[self.model_key]
         if self.model_key == "normalizer":
             nm_cfg = get_normalizer_training_config()
-            mdl = ModelCls(
+            return ModelCls(
                 dataset_cfg=self.cfg.dataset,
                 normalizer_training_cfg=nm_cfg,
                 dataset=self.dataset,
             )
-        else:
-            mdl = ModelCls(self.cfg)
-        return mdl
+        return ModelCls(self.cfg)
 
     def _instantiate_trainer(self) -> pl.Trainer:
+        """
+        Build a PyTorch Lightning Trainer with ModelCheckpoint and loggers.
+
+        Returns:
+            Configured pl.Trainer instance.
+        """
         tc = self.cfg.trainer
         callbacks = []
         callbacks.append(
             ModelCheckpoint(
                 dirpath=self.cfg.run_dir,
-                filename=f"{self.cfg.dataset.name}_{self.model_key}_dim{self.cfg.dataset.time_series_dims}",
+                filename=(
+                    f"{self.cfg.dataset.name}_{self.model_key}"
+                    f"_dim{self.cfg.dataset.time_series_dims}"
+                ),
                 save_last=tc.checkpoint.save_last,
                 save_on_train_epoch_end=True,
             )
         )
 
         logger = None
-
-        if "wandb" in self.cfg and self.cfg.wandb.enabled:
+        if getattr(self.cfg, "wandb", None) and self.cfg.wandb.enabled:
             logger = WandbLogger(
                 project=self.cfg.wandb.project or "EnData",
                 entity=self.cfg.wandb.entity,

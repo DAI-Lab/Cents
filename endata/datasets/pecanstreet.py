@@ -1,13 +1,11 @@
 import os
 import warnings
-from typing import Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-import torch
-import yaml
 from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from torch.utils.data import Dataset
 
 from endata.datasets.timeseries_dataset import TimeSeriesDataset
@@ -18,17 +16,39 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class PecanStreetDataset(TimeSeriesDataset):
     """
-    A dataset class for handling and preprocessing PecanStreet time series data,
-    including normalization, handling PV data, and user-specific data retrieval.
+    Dataset class for PecanStreet time series data.
+
+    Handles loading, preprocessing, and user-specific subsetting of grid and
+    optional solar time series, including normalization and context variables.
 
     Attributes:
-        cfg (DictConfig): The hydra config file
+        cfg (DictConfig): Hydra config for the dataset.
+        name (str): Dataset name.
+        geography (str): Geographic region selector.
+        normalize (bool): Whether to apply normalization.
+        threshold (Tuple[int, int]): Range filter for grid values.
+        include_generation (bool): If True, include solar series.
     """
 
-    def __init__(self, cfg: DictConfig = None):
+    def __init__(self, cfg: Optional[DictConfig] = None):
+        """
+        Initialize and preprocess the PecanStreet dataset.
+
+        Loads metadata and timeseries CSVs, then applies filtering,
+        grouping, user-subsetting, and calls the base class for
+        further preprocessing (normalization, merging, rarity flags).
+
+        Args:
+            cfg (Optional[DictConfig]): Override Hydra config; if None,
+                load from `config/dataset/pecanstreet.yaml`.
+
+        Raises:
+            FileNotFoundError: If required CSV files are missing.
+        """
         if not cfg:
             with initialize_config_dir(
-                config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
+                config_dir=os.path.join(ROOT_DIR, "config/dataset"),
+                version_base=None,
             ):
                 cfg = compose(config_name="pecanstreet", overrides=None)
 
@@ -38,272 +58,256 @@ class PecanStreetDataset(TimeSeriesDataset):
         self.normalize = cfg.normalize
         self.threshold = (-1 * int(cfg.threshold), int(cfg.threshold))
         self.include_generation = cfg.include_generation
+
+        # Load raw data and set flags
         self._load_data()
         self._set_user_flags()
 
-        time_series_column_names = ["grid"]
-
+        # Determine columns: always grid, optionally solar
+        ts_cols: List[str] = ["grid"]
         if self.include_generation:
-            time_series_column_names.append("solar")
+            ts_cols.append("solar")
 
-        context_vars = list(self.cfg.context_vars.keys())
-
+        # Initialize base class
         super().__init__(
             data=self.data,
-            time_series_column_names=time_series_column_names,
-            context_var_column_names=context_vars,
+            time_series_column_names=ts_cols,
+            context_var_column_names=list(self.cfg.context_vars.keys()),
             seq_len=self.cfg.seq_len,
             normalize=self.cfg.normalize,
             scale=self.cfg.scale,
         )
 
-    def _load_data(self) -> pd.DataFrame:
+    def _load_data(self) -> None:
         """
-        Loads the csv files into a pandas dataframe object.
+        Load metadata and 15-minute grid (and solar) CSV files.
+
+        Populates self.metadata and self.data DataFrames.
+
+        Raises:
+            FileNotFoundError: If any required CSV file is missing.
         """
         module_dir = os.path.dirname(os.path.abspath(__file__))
         path = os.path.normpath(os.path.join(module_dir, "..", self.cfg.path))
-        metadata_csv_path = os.path.join(path, "metadata.csv")
 
-        if not os.path.exists(metadata_csv_path):
-            raise FileNotFoundError(f"Metadata file not found at {metadata_csv_path}")
-
-        self.metadata = pd.read_csv(
-            metadata_csv_path, usecols=self.cfg.metadata_columns
-        )
-
+        # Metadata
+        meta_path = os.path.join(path, "metadata.csv")
+        if not os.path.exists(meta_path):
+            raise FileNotFoundError(f"Metadata file not found at {meta_path}")
+        self.metadata = pd.read_csv(meta_path, usecols=self.cfg.metadata_columns)
         if "solar" in self.metadata.columns:
             self.metadata.rename(columns={"solar": "has_solar"}, inplace=True)
 
+        # Data files by geography
         if self.geography:
-            data_file_name = f"15minute_data_{self.geography}.csv"
-            data_file_path = os.path.join(path, data_file_name)
-            if not os.path.exists(data_file_path):
-                raise FileNotFoundError(f"Data file not found at {data_file_path}")
-            self.data = pd.read_csv(data_file_path)[self.cfg.data_columns]
+            fname = f"15minute_data_{self.geography}.csv"
+            data_path = os.path.join(path, fname)
+            if not os.path.exists(data_path):
+                raise FileNotFoundError(f"Data file not found at {data_path}")
+            self.data = pd.read_csv(data_path)[self.cfg.data_columns]
         else:
-            data_files = [
-                os.path.join(path, "15minute_data_newyork.csv"),
-                os.path.join(path, "15minute_data_california.csv"),
-                os.path.join(path, "15minute_data_austin.csv"),
-            ]
-            for data_file in data_files:
-                if not os.path.exists(data_file):
-                    raise FileNotFoundError(f"Data file not found at {data_file}")
-            self.data = pd.concat(
-                [pd.read_csv(data_file) for data_file in data_files],
-                axis=0,
-            )[self.cfg.data_columns]
+            files = ["newyork", "california", "austin"]
+            dfs = []
+            for region in files:
+                fp = os.path.join(path, f"15minute_data_{region}.csv")
+                if not os.path.exists(fp):
+                    raise FileNotFoundError(f"Data file not found at {fp}")
+                dfs.append(pd.read_csv(fp))
+            self.data = pd.concat(dfs, axis=0)[self.cfg.data_columns]
 
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Preprocesses the dataset by adding date-related columns, sorting, filtering, and normalizing.
+        Convert timestamps, assemble sequences of length seq_len, and merge metadata.
 
         Args:
-            data (pd.DataFrame): Raw data to preprocess.
+            data (pd.DataFrame): Raw concatenated grid (and solar) rows.
 
         Returns:
-            pd.DataFrame: The preprocessed data.
+            pd.DataFrame: One row per sequence, with array-valued 'grid' and
+                optional 'solar' columns plus context and metadata fields.
         """
+        data = data.copy()
         data["local_15min"] = pd.to_datetime(data["local_15min"], utc=True)
         data["month"] = data["local_15min"].dt.month_name()
         data["weekday"] = data["local_15min"].dt.day_name()
         data["date_day"] = data["local_15min"].dt.day
-        data = data.sort_values(by=["local_15min"]).copy()
-        data = data[~data["grid"].isna()]
+        data = data.sort_values(by=["local_15min"]).dropna(subset=["grid"]).copy()
 
-        grouped_data = (
+        grouped = (
             data.groupby(["dataid", "month", "date_day", "weekday"])["grid"]
             .apply(np.array)
             .reset_index()
         )
-        filtered_data = grouped_data[
-            grouped_data["grid"].apply(len) == self.cfg.seq_len
-        ].reset_index(drop=True)
+        grouped = grouped[grouped["grid"].apply(len) == self.cfg.seq_len].reset_index(
+            drop=True
+        )
 
         if self.include_generation:
-            solar_data = self._preprocess_solar(data)
-            filtered_data = pd.merge(
-                filtered_data,
-                solar_data,
+            solar_df = self._preprocess_solar(data)
+            grouped = pd.merge(
+                grouped,
+                solar_df,
+                on=["dataid", "month", "date_day", "weekday"],
                 how="left",
-                on=["dataid", "month", "weekday", "date_day"],
             )
-        data = pd.merge(filtered_data, self.metadata, on="dataid", how="left")
-        data = self._get_user_group_data(data)
-        data = self._handle_missing_data(data)
-        grouped_data.sort_values(by=["month", "weekday", "date_day"], inplace=True)
-        return data
+
+        merged = pd.merge(grouped, self.metadata, on="dataid", how="left")
+        merged = self._get_user_group_data(merged)
+        merged = self._handle_missing_data(merged)
+        return merged.sort_values(by=["month", "weekday", "date_day"]).reset_index(
+            drop=True
+        )
 
     def _preprocess_solar(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Preprocesses solar data by filtering and normalizing if required.
+        Extract and filter solar sequences of length seq_len.
 
         Args:
-            data (pd.DataFrame): The raw data containing solar information.
+            data (pd.DataFrame): Raw DataFrame including 'solar' values.
 
         Returns:
-            pd.DataFrame: Preprocessed solar data.
+            pd.DataFrame: Same grouping keys plus array-valued 'solar'.
         """
-        solar_data = (
-            data[~data["solar"].isna()]
+        sd = (
+            data.dropna(subset=["solar"])
             .groupby(["dataid", "month", "date_day", "weekday"])["solar"]
             .apply(np.array)
             .reset_index()
         )
-        solar_data = solar_data[solar_data["solar"].apply(len) == self.cfg.seq_len]
-        return solar_data
+        return sd[sd["solar"].apply(len) == self.cfg.seq_len].reset_index(drop=True)
 
     def _handle_missing_data(self, data: pd.DataFrame) -> pd.DataFrame:
-        data["car1"] = data["car1"].fillna("no")
-        data["has_solar"] = data["has_solar"].fillna("no")
-        data["house_construction_year"] = data["house_construction_year"].fillna(
-            data["house_construction_year"].mean(skipna=True)
+        """
+        Fill NaNs in categorical and numeric metadata columns.
+
+        Args:
+            data (pd.DataFrame): Merged sequence+metadata rows.
+
+        Returns:
+            pd.DataFrame: Fully imputed DataFrame.
+        """
+        df = data.copy()
+        df["car1"] = df["car1"].fillna("no")
+        df["has_solar"] = df["has_solar"].fillna("no")
+        df["house_construction_year"] = df["house_construction_year"].fillna(
+            df["house_construction_year"].mean()
         )
-        data["total_square_footage"] = data["total_square_footage"].fillna(
-            data["total_square_footage"].mean(skipna=True)
+        df["total_square_footage"] = df["total_square_footage"].fillna(
+            df["total_square_footage"].mean()
         )
-        assert data.isna().sum().sum() == 0, "Missing data remaining!"
-        return data
+        assert df.isna().sum().sum() == 0, "Missing data remaining!"
+        return df
 
     def _set_user_flags(self) -> Dict[int, bool]:
         """
-        Sets user flags indicating whether a user has solar generation data.
-        """
-        self.user_flags = {
-            user_id: self.metadata.loc[self.metadata["dataid"] == user_id]["has_solar"]
-            .notna()
-            .any()
-            for user_id in self.data["dataid"].unique()
-        }
+        Build a mapping from user_id to whether they have solar data.
 
-    def _get_user_group_data(self, data: pd.DataFrame) -> "PecanStreetDataset":
+        Returns:
+            Dict[int, bool]: True if user ever has has_solar.
+        """
+        flags = {}
+        for uid in self.data["dataid"].unique():
+            flags[uid] = (
+                self.metadata[self.metadata["dataid"] == uid]["has_solar"].notna().any()
+            )
+        self.user_flags = flags
+        return flags
+
+    def _get_user_group_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Subset rows by cfg.user_id or cfg.user_group ('pv_users','non_pv_users','all').
+
+        Args:
+            data (pd.DataFrame): Preprocessed sequence+metadata.
+
+        Returns:
+            pd.DataFrame: Filtered by user criteria.
+
+        Raises:
+            AssertionError: If config contradicts include_generation.
+            ValueError: On unrecognized group.
+        """
         if self.cfg.user_id:
             return data[data["dataid"] == self.cfg.user_id].copy()
-
-        if self.cfg.user_group == "pv_users":
-            users = [user for user, has_pv in self.user_flags.items() if has_pv]
+        grp = self.cfg.user_group
+        if grp == "pv_users":
+            users = [u for u, pv in self.user_flags.items() if pv]
             return data[data["dataid"].isin(users)].copy()
-
-        elif self.cfg.user_group == "non_pv_users":
+        if grp == "non_pv_users":
             assert (
-                self.include_generation == False
-            ), "Include_generation must be set to False when working with the non pv user dataset!"
-            users = [user for user, has_pv in self.user_flags.items() if not has_pv]
+                not self.include_generation
+            ), "include_generation must be False for non_pv_users"
+            users = [u for u, pv in self.user_flags.items() if not pv]
             return data[data["dataid"].isin(users)].copy()
-
-        elif self.cfg.user_group == "all":
+        if grp == "all":
             assert (
-                self.include_generation == False
-            ), "Include_generation must be set to False when working with the entire dataset!"
+                not self.include_generation
+            ), "include_generation must be False for all users"
             return data.copy()
-
-        else:
-            raise ValueError(f"User group {self.cfg.user_group} is not specified.")
+        raise ValueError(f"User group '{grp}' not recognized.")
 
     def compute_average_pv_shift(
         self,
-        group_vars: list = None,
+        group_vars: Optional[List[str]] = None,
         pv_col: str = "has_solar",
         grid_col: str = "grid",
     ) -> np.ndarray:
         """
-        Computes an 'average' shift from pv=0 to pv=1 per timestep for houses/contexts
-        that actually contain both pv=0 and pv=1 examples.
+        Compute mean difference (pv=1 minus pv=0) per timestep across all contexts.
 
         Args:
-            group_vars (list): The context variables we want to group by (excluding `pv`).
-            pv_col (str): The name of the column indicating PV state (0 or 1).
-            grid_col (str): The name of the column containing the main timeseries load.
+            group_vars (Optional[List[str]]): Context variables (excluding pv_col). Defaults to all.
+            pv_col (str): Column for PV state (0/1).
+            grid_col (str): Column for grid series.
 
         Returns:
-            avg_shift (np.ndarray): shape (seq_len,), the average timeseries difference
-                across all groups that have both pv=0 and pv=1.
+            np.ndarray: Shape (seq_len,), average shift or zeros if none.
         """
         if group_vars is None:
             group_vars = [v for v in self.context_vars if v != pv_col]
-
-        df = self.data.copy()
-        grouped = df.groupby(group_vars)
-
-        # We accumulate the difference (pv=1 - pv=0) for each group that has both states
-        # Then average over all those differences
-        shift_accumulator = []
-        for group_vals, subdf in grouped:
-
-            unique_pv_states = subdf[pv_col].unique()
-            if len(set(unique_pv_states).intersection({0, 1})) == 2:
-                sub_pv0 = subdf[subdf[pv_col] == 0]["timeseries"]
-                sub_pv1 = subdf[subdf[pv_col] == 1]["timeseries"]
-
-                # shape: (seq_len, n_dim)
-                mean_ts_pv0 = np.mean(np.stack(sub_pv0.to_numpy()), axis=0)
-                mean_ts_pv1 = np.mean(np.stack(sub_pv1.to_numpy()), axis=0)
-
-                diff_ts = mean_ts_pv1 - mean_ts_pv0
-
-                if diff_ts.ndim == 2 and diff_ts.shape[1] == 1:
-                    diff_ts = diff_ts[:, 0]
-
-                shift_accumulator.append(diff_ts)
-
-        if len(shift_accumulator) == 0:
-            print("[EnData] Warning: Found no groups that contain both pv=0 and pv=1!")
-            return np.zeros((self.seq_len,))
-
-        # shape after stacking: (num_groups, seq_len)
-        shift_matrix = np.stack(shift_accumulator, axis=0)
-        avg_shift = np.mean(shift_matrix, axis=0)  # shape (seq_len,)
-
-        return avg_shift
+        shifts = []
+        for _, sub in self.data.groupby(group_vars):
+            states = sub[pv_col].unique()
+            if set(states) >= {0, 1}:
+                ts0 = np.stack(sub[sub[pv_col] == 0]["timeseries"].to_numpy())
+                ts1 = np.stack(sub[sub[pv_col] == 1]["timeseries"].to_numpy())
+                diff = ts1.mean(axis=0) - ts0.mean(axis=0)
+                if diff.ndim == 2 and diff.shape[1] == 1:
+                    diff = diff[:, 0]
+                shifts.append(diff)
+        if not shifts:
+            return np.zeros(self.cfg.seq_len, dtype=float)
+        return np.mean(np.stack(shifts, 0), axis=0)
 
     def sample_shift_test_contexts(
-        self, group_vars: list = None, pv_col: str = "has_solar"
-    ) -> list:
+        self,
+        group_vars: Optional[List[str]] = None,
+        pv_col: str = "has_solar",
+    ) -> List[Dict[str, Any]]:
         """
-        Finds example contexts that only have pv=0 (no pv=1) so we can test generating pv=1 for them,
-        or vice versa, or any other custom logic you want.
-
-        Returns a small list of context dicts for test generation.
+        Identify contexts present with only pv=0 or only pv=1 for test sampling.
 
         Args:
-            group_vars (list): The context variables we want to group by (excluding `pv`).
-            pv_col (str): The name of the column for PV state.
+            group_vars (Optional[List[str]]): Context vars (excluding pv_col).
+            pv_col (str): Column for PV state.
 
         Returns:
-            test_contexts (list of dict): Each dict has {var_name: category_index}
-                                          that we can pass to a generator to sample from.
+            List[Dict[str, Any]]: Each with keys 'base_context','present_pv','missing_pv'.
         """
         if group_vars is None:
             group_vars = [v for v in self.context_vars if v != pv_col]
-
-        df = self.data.copy()
-        grouped = df.groupby(group_vars)
-
-        test_contexts = []
-        for group_vals, subdf in grouped:
-
-            unique_pv_states = subdf[pv_col].unique()
-            if len(unique_pv_states) == 1:
-
-                the_pv_value_present = int(unique_pv_states[0])
-                missing_pv = 1 - the_pv_value_present
-
-                ctx_dict = {}
-                if len(group_vars) == 1:
-                    ctx_dict[group_vars[0]] = group_vals
-                else:
-                    for var_name, val in zip(group_vars, group_vals):
-                        ctx_dict[var_name] = val
-
-                ctx_dict[pv_col] = the_pv_value_present
-
-                test_contexts.append(
-                    {
-                        "base_context": ctx_dict,
-                        "present_pv": the_pv_value_present,
-                        "missing_pv": missing_pv,
-                    }
+        tests = []
+        for vals, sub in self.data.groupby(group_vars):
+            uniq = sub[pv_col].unique()
+            if len(uniq) == 1:
+                present = int(uniq[0])
+                missing = 1 - present
+                base = {
+                    gv: (vals if len(group_vars) == 1 else vals[i])
+                    for i, gv in enumerate(group_vars)
+                }
+                base[pv_col] = present
+                tests.append(
+                    {"base_context": base, "present_pv": present, "missing_pv": missing}
                 )
-
-        return test_contexts
+        return tests

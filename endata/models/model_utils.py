@@ -17,6 +17,41 @@ from einops import rearrange, reduce, repeat
 from torch import nn
 
 
+def linear_beta_schedule(timesteps: int) -> torch.Tensor:
+    """
+    Create a linear schedule of betas for diffusion noise levels.
+
+    Args:
+        timesteps: Number of diffusion steps (T).
+
+    Returns:
+        Tensor of shape (timesteps,) with betas increasing linearly.
+    """
+    scale = 1000 / timesteps
+    beta_start = scale * 0.0001
+    beta_end = scale * 0.02
+    return torch.linspace(beta_start, beta_end, timesteps, dtype=torch.float32)
+
+
+def cosine_beta_schedule(timesteps: int, s: float = 0.004) -> torch.Tensor:
+    """
+    Create a cosine schedule of betas for diffusion noise levels.
+
+    Args:
+        timesteps: Number of diffusion steps (T).
+        s: Small offset to avoid singularities.
+
+    Returns:
+        Tensor of shape (timesteps,) with betas computed via a cosine schedule.
+    """
+    steps = timesteps + 1
+    x = torch.linspace(0, timesteps, steps, dtype=torch.float32)
+    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clip(betas, 0, 0.999)
+
+
 def exists(x):
     return x is not None
 
