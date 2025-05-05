@@ -1,4 +1,5 @@
 import json
+import random
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -69,12 +70,32 @@ class DataGenerator:
         self.cfg.dataset = dataset_cfg
         self.ctx_code_book = ctx_codes
 
-    def set_context(self, **context_vars: int):
+    def set_context(self, auto_fill_missing=False, **context_vars):
         """Store one concrete context combination for the next `generate()` call."""
-        if not context_vars:
-            raise ValueError("No context variables provided.")
+        if not hasattr(self.cfg, "dataset") or "context_vars" not in self.cfg.dataset:
+            raise RuntimeError(
+                "You must call `set_dataset_spec()` (or `load_model()`) before `set_context()`."
+            )
+
+        required = self.cfg.dataset.context_vars
+        if auto_fill_missing:
+            for var, n in required.items():
+                context_vars.setdefault(var, random.randrange(n))
+        else:
+            missing = set(required) - set(context_vars)
+            if missing:
+                raise ValueError(f"Missing context vars: {missing}")
+
+        for var, code in context_vars.items():
+            max_cat = self.cfg.dataset.context_vars[var]
+            if not (0 <= code < max_cat):
+                raise ValueError(
+                    f"Context `{var}` must be in [0,{max_cat}); got {code}."
+                )
+
         self._ctx_buff = {
-            k: torch.tensor(v, device=self.device) for k, v in context_vars.items()
+            var: torch.tensor(code, device=self.device)
+            for var, code in context_vars.items()
         }
 
     @torch.no_grad()

@@ -1,12 +1,11 @@
 defaults:
-  - model: acgan
+  - model: null
   - dataset: pecanstreet
   - evaluator: default
-  - trainer: acgan
+  - trainer: null
   - _self_
 
 device: auto
-
 job_name: ${model.name}_${dataset.name}_${dataset.user_group}
 run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}
 model_ckpt: null
@@ -36,9 +35,3 @@ wandb:
 
 python_logging:
   level: INFO
-
-checkpoint:
-  dir: checkpoints/${job_name}
-  every_n_train_steps: 25000
-  save_last: true
-  extra_intervals: []

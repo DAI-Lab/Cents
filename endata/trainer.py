@@ -18,7 +18,7 @@ from endata.eval.eval import Evaluator
 from endata.models.acgan import ACGAN
 from endata.models.diffusion_ts import Diffusion_TS
 from endata.models.normalizer import Normalizer
-from endata.utils.utils import _ckpt_name, get_device, get_normalizer_training_config
+from endata.utils.utils import get_normalizer_training_config
 
 PKG_ROOT = Path(__file__).resolve().parent
 CONF_DIR = PKG_ROOT / "config"
@@ -45,26 +45,26 @@ class Trainer:
 
     def __init__(
         self,
-        model: str,
+        model_name: str,
         dataset: Optional[TimeSeriesDataset] = None,
         cfg: Optional[DictConfig] = None,
         overrides: Optional[List[str]] = None,
     ):
-        if model not in self._MODEL_REGISTRY:
+        if model_name not in self._MODEL_REGISTRY:
             raise ValueError(
-                f"Unknown model '{model}'. " f"Available: {list(self._MODEL_REGISTRY)}"
+                f"Unknown model '{model_name}'. "
+                f"Available: {list(self._MODEL_REGISTRY)}"
             )
 
-        if model != "normalizer" and dataset is None:
-            raise ValueError(f"Model '{model}' requires a TimeSeriesDataset.")
+        if model_name != "normalizer" and dataset is None:
+            raise ValueError(f"Model '{model_name}' requires a TimeSeriesDataset.")
 
-        if model == "normalizer" and dataset is None:
+        if model_name == "normalizer" and dataset is None:
             raise ValueError("Normalizer training needs the raw dataset object.")
 
-        self.model_key = model
+        self.model_key = model_name
         self.dataset = dataset
         self.cfg = cfg or self._compose_cfg(overrides or [])
-        self.device = get_device(self.cfg.device)
 
         self.model = self._instantiate_model()
         self.pl_trainer = self._instantiate_trainer()
@@ -78,21 +78,6 @@ class Trainer:
                 batch_size=self.cfg.trainer.batch_size, shuffle=True, num_workers=4
             )
             self.pl_trainer.fit(self.model, train_loader, None)
-
-        dims = self.cfg.dataset.time_series_dims
-        ckpt_dir = (
-            Path.home()
-            / ".cache"
-            / "endata"
-            / "checkpoints"
-            / self.dataset.name
-            / self.model_key
-        )
-        ckpt_dir.mkdir(parents=True, exist_ok=True)
-        ckpt_path = ckpt_dir / _ckpt_name(self.dataset.name, self.model_key, dims)
-        self.pl_trainer.save_checkpoint(ckpt_path)
-        print(f"[EnData] Saved final checkpoint → {ckpt_path}")
-
         return self
 
     def get_data_generator(self) -> DataGenerator:
@@ -102,7 +87,7 @@ class Trainer:
 
         gen = DataGenerator(
             model_name=self.model_key,
-            device=self.device,
+            device=self.model.device,
             cfg=self.cfg,
             model=self.model.eval(),
             normalizer=getattr(self.dataset, "_normalizer", None),
@@ -143,35 +128,22 @@ class Trainer:
             )
         else:
             mdl = ModelCls(self.cfg)
-        mdl.to(self.device)
         return mdl
 
     def _instantiate_trainer(self) -> pl.Trainer:
         tc = self.cfg.trainer
-        ckp_cfg = tc.get("checkpoint", {})
         callbacks = []
-        if "monitor" in ckp_cfg:
-            callbacks.append(
-                ModelCheckpoint(
-                    dirpath=ckp_cfg.get("dir", "checkpoints"),
-                    monitor=ckp_cfg.monitor,
-                    mode=ckp_cfg.mode,
-                    save_top_k=ckp_cfg.save_top_k,
-                )
+        callbacks.append(
+            ModelCheckpoint(
+                dirpath=self.cfg.run_dir,
+                filename=f"{self.cfg.dataset.name}_{self.model_key}_dim{self.cfg.dataset.time_series_dims}",
+                save_last=tc.checkpoint.save_last,
+                save_on_train_epoch_end=True,
             )
-        else:
-            every_n = ckp_cfg.get("every_n_train_steps", tc.get("save_cycle", 0))
-            callbacks.append(
-                ModelCheckpoint(
-                    dirpath=ckp_cfg.get("dir", "checkpoints"),
-                    filename="{step}",
-                    every_n_train_steps=every_n,
-                    save_last=ckp_cfg.get("save_last", True),
-                    save_on_train_epoch_end=False,
-                )
-            )
+        )
 
         logger = None
+
         if "wandb" in self.cfg and self.cfg.wandb.enabled:
             logger = WandbLogger(
                 project=self.cfg.wandb.project or "EnData",
@@ -179,10 +151,7 @@ class Trainer:
                 name=self.cfg.wandb.name,
                 save_dir=self.cfg.run_dir,
             )
-        else:
-            logger = CSVLogger(save_dir=self.cfg.run_dir, name="logs")
 
-        print(f"Strategy: {tc.strategy}")
         return pl.Trainer(
             max_epochs=tc.max_epochs,
             accelerator=tc.accelerator,

@@ -290,7 +290,7 @@ class TimeSeriesDataset(Dataset):
 
         if not os.path.exists(cache_path):
 
-            print("[EnData] No cached normaliser found – training a new one…")
+            print("[EnData] No cached normalizer found – training a new one…")
             trainer = pl.Trainer(
                 max_epochs=normalizer_training_cfg.n_epochs,
                 accelerator=normalizer_training_cfg.accelerator,
@@ -308,10 +308,10 @@ class TimeSeriesDataset(Dataset):
             )
             trainer.fit(self._normalizer)
             torch.save(self._normalizer.state_dict(), cache_path)
-            print(f"[EnData] Saved trained normaliser → {cache_path}")
+            print(f"[EnData] Saved trained normalizer → {cache_path}")
         else:
             state = torch.load(cache_path, map_location="cpu")
             state_dict = state["state_dict"] if "state_dict" in state else state
             self._normalizer.load_state_dict(state_dict, strict=True)
             self._normalizer.eval()
-            print(f"[EnData] Loaded cached normaliser from {cache_path}")
+            print(f"[EnData] Loaded cached normalizer from {cache_path}")

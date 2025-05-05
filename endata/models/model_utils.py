@@ -326,7 +326,8 @@ class FourierLayer(nn.Module):
     def forward(self, x):
         """x: (b, t, d)"""
         b, t, d = x.shape
-        x_freq = torch.fft.rfft(x, dim=1)
+        with torch.amp.autocast(device_type="cpu", enabled=False):
+            x_freq = torch.fft.rfft(x.float(), dim=1)
 
         if t % 2 == 0:
             x_freq = x_freq[:, self.low_freq : -1]

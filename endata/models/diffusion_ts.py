@@ -1,5 +1,6 @@
 import copy
 import math
+from typing import Optional
 
 import pytorch_lightning as pl
 import torch
@@ -32,8 +33,8 @@ def cosine_beta_schedule(timesteps, s=0.004):
 class EMA(nn.Module):
     def __init__(self, model, beta, update_every):
         super().__init__()
-        self.model = model
-        self.ema_model = copy.deepcopy(model).eval()
+        self.model = copy.deepcopy(model)
+        self.ema_model = self.model.eval()
         self.beta = beta
         self.update_every = update_every
         self.step = 0
@@ -85,6 +86,8 @@ class Diffusion_TS(pl.LightningModule):
             n_embd=cfg.model.d_model,
             conv_params=[cfg.model.kernel_size, cfg.model.padding_size],
         )
+
+        self._ema_helper: Optional[EMA] = None
 
         if cfg.model.beta_schedule == "linear":
             betas = linear_beta_schedule(cfg.model.n_steps)
@@ -203,15 +206,15 @@ class Diffusion_TS(pl.LightningModule):
         }
 
     def on_train_start(self):
-        self.ema = EMA(
-            self,
+        self._ema = EMA(
+            self.model,
             beta=self.cfg.model.ema_decay,
             update_every=self.cfg.model.ema_update_interval,
-            device=self.device,
         )
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
-        self.ema.update()
+        if self._ema:
+            self._ema.update()
 
     @torch.no_grad()
     def model_predictions(self, x, t, embedding):

@@ -1,11 +1,11 @@
 defaults:
-  - model: acgan
+  - model: null
   - dataset: test1d
-  - normalizer: default
+  - evaluator: default
+  - trainer: null
   - _self_
 
-device: cpu
-
+device: auto
 job_name: ${model.name}_${dataset.name}_${dataset.user_group}
 run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}
 model_ckpt: null
@@ -27,7 +27,11 @@ hydra:
     dir: ${run_dir}
 
 
-wandb_enabled: False
 wandb:
+  enabled: false
   project: null
   entity: null
+  name: ${job_name}
+
+python_logging:
+  level: INFO

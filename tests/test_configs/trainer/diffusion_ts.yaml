@@ -4,8 +4,8 @@ devices: auto
 strategy: ddp_find_unused_parameters_true
 gradient_accumulate_every: 1
 log_every_n_steps: 1
-batch_size: 1024
-max_epochs: 5000
+batch_size: 1
+max_epochs: 1
 base_lr: 1e-4
 
 checkpoint:
