@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+from endata.datasets.utils import split_timeseries
 from endata.models.context import ContextModule
 
 
@@ -229,6 +230,7 @@ class Normalizer(pl.LightningModule):
             ds,
             batch_size=self.normalizer_training_cfg.batch_size,
             shuffle=True,
+            num_workers=1,
         )
 
     def _compute_group_stats(self) -> dict:
@@ -352,7 +354,7 @@ class Normalizer(pl.LightningModule):
         missing = [c for c in self.time_series_cols if c not in df.columns]
 
         if missing:
-            df = self.dataset.split_timeseries(df)
+            df = split_timeseries(df, self.time_series_cols)
             missing = [c for c in self.time_series_cols if c not in df.columns]
 
         assert not missing, (
@@ -394,7 +396,7 @@ class Normalizer(pl.LightningModule):
         missing = [c for c in self.time_series_cols if c not in df.columns]
 
         if missing:
-            df = self.dataset.split_timeseries(df)
+            df = split_timeseries(df, self.time_series_cols)
             missing = [c for c in self.time_series_cols if c not in df.columns]
 
         assert not missing, (

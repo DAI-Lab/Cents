@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from endata.datasets.utils import encode_context_variables
 from endata.models.normalizer import Normalizer
-from endata.utils.utils import get_normalizer_training_config
+from endata.utils.utils import _ckpt_name, get_normalizer_training_config
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -406,13 +406,12 @@ class TimeSeriesDataset(Dataset):
         """
         Initialize or load a cached Normalizer for this dataset.
         """
-        cache_path = os.path.join(
-            Path.home(),
-            ".cache",
-            "endata",
-            "checkpoints",
-            self.name,
-            f"{self.name}_dim_{self.time_series_dims}_scale_{self.scale}_normalizer.pt",
+        normalizer_dir = (
+            Path.home() / ".cache" / "endata" / "checkpoints" / self.name / "normalizer"
+        )
+        normalizer_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = normalizer_dir / _ckpt_name(
+            self.name, "normalizer", self.time_series_dims
         )
         ncfg = get_normalizer_training_config()
         self._normalizer = Normalizer(

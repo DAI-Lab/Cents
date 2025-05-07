@@ -4,10 +4,10 @@ devices: auto
 log_every_n_steps: 1
 hidden_dim: 512
 embedding_dim: 256
-n_epochs: 1000
+n_epochs: 2000
 batch_size: 4096
 lr: 3e-4
-save_cycle: 1000
+save_cycle: 5000
 
 checkpoint:
   save_last: False

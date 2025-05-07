@@ -225,7 +225,6 @@ class DataGenerator:
         n_remote = f"{dataset_name}/normalizer/{n_fname}"
         n_local = CACHE_DIR / dataset_name / "normalizer" / n_fname
         n_ckpt = self._download_s3(bucket, n_remote, n_local, must_exist=False)
-
         self.load_from_checkpoint(ckpt, normalizer_ckpt=n_ckpt)
 
     @staticmethod
@@ -295,7 +294,7 @@ class DataGenerator:
     def load_model(
         self,
         dataset_name: str,
-        ckpt_path: Optional[Union[str, Path]] = None,
+        model_ckpt_path: Optional[Union[str, Path]] = None,
         local_root: Optional[Union[str, Path]] = None,
         cfg_override: Optional[DictConfig] = None,
         bucket: str = "dai-watts",
@@ -318,21 +317,28 @@ class DataGenerator:
         """
         root = Path(local_root) if local_root else CACHE_DIR
         dims = self.cfg.dataset.time_series_dims
-        fname = _ckpt_name(dataset_name, self.model_name, dims)
+        model_fname = _ckpt_name(dataset_name, self.model_name, dims)
 
-        if ckpt_path is None:
-            ckpt_path = root / dataset_name / self.model_name / fname
-            if not ckpt_path.exists():
+        if model_ckpt_path is None:
+            model_ckpt_path = root / dataset_name / self.model_name / model_fname
+            if not model_ckpt_path.exists():
                 self.download_pretrained(dataset_name, bucket=bucket)
 
-        if not Path(ckpt_path).exists():
-            raise RuntimeError(f"No checkpoint found at {ckpt_path}")
+        if not Path(model_ckpt_path).exists():
+            raise RuntimeError(f"No checkpoint found at {model_ckpt_path}")
 
-        n_fname = _ckpt_name(dataset_name, "normalizer", dims)
-        n_ckpt = root / dataset_name / "normalizer" / n_fname
-        n_ckpt = n_ckpt if n_ckpt.exists() else None
+        norm_fname = _ckpt_name(dataset_name, "normalizer", dims)
+        norm_local = root / dataset_name / "normalizer" / norm_fname
+        if not norm_local.exists():
+            # try download but don’t raise an error if absent
+            norm_local = self._download_s3(
+                bucket,
+                key=f"{dataset_name}/normalizer/{norm_fname}",
+                tgt=norm_local,
+                must_exist=False,
+            )
 
-        self.load_from_checkpoint(ckpt_path, normalizer_ckpt=n_ckpt)
+        self.load_from_checkpoint(model_ckpt_path, normalizer_ckpt=norm_local)
 
         if cfg_override is None:
             cfg_file = PKG_ROOT / "config" / "dataset" / f"{dataset_name}.yaml"

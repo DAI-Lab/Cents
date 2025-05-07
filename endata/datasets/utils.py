@@ -7,6 +7,34 @@ from sklearn.metrics import mean_squared_error
 from torch.utils.data import DataLoader, Dataset
 
 
+def split_timeseries(
+    df: pd.DataFrame,
+    time_series_columns: List[str],
+) -> pd.DataFrame:
+    first = df["timeseries"].iloc[0]
+    if not isinstance(first, np.ndarray):
+        raise ValueError("‘timeseries’ must be numpy arrays")
+    n_dim = first.shape[1]
+    if n_dim != len(time_series_columns):
+        raise ValueError("shape mismatch")
+    for i, col in enumerate(time_series_columns):
+        df[col] = df["timeseries"].apply(lambda x: x[:, i])
+    return df.drop(columns=["timeseries"])
+
+
+def merge_timeseries_columns(
+    df: pd.DataFrame,
+    time_series_columns: List[str],
+) -> pd.DataFrame:
+    df = df.copy()
+    for col in time_series_columns:
+        df[col] = df[col].apply(lambda arr: np.asarray(arr).reshape(-1, 1))
+    df["timeseries"] = df[time_series_columns].apply(
+        lambda r: np.hstack([r[c] for c in time_series_columns]), axis=1
+    )
+    return df.drop(columns=time_series_columns)
+
+
 def check_inverse_transform(
     normalized_dataset: Dataset, unnormalized_dataset: Dataset
 ) -> float:
@@ -77,12 +105,6 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
     val_dataset = torch.utils.data.Subset(dataset, range(train_size, len(dataset)))
 
     return train_dataset, val_dataset
-
-
-from typing import Any, Dict, List, Tuple
-
-import numpy as np
-import pandas as pd
 
 
 def encode_context_variables(
