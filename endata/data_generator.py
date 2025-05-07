@@ -8,7 +8,7 @@ import botocore
 import pytorch_lightning as pl
 import torch
 from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig
+from omegaconf import DictConfig, ListConfig
 
 from endata.datasets.timeseries_dataset import TimeSeriesDataset
 from endata.datasets.utils import convert_generated_data_to_df
@@ -20,6 +20,8 @@ from endata.utils.utils import _ckpt_name, get_device, get_normalizer_training_c
 PKG_ROOT = Path(__file__).resolve().parent
 CONF_DIR = PKG_ROOT / "config"
 CACHE_DIR = Path.home() / ".cache" / "endata" / "checkpoints"
+
+torch.serialization.add_safe_globals({DictConfig, ListConfig})
 
 
 class DataGenerator:
@@ -171,21 +173,28 @@ class DataGenerator:
             FileNotFoundError: If checkpoint path does not exist.
             TypeError: If ckpt type is unsupported.
         """
+        device = get_device()
         if isinstance(ckpt, pl.LightningModule):
-            self.model = ckpt.to(self.device).eval()
+            self.model = ckpt.to(device).eval()
             return
 
         ckpt_path, state = self._resolve_ckpt(ckpt)
         ModelCls = self._MODEL_REGISTRY[self.model_name]
 
         if ckpt_path.suffix == ".ckpt":
-            self.model = ModelCls.load_from_checkpoint(
-                checkpoint_path=ckpt_path, cfg=self.cfg, map_location=self.device
-            ).eval()
+            self.model = (
+                ModelCls.load_from_checkpoint(
+                    checkpoint_path=ckpt_path, map_location=device
+                )
+                .to(device)
+                .eval()
+            )
+            if hasattr(self.model, "cfg"):
+                self.cfg = self.model.cfg
         else:
             self.model = ModelCls(self.cfg)
             self.model.load_state_dict(state, strict=True)
-            self.model.to(self.device).eval()
+            self.model.to(device).eval()
 
         if normalizer_ckpt:
             self.normalizer = Normalizer(
@@ -193,7 +202,7 @@ class DataGenerator:
                 normalizer_training_cfg=get_normalizer_training_config(),
                 dataset=None,
             )
-            state = torch.load(normalizer_ckpt, map_location="cpu")
+            state = torch.load(normalizer_ckpt, map_location=device)
             sd = state.get("state_dict", state)
             self.normalizer.load_state_dict(sd, strict=True)
             self.normalizer.eval()
@@ -240,7 +249,10 @@ class DataGenerator:
             src = Path(src).expanduser()
             if not src.exists():
                 raise FileNotFoundError(src)
-            obj = torch.load(src, map_location="cpu")
+            obj = torch.load(src, map_location="cpu", weights_only=False)
+            print(
+                f"[EnData] Loading full checkpoint (weights + metadata) from {src}. Use `.pt` for safer minimal loading."
+            )
             return src, obj.get("state_dict", obj)
         elif isinstance(src, dict):
             return Path("<dict>"), src

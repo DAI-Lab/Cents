@@ -6,8 +6,8 @@ defaults:
   - _self_
 
 device: auto
-job_name: ${model.name}_${dataset.name}_${dataset.user_group}
-run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}
+job_name: null
+run_dir: null
 model_ckpt: null
 hydra:
   job_logging:
@@ -31,7 +31,7 @@ wandb:
   enabled: false
   project: null
   entity: null
-  name: ${job_name}
+  name: null
 
 python_logging:
   level: INFO

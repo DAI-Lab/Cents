@@ -9,7 +9,7 @@ max_epochs: 5000
 base_lr: 1e-4
 
 checkpoint:
-  save_last: true
+  save_last: False
   save_top_k: 0
   every_n_train_steps: null
   every_n_epochs: null

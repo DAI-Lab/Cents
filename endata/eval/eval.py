@@ -208,9 +208,9 @@ class Evaluator:
         metrics["MMD"] = {"mean": mmd_mean, "std": mmd_std}
         logger.info(f"--- MMD completed ---")
 
-        # mse_mean, mse_std = calculate_period_bound_mse(real_data_frame, syn_data)
-        # metrics["MSE"] = {"mean": mse_mean, "std": mse_std}
-        # logger.info(f"--- BMSE completed ---")
+        mse_mean, mse_std = calculate_period_bound_mse(real_data_frame, syn_data)
+        metrics["MSE"] = {"mean": mse_mean, "std": mse_std}
+        logger.info(f"--- BMSE completed ---")
 
         fid_score = Context_FID(real_data, syn_data)
         metrics["Context_FID"] = fid_score

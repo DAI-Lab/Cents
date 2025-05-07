@@ -15,7 +15,6 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import wandb
 from omegaconf import DictConfig
 
 from endata.models.context import ContextModule
@@ -278,6 +277,7 @@ class ACGAN(pl.LightningModule):
             for v in aux_real:
                 d_aux += self.aux_loss(aux_real[v], ctx[v])
                 d_aux += self.aux_loss(aux_fake_d[v], ctx[v])
+
         d_total = d_real + d_fake + d_aux
         self.manual_backward(d_total)
         opt_D.step()

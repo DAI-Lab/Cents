@@ -9,7 +9,7 @@ gradient_accumulate_every: 1
 log_every_n_steps: 1
 
 checkpoint:
-  save_last: true
+  save_last: False
   save_top_k: 0
   every_n_train_steps: null
   every_n_epochs: null

@@ -6,10 +6,9 @@ from typing import Dict, List, Optional
 
 import pytorch_lightning as pl
 from hydra import compose, initialize_config_dir
-from hydra.utils import get_class, instantiate
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import CSVLogger, WandbLogger
+from pytorch_lightning.loggers import WandbLogger
 
 from endata.data_generator import DataGenerator
 from endata.datasets.timeseries_dataset import TimeSeriesDataset
@@ -112,9 +111,15 @@ class Trainer:
         if self.model_key == "normalizer":
             raise RuntimeError("Normalizer is not a generative model.")
 
+        device = (
+            self.model.device
+            if hasattr(self.model, "device")
+            else next(self.model.parameters()).device
+        )
+
         gen = DataGenerator(
             model_name=self.model_key,
-            device=self.model.device,
+            device=device,
             cfg=self.cfg,
             model=self.model.eval(),
             normalizer=getattr(self.dataset, "_normalizer", None),

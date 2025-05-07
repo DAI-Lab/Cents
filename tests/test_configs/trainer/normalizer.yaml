@@ -1,7 +1,7 @@
 strategy: ddp_find_unused_parameters_true
 accelerator: auto
 devices: auto
-log_every_n_steps: 1
+log_every_n_steps: 0
 hidden_dim: 512
 embedding_dim: 256
 n_epochs: 1
@@ -10,5 +10,5 @@ lr: 3e-4
 save_cycle: 1000
 
 checkpoint:
-  save_last: true
+  save_last: False
   save_top_k: 0

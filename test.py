@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import torch
 
 from endata.datasets.pecanstreet import PecanStreetDataset
@@ -9,13 +11,18 @@ def main() -> None:
     dataset = PecanStreetDataset()
     overrides = [
         "trainer.max_epochs=5000",
+        "wandb.enabled=True",
+        "wandb.project=endata",
+        "wandb.entity=michael-fuest-technical-university-of-munich",
+        f"wandb.name=test-{datetime.now().strftime('%Y%m%d-%H%M%S')}_diffusion_ts",
     ]
 
     trainer = Trainer(
-        model_name="diffusion_ts",
+        model_name="acgan",
         dataset=dataset,
         overrides=overrides,
     )
+
     trainer.fit()
 
     gen = trainer.get_data_generator()
@@ -23,7 +30,9 @@ def main() -> None:
     samples = gen.generate(n=10)
     print(samples.head())
 
+    eval_results = trainer.evaluate()
+    print(eval_results)
+
 
 if __name__ == "__main__":
-    torch.set_float32_matmul_precision("high")
     main()
