@@ -107,6 +107,7 @@ ENV/
 
 # Repository Specific
 endata/data/pecanstreet/csv
+endata/data/custom/
 .DS_Store
 .ipynb_checkpoints
 endata/.DS_Store

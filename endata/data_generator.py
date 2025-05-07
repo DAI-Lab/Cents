@@ -10,7 +10,6 @@ import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, ListConfig
 
-from endata.datasets.timeseries_dataset import TimeSeriesDataset
 from endata.datasets.utils import convert_generated_data_to_df
 from endata.models.acgan import ACGAN
 from endata.models.diffusion_ts import Diffusion_TS

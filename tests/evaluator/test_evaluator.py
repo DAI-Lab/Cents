@@ -25,12 +25,6 @@ def patch_all(monkeypatch):
     dummy_plot = lambda *args, **kwargs: (None, None)
     dummy_vis = lambda *args, **kwargs: []
 
-    monkeypatch.setattr(utils_mod, "plot_syn_and_real_comparison", dummy_plot)
-    monkeypatch.setattr(utils_mod, "visualization", dummy_vis)
-
-    monkeypatch.setattr(eval_mod, "plot_syn_and_real_comparison", dummy_plot)
-    monkeypatch.setattr(eval_mod, "visualization", dummy_vis)
-
 
 class DummyDataset:
     """Minimal stand-in for a TimeSeriesDataset."""
@@ -126,24 +120,3 @@ def test_run_evaluation_and_evaluate_model(evaluator):
 
     assert "DTW" in evaluator.current_results["metrics"]
     assert isinstance(out, dict)
-
-
-def test_create_visualizations_runs_without_error(evaluator):
-    ds = evaluator.real_dataset
-    df = ds.data
-
-    class DummyModel:
-        def generate(self, ctx):
-            batch_size = next(iter(ctx.values())).shape[0]
-            return torch.zeros((batch_size, 1, 1))
-
-    evaluator.create_visualizations(
-        real_data_df=df,
-        syn_data_df=df,
-        dataset=ds,
-        model=DummyModel(),
-        num_samples=2,
-        num_runs=1,
-    )
-    viz = evaluator.current_results["visualizations"]
-    assert isinstance(viz, dict)

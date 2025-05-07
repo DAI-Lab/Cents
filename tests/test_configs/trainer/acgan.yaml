@@ -3,8 +3,8 @@ accelerator: auto
 devices: auto
 strategy: ddp_find_unused_parameters_true
 max_epochs: 1
-batch_size: 1024
-sampling_batch_size: 4096
+batch_size: 1
+sampling_batch_size: 1
 gradient_accumulate_every: 1
 log_every_n_steps: 0
 
