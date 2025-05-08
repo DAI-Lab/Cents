@@ -1,6 +1,6 @@
-strategy: ddp_find_unused_parameters_true
+strategy: auto
 accelerator: auto
-devices: auto
+devices: 1
 log_every_n_steps: 1
 hidden_dim: 512
 embedding_dim: 256

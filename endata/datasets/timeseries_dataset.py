@@ -447,6 +447,9 @@ class TimeSeriesDataset(Dataset):
             devices=ncfg.devices,
             strategy=ncfg.strategy,
             log_every_n_steps=ncfg.log_every_n_steps,
+            logger=False,
+            save_last=False,
+            save_top_k=0,
         )
         trainer.fit(self._normalizer)
         torch.save(self._normalizer.state_dict(), cache_path)
