@@ -15,10 +15,13 @@ def main() -> None:
         "wandb.project=endata",
         "wandb.entity=michael-fuest-technical-university-of-munich",
         f"wandb.name=test-{datetime.now().strftime('%Y%m%d-%H%M%S')}_diffusion_ts",
+        "dataset.time_series_dims=2",
+        "dataset.include_generation=True",
+        "dataset.user_group=pv_users",
     ]
 
     trainer = Trainer(
-        model_name="acgan",
+        model_name="diffusion_ts",
         dataset=dataset,
         overrides=overrides,
     )

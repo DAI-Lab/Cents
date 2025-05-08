@@ -216,11 +216,16 @@ def full_cfg_2d(dataset_cfg_2d) -> DictConfig:
 
 @pytest.fixture
 def dummy_trainer_diffusion_1d(
-    full_cfg_1d, model_cfg_diffusion, normalized_dataset_1d, trainer_cfg_diffusion
+    full_cfg_1d,
+    model_cfg_diffusion,
+    normalized_dataset_1d,
+    trainer_cfg_diffusion,
+    tmp_path,
 ):
     OmegaConf.set_struct(full_cfg_1d, False)
     merged_cfg = OmegaConf.merge(full_cfg_1d, {"model": model_cfg_diffusion})
     merged_cfg = OmegaConf.merge(merged_cfg, {"trainer": trainer_cfg_diffusion})
+    merged_cfg.run_dir = str(tmp_path)
     trainer = Trainer(
         model_name="diffusion_ts", dataset=normalized_dataset_1d, cfg=merged_cfg
     )
@@ -229,22 +234,28 @@ def dummy_trainer_diffusion_1d(
 
 @pytest.fixture
 def dummy_trainer_acgan_1d(
-    full_cfg_1d, model_cfg_acgan, normalized_dataset_1d, trainer_cfg_acgan
+    full_cfg_1d, model_cfg_acgan, normalized_dataset_1d, trainer_cfg_acgan, tmp_path
 ):
     OmegaConf.set_struct(full_cfg_1d, False)
     merged_cfg = OmegaConf.merge(full_cfg_1d, {"model": model_cfg_acgan})
     merged_cfg = OmegaConf.merge(merged_cfg, {"trainer": trainer_cfg_acgan})
+    merged_cfg.run_dir = str(tmp_path)
     trainer = Trainer(model_name="acgan", dataset=normalized_dataset_1d, cfg=merged_cfg)
     return trainer
 
 
 @pytest.fixture
 def dummy_trainer_diffusion_2d(
-    full_cfg_2d, model_cfg_diffusion, normalized_dataset_2d, trainer_cfg_diffusion
+    full_cfg_2d,
+    model_cfg_diffusion,
+    normalized_dataset_2d,
+    trainer_cfg_diffusion,
+    tmp_path,
 ):
     OmegaConf.set_struct(full_cfg_2d, False)
     merged_cfg = OmegaConf.merge(full_cfg_2d, {"model": model_cfg_diffusion})
     merged_cfg = OmegaConf.merge(merged_cfg, {"trainer": trainer_cfg_diffusion})
+    merged_cfg.run_dir = str(tmp_path)
     trainer = Trainer(
         model_name="diffusion_ts", dataset=normalized_dataset_2d, cfg=merged_cfg
     )
@@ -253,10 +264,11 @@ def dummy_trainer_diffusion_2d(
 
 @pytest.fixture
 def dummy_trainer_acgan_2d(
-    full_cfg_2d, model_cfg_acgan, normalized_dataset_2d, trainer_cfg_acgan
+    full_cfg_2d, model_cfg_acgan, normalized_dataset_2d, trainer_cfg_acgan, tmp_path
 ):
     OmegaConf.set_struct(full_cfg_2d, False)
     merged_cfg = OmegaConf.merge(full_cfg_2d, {"model": model_cfg_acgan})
     merged_cfg = OmegaConf.merge(merged_cfg, {"trainer": trainer_cfg_acgan})
+    merged_cfg.run_dir = str(tmp_path)
     trainer = Trainer(model_name="acgan", dataset=normalized_dataset_2d, cfg=merged_cfg)
     return trainer

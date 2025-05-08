@@ -200,7 +200,7 @@ class Trainer:
             )
         )
 
-        logger = None
+        logger = False
         if getattr(self.cfg, "wandb", None) and self.cfg.wandb.enabled:
             logger = WandbLogger(
                 project=self.cfg.wandb.project or "EnData",

@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig
-from torch.utils.data import Dataset
 
 from endata.datasets.timeseries_dataset import TimeSeriesDataset
 
@@ -65,6 +64,7 @@ class PecanStreetDataset(TimeSeriesDataset):
 
         # Determine columns: always grid, optionally solar
         ts_cols: List[str] = ["grid"]
+
         if self.include_generation:
             ts_cols.append("solar")
 
@@ -90,7 +90,6 @@ class PecanStreetDataset(TimeSeriesDataset):
         module_dir = os.path.dirname(os.path.abspath(__file__))
         path = os.path.normpath(os.path.join(module_dir, "..", self.cfg.path))
 
-        # Metadata
         meta_path = os.path.join(path, "metadata.csv")
         if not os.path.exists(meta_path):
             raise FileNotFoundError(f"Metadata file not found at {meta_path}")
@@ -98,7 +97,6 @@ class PecanStreetDataset(TimeSeriesDataset):
         if "solar" in self.metadata.columns:
             self.metadata.rename(columns={"solar": "has_solar"}, inplace=True)
 
-        # Data files by geography
         if self.geography:
             fname = f"15minute_data_{self.geography}.csv"
             data_path = os.path.join(path, fname)
