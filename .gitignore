@@ -106,6 +106,7 @@ ENV/
 .*.swp
 
 # Repository Specific
+endata/data/*
 endata/data/pecanstreet/*
 endata/data/custom/
 .DS_Store
