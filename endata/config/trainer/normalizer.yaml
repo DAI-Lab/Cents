@@ -1,4 +1,4 @@
-strategy: auto
+strategy: ddp_find_unused_parameters_true
 accelerator: auto
 devices: auto
 log_every_n_steps: 1
