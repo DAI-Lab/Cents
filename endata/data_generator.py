@@ -11,9 +11,10 @@ from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, ListConfig
 
 from endata.datasets.utils import convert_generated_data_to_df
-from endata.models.acgan import ACGAN
-from endata.models.diffusion_ts import Diffusion_TS
+from endata.models.acgan import ACGAN  # required for model registry
+from endata.models.diffusion_ts import Diffusion_TS  # required for model registry
 from endata.models.normalizer import Normalizer
+from endata.models.registry import get_model_cls
 from endata.utils.utils import _ckpt_name, get_device, get_normalizer_training_config
 
 PKG_ROOT = Path(__file__).resolve().parent
@@ -40,11 +41,6 @@ class DataGenerator:
         normalizer: Optional Normalizer for inverse transformations.
     """
 
-    _MODEL_REGISTRY = {
-        "acgan": ACGAN,
-        "diffusion_ts": Diffusion_TS,
-    }
-
     def __init__(
         self,
         model_name: str,
@@ -53,11 +49,10 @@ class DataGenerator:
         model: pl.LightningModule = None,
         normalizer: Normalizer = None,
     ):
-        if model_name not in self._MODEL_REGISTRY:
-            raise ValueError(
-                f"Unknown model '{model_name}'. "
-                f"Options: {list(self._MODEL_REGISTRY)}"
-            )
+        try:
+            get_model_cls(model_name)
+        except ValueError:
+            raise ValueError(f"Unknown model '{model_name}'")
 
         self.model_name = model_name
         self.device = get_device(device)
@@ -178,7 +173,7 @@ class DataGenerator:
             return
 
         ckpt_path, state = self._resolve_ckpt(ckpt)
-        ModelCls = self._MODEL_REGISTRY[self.model_name]
+        ModelCls = get_model_cls(self.model_name)
 
         if ckpt_path.suffix == ".ckpt":
             self.model = (

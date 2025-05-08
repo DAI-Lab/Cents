@@ -405,6 +405,9 @@ class TimeSeriesDataset(Dataset):
     def _init_normalizer(self) -> None:
         """
         Initialize or load a cached Normalizer for this dataset.
+
+        On first run, trains a new Normalizer and writes a single state dict to cache.
+        On subsequent runs, loads that file. If loading fails, deletes the corrupted cache and retrains.
         """
         normalizer_dir = (
             Path.home() / ".cache" / "endata" / "checkpoints" / self.name / "normalizer"
@@ -413,35 +416,38 @@ class TimeSeriesDataset(Dataset):
         cache_path = normalizer_dir / _ckpt_name(
             self.name, "normalizer", self.time_series_dims
         )
+
         ncfg = get_normalizer_training_config()
         self._normalizer = Normalizer(
             dataset_cfg=self.cfg,
             normalizer_training_cfg=ncfg,
             dataset=self,
         )
-        if not os.path.exists(cache_path):
-            print("[EnData] Training normalizer…")
-            trainer = pl.Trainer(
-                max_epochs=ncfg.n_epochs,
-                accelerator=ncfg.accelerator,
-                devices=ncfg.devices,
-                strategy=ncfg.strategy,
-                log_every_n_steps=ncfg.log_every_n_steps,
-                callbacks=[
-                    ModelCheckpoint(
-                        dirpath=os.path.dirname(cache_path),
-                        filename="last",
-                        save_last=True,
-                        save_top_k=0,
-                    )
-                ],
-            )
-            trainer.fit(self._normalizer)
-            torch.save(self._normalizer.state_dict(), cache_path)
-            print(f"[EnData] Saved normalizer to {cache_path}")
-        else:
-            state = torch.load(cache_path, map_location="cpu")
-            sd = state.get("state_dict", state)
-            self._normalizer.load_state_dict(sd)
-            self._normalizer.eval()
-            print(f"[EnData] Loaded normalizer from {cache_path}")
+
+        # attempt to load existing state dict
+        if cache_path.exists():
+            try:
+                state = torch.load(cache_path, map_location="cpu")
+                sd = state.get("state_dict", state)
+                self._normalizer.load_state_dict(sd)
+                self._normalizer.eval()
+                print(f"[EnData] Loaded normalizer from {cache_path}")
+                return
+            except Exception:
+                try:
+                    cache_path.unlink()
+                except OSError:
+                    pass
+
+        # train and cache a single state dict
+        print("[EnData] Training normalizer…")
+        trainer = pl.Trainer(
+            max_epochs=ncfg.n_epochs,
+            accelerator=ncfg.accelerator,
+            devices=ncfg.devices,
+            strategy=ncfg.strategy,
+            log_every_n_steps=ncfg.log_every_n_steps,
+        )
+        trainer.fit(self._normalizer)
+        torch.save(self._normalizer.state_dict(), cache_path)
+        print(f"[EnData] Saved normalizer to {cache_path}")

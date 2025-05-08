@@ -13,9 +13,7 @@ from pytorch_lightning.loggers import WandbLogger
 from endata.data_generator import DataGenerator
 from endata.datasets.timeseries_dataset import TimeSeriesDataset
 from endata.eval.eval import Evaluator
-from endata.models.acgan import ACGAN
-from endata.models.diffusion_ts import Diffusion_TS
-from endata.models.normalizer import Normalizer
+from endata.models.registry import get_model_cls
 from endata.utils.utils import get_normalizer_training_config
 
 PKG_ROOT = Path(__file__).resolve().parent
@@ -36,12 +34,6 @@ class Trainer:
         pl_trainer: PyTorch Lightning Trainer.
     """
 
-    _MODEL_REGISTRY = {
-        "acgan": ACGAN,
-        "diffusion_ts": Diffusion_TS,
-        "normalizer": Normalizer,
-    }
-
     def __init__(
         self,
         model_name: str,
@@ -61,11 +53,10 @@ class Trainer:
         Raises:
             ValueError: If model_name is unknown or dataset requirements are not met.
         """
-        if model_name not in self._MODEL_REGISTRY:
-            raise ValueError(
-                f"Unknown model '{model_name}'. "
-                f"Available: {list(self._MODEL_REGISTRY)}"
-            )
+        try:
+            get_model_cls(model_name)
+        except ValueError:
+            raise ValueError(f"Unknown model '{model_name}'")
 
         if model_name != "normalizer" and dataset is None:
             raise ValueError(f"Model '{model_name}' requires a TimeSeriesDataset.")
@@ -165,11 +156,8 @@ class Trainer:
     def _instantiate_model(self):
         """
         Instantiate the model class from the registry based on model_key.
-
-        Returns:
-            Instantiated model object.
         """
-        ModelCls = self._MODEL_REGISTRY[self.model_key]
+        ModelCls = get_model_cls(self.model_key)
         if self.model_key == "normalizer":
             nm_cfg = get_normalizer_training_config()
             return ModelCls(

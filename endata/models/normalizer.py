@@ -2,14 +2,15 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 from endata.datasets.utils import split_timeseries
+from endata.models.base import NormalizerModel
 from endata.models.context import ContextModule
+from endata.models.registry import register_model
 
 
 class _StatsHead(nn.Module):
@@ -122,7 +123,8 @@ class _NormalizerModule(nn.Module):
         return self.stats_head(embedding)
 
 
-class Normalizer(pl.LightningModule):
+@register_model("normalizer")
+class Normalizer(NormalizerModel):
     """
     Learns group-wise normalization parameters (mean, std, optional min/max) for time series by context.
     """

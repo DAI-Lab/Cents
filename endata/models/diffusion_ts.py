@@ -10,6 +10,7 @@ from omegaconf import DictConfig
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
+from endata.models.base import GenerativeModel
 from endata.models.context import ContextModule
 from endata.models.model_utils import (
     Transformer,
@@ -17,9 +18,11 @@ from endata.models.model_utils import (
     default,
     linear_beta_schedule,
 )
+from endata.models.registry import register_model
 
 
-class Diffusion_TS(pl.LightningModule):
+@register_model("diffusion_ts")
+class Diffusion_TS(GenerativeModel):
     """
     PyTorch-Lightning module for a conditional time-series diffusion model.
 
@@ -37,7 +40,7 @@ class Diffusion_TS(pl.LightningModule):
                 model.*: diffusion-specific hyperparameters
                 trainer: optimizer and scheduler configs
         """
-        super().__init__()
+        super().__init__(cfg)
         self.save_hyperparameters(ignore=["cfg"])
         self.cfg = cfg
         self.seq_len = cfg.dataset.seq_len
@@ -48,9 +51,6 @@ class Diffusion_TS(pl.LightningModule):
         self.embedding_dim = cfg.model.cond_emb_dim
         self.context_reconstruction_loss_weight = (
             cfg.model.context_reconstruction_loss_weight
-        )
-        self.context_module = ContextModule(
-            cfg.dataset.context_vars, self.embedding_dim
         )
 
         # linear layer for denoised output

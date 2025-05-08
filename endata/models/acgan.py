@@ -17,7 +17,9 @@ import torch.nn as nn
 import torch.optim as optim
 from omegaconf import DictConfig
 
+from endata.models.base import GenerativeModel
 from endata.models.context import ContextModule
+from endata.models.registry import register_model
 
 
 class Generator(nn.Module):
@@ -166,7 +168,8 @@ class Discriminator(nn.Module):
         return rf_logits, aux_logits
 
 
-class ACGAN(pl.LightningModule):
+@register_model("acgan")
+class ACGAN(GenerativeModel):
     """
     Auxiliary Classifier GAN LightningModule combining Generator and Discriminator.
 
@@ -181,15 +184,15 @@ class ACGAN(pl.LightningModule):
     """
 
     def __init__(self, cfg: DictConfig):
-        super().__init__()
+        super().__init__(cfg)
         self.save_hyperparameters(cfg)
         self.cfg = cfg
         self.automatic_optimization = False
 
         # shared context embedding + classification
-        self.context_module = ContextModule(
-            cfg.dataset.context_vars, cfg.model.cond_emb_dim
-        )
+        # self.context_module = ContextModule(
+        #     cfg.dataset.context_vars, cfg.model.cond_emb_dim
+        # )
         self.generator = Generator(
             noise_dim=cfg.model.noise_dim,
             embedding_dim=cfg.model.cond_emb_dim,
