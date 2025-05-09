@@ -8,20 +8,21 @@ from endata.trainer import Trainer
 
 def main() -> None:
 
+    MODEL_NAME = "diffusion_ts"
     dataset = PecanStreetDataset()
     overrides = [
         "trainer.max_epochs=5000",
         "wandb.enabled=True",
         "wandb.project=endata",
         "wandb.entity=michael-fuest-technical-university-of-munich",
-        f"wandb.name=test-{datetime.now().strftime('%Y%m%d-%H%M%S')}_diffusion_ts",
+        f"wandb.name=test-{datetime.now().strftime('%Y%m%d-%H%M%S')}_{MODEL_NAME}",
         "dataset.time_series_dims=2",
         "dataset.include_generation=True",
         "dataset.user_group=pv_users",
     ]
 
     trainer = Trainer(
-        model_name="diffusion_ts",
+        model_name=MODEL_NAME,
         dataset=dataset,
         overrides=overrides,
     )

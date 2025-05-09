@@ -61,7 +61,7 @@ class Evaluator:
         self.device = get_device(cfg.get("device", None))
 
         if results_dir is None:
-            results_dir = os.path.join(
+            results_dir = cfg.evaluator.get("save_dir") or os.path.join(
                 Path.home(),
                 ".cache",
                 "endata",
@@ -115,7 +115,12 @@ class Evaluator:
         logger.info("----------------------")
 
         self.run_evaluation(dataset, model)
-        self.save_results()
+
+        if self.cfg.evaluator.get("save_results", False):
+            self.save_results()
+
+        if self.cfg.get("wandb", {}).get("enabled", False) and wandb.run is not None:
+            wandb.log(self.current_results["metrics"])
 
         return self.current_results
 
@@ -136,7 +141,7 @@ class Evaluator:
         with open(metadata_file, "w") as f:
             json.dump(self.current_results["metadata"], f, indent=2)
 
-        logger.info(f"Saved evaluation results to {results_file}")
+        logger.info(f"[EnData] Saved evaluation results to {results_file}")
         return results_file, metadata_file
 
     def load_results(self, timestamp: Optional[str] = None) -> Dict:
@@ -183,7 +188,7 @@ class Evaluator:
             real_data_frame (pd.DataFrame): Real data subset (inverse-transformed)
             mask (Optional[np.ndarray]): Boolean array indicating which rows are "rare"
         """
-        logger.info(f"--- Starting Full-Subset Metrics ---")
+        logger.info(f"[EnData] --- Starting Full-Subset Metrics ---")
 
         metrics = {}
 
@@ -227,12 +232,6 @@ class Evaluator:
             rare_metrics["MMD"] = {"mean": mmd_mean_r, "std": mmd_std_r}
             logger.info(f"[EnData] MMD completed")
 
-            mse_mean_r, mse_std_r = calculate_period_bound_mse(
-                rare_real_df, rare_syn_data
-            )
-            rare_metrics["MSE"] = {"mean": mse_mean_r, "std": mse_std_r}
-            logger.info(f"[EnData] BMSE completed")
-
             fid_score_r = Context_FID(rare_real_data, rare_syn_data)
             rare_metrics["Context_FID"] = fid_score_r
             logger.info(f"[EnData] Context-FID completed")
@@ -275,7 +274,7 @@ class Evaluator:
             model: The trained model.
         """
         logger.info(
-            f"Starting evaluation of {self.model_name} with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters."
+            f"[EnData] Starting evaluation of {self.model_name} with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters."
         )
         all_indices = dataset.data.index.to_numpy()
         self.evaluate_subset(dataset, model, all_indices)

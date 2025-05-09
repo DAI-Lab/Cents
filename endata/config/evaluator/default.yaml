@@ -3,3 +3,5 @@ eval_pv_shift: False
 eval_metrics: True
 eval_vis: True
 eval_context_sparse: False
+save_results: False
+save_dir: ${run_dir}/eval

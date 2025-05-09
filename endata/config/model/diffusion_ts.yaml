@@ -5,7 +5,7 @@ noise_dim: 256
 cond_emb_dim: 16
 n_layer_enc: 4
 n_layer_dec: 5
-d_model: 128
+d_model: 256
 n_steps: 1000
 sampling_timesteps: 1000
 sampling_batch_size: 4096
@@ -23,4 +23,4 @@ reg_weight: null
 gradient_accumulate_every: 2
 ema_decay: 0.99
 ema_update_interval: 10
-use_ema_sampling: False
+use_ema_sampling: True
