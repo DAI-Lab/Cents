@@ -29,7 +29,11 @@ class PecanStreetDataset(TimeSeriesDataset):
         include_generation (bool): If True, include solar series.
     """
 
-    def __init__(self, cfg: Optional[DictConfig] = None):
+    def __init__(
+        self,
+        cfg: Optional[DictConfig] = None,
+        overrides: Optional[List[str]] = None,
+    ):
         """
         Initialize and preprocess the PecanStreet dataset.
 
@@ -40,35 +44,40 @@ class PecanStreetDataset(TimeSeriesDataset):
         Args:
             cfg (Optional[DictConfig]): Override Hydra config; if None,
                 load from `config/dataset/pecanstreet.yaml`.
+            overrides (Optional[List[str]]): Override Hydra config; if None,
+                load from `config/dataset/pecanstreet.yaml` and apply overrides.
 
         Raises:
             FileNotFoundError: If required CSV files are missing.
         """
-        if not cfg:
+        if cfg is None:
             with initialize_config_dir(
-                config_dir=os.path.join(ROOT_DIR, "config/dataset"),
-                version_base=None,
+                config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
             ):
-                cfg = compose(config_name="pecanstreet", overrides=None)
+                cfg = compose(config_name="pecanstreet", overrides=overrides)
 
         self.cfg = cfg
         self.name = cfg.name
         self.geography = cfg.geography
         self.normalize = cfg.normalize
         self.threshold = (-1 * int(cfg.threshold), int(cfg.threshold))
-        self.include_generation = cfg.include_generation
+        self.time_series_dims = cfg.time_series_dims
 
-        # Load raw data and set flags
+        self.cfg.time_series_columns = ["grid", "solar"]
+
+        self.include_generation = self.time_series_dims > 1
+
+        if self.time_series_dims > 1 and self.cfg.user_group in {"non_pv_users", "all"}:
+            raise AssertionError(
+                "time_series_dims > 1 requires solar readings; "
+                "override `dataset.user_group` to `pv_users` or set time_series_dims = 1."
+            )
+
         self._load_data()
         self._set_user_flags()
 
-        # Determine columns: always grid, optionally solar
-        ts_cols: List[str] = ["grid"]
+        ts_cols: List[str] = self.cfg.time_series_columns[: self.time_series_dims]
 
-        if self.include_generation:
-            ts_cols.append("solar")
-
-        # Initialize base class
         super().__init__(
             data=self.data,
             time_series_column_names=ts_cols,
@@ -203,7 +212,7 @@ class PecanStreetDataset(TimeSeriesDataset):
         Returns:
             Dict[int, bool]: True if user ever has has_solar.
         """
-        flags = {}
+        flags: Dict[int, bool] = {}
         for uid in self.data["dataid"].unique():
             flags[uid] = (
                 self.metadata[self.metadata["dataid"] == uid]["has_solar"].notna().any()
@@ -213,7 +222,7 @@ class PecanStreetDataset(TimeSeriesDataset):
 
     def _get_user_group_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
-        Subset rows by cfg.user_id or cfg.user_group ('pv_users','non_pv_users','all').
+        Subset rows by cfg.user_group ('pv_users','non_pv_users','all').
 
         Args:
             data (pd.DataFrame): Preprocessed sequence+metadata.
@@ -225,8 +234,6 @@ class PecanStreetDataset(TimeSeriesDataset):
             AssertionError: If config contradicts include_generation.
             ValueError: On unrecognized group.
         """
-        if self.cfg.user_id:
-            return data[data["dataid"] == self.cfg.user_id].copy()
         grp = self.cfg.user_group
         if grp == "pv_users":
             users = [u for u, pv in self.user_flags.items() if pv]
@@ -234,13 +241,13 @@ class PecanStreetDataset(TimeSeriesDataset):
         if grp == "non_pv_users":
             assert (
                 not self.include_generation
-            ), "include_generation must be False for non_pv_users"
+            ), "time_series_dims > 1 conflicts with non_pv_users"
             users = [u for u, pv in self.user_flags.items() if not pv]
             return data[data["dataid"].isin(users)].copy()
         if grp == "all":
             assert (
                 not self.include_generation
-            ), "include_generation must be False for all users"
+            ), "time_series_dims > 1 conflicts with user_group='all'"
             return data.copy()
         raise ValueError(f"User group '{grp}' not recognized.")
 
@@ -263,7 +270,7 @@ class PecanStreetDataset(TimeSeriesDataset):
         """
         if group_vars is None:
             group_vars = [v for v in self.context_vars if v != pv_col]
-        shifts = []
+        shifts: List[np.ndarray] = []
         for _, sub in self.data.groupby(group_vars):
             states = sub[pv_col].unique()
             if set(states) >= {0, 1}:
@@ -294,7 +301,7 @@ class PecanStreetDataset(TimeSeriesDataset):
         """
         if group_vars is None:
             group_vars = [v for v in self.context_vars if v != pv_col]
-        tests = []
+        tests: List[Dict[str, Any]] = []
         for vals, sub in self.data.groupby(group_vars):
             uniq = sub[pv_col].unique()
             if len(uniq) == 1:
@@ -306,6 +313,10 @@ class PecanStreetDataset(TimeSeriesDataset):
                 }
                 base[pv_col] = present
                 tests.append(
-                    {"base_context": base, "present_pv": present, "missing_pv": missing}
+                    {
+                        "base_context": base,
+                        "present_pv": present,
+                        "missing_pv": missing,
+                    }
                 )
         return tests

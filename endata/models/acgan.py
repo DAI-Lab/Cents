@@ -19,6 +19,7 @@ from omegaconf import DictConfig
 
 from endata.models.base import GenerativeModel
 from endata.models.context import ContextModule
+from endata.models.model_utils import total_correlation
 from endata.models.registry import register_model
 
 
@@ -260,9 +261,26 @@ class ACGAN(GenerativeModel):
             else 0.0
         )
         g_ctx = sum(self.aux_loss(logits_ctx[v], ctx[v]) for v in logits_ctx)
-        g_total = (
-            g_adv + g_aux + self.cfg.model.context_reconstruction_loss_weight * g_ctx
+
+        h, _ = self.context_module(ctx)
+        tc_term = (
+            self.cfg.model.tc_loss_weight * total_correlation(h)
+            if self.cfg.model.tc_loss_weight > 0.0
+            else torch.tensor(0.0, device=self.device)
         )
+        self.log_dict(
+            {"g_adv": g_adv, "g_aux": g_aux, "g_ctx": g_ctx, "tc_loss": tc_term},
+            prog_bar=True,
+            on_step=True,
+        )
+
+        g_total = (
+            g_adv
+            + g_aux
+            + self.cfg.model.context_reconstruction_loss_weight * g_ctx
+            + tc_term
+        )
+
         self.manual_backward(g_total)
         opt_G.step()
         self.log("loss_G", g_total, prog_bar=True, on_step=True)

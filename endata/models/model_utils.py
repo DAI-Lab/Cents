@@ -20,8 +20,8 @@ from torch import nn
 def linear_beta_schedule(timesteps: int) -> torch.Tensor:
     """
     Create a linear schedule of betas for diffusion noise levels.
-
     Args:
+
         timesteps: Number of diffusion steps (T).
 
     Returns:
@@ -834,3 +834,33 @@ class Transformer(nn.Module):
             )
 
         return trend, season_error
+
+
+def total_correlation(
+    embeddings: torch.Tensor, reduction: str = "mean"
+) -> torch.Tensor:
+    """
+    Mini-batch estimator of total correlation (β-TCVAE; Chen et al., 2018).
+
+    Args:
+        embeddings: Tensor of shape ``(batch, dim)`` containing latent codes.
+        reduction: ``"mean"`` (default) divides by batch size; ``"sum"`` returns the raw sum.
+
+    Returns:
+        Scalar tensor with the estimated TC for the current mini-batch.
+    """
+    batch, _ = embeddings.shape
+    log_qz_prob = torch.logsumexp(
+        -0.5 * (embeddings.unsqueeze(0) - embeddings.unsqueeze(1)).pow(2).sum(-1),
+        dim=1,
+    ) - math.log(batch)
+    log_prod_qzi = (
+        torch.logsumexp(
+            -0.5 * (embeddings.unsqueeze(0) - embeddings.unsqueeze(1)).pow(2), dim=1
+        )
+        - math.log(batch)
+    ).sum(1)
+    tc = (log_qz_prob - log_prod_qzi).sum()
+    if reduction == "mean":
+        tc = tc / batch
+    return tc

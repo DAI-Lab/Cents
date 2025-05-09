@@ -1,11 +1,12 @@
 _target_: generator.diffusion_ts.gaussian_diffusion.Diffusion_TS
 name: diffusion_ts
 context_reconstruction_loss_weight: 0.1
+tc_loss_weight: 0
 noise_dim: 256
 cond_emb_dim: 16
 n_layer_enc: 4
 n_layer_dec: 5
-d_model: 256
+d_model: 128
 n_steps: 1000
 sampling_timesteps: 1000
 sampling_batch_size: 4096

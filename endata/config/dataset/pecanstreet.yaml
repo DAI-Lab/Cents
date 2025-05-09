@@ -4,12 +4,11 @@ normalize: True
 scale: True
 use_learned_normalizer: True
 threshold: 8
-include_generation: False
 seq_len: 96
 time_series_dims: 1
 shuffle: True
 path: "./data/pecanstreet/csv"
-time_series_columns: ["grid"]
+time_series_columns: ["grid", "solar"]
 data_columns: ["dataid","local_15min","car1","grid","solar"]
 metadata_columns: ["dataid","building_type","solar","car1","city","state","total_square_footage","house_construction_year"]
 user_group: all # non_pv_users, all, pv_users

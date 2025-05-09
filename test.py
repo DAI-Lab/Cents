@@ -9,22 +9,23 @@ from endata.trainer import Trainer
 def main() -> None:
 
     MODEL_NAME = "diffusion_ts"
-    dataset = PecanStreetDataset()
-    overrides = [
+    dataset = PecanStreetDataset(
+        overrides=["user_group=pv_users", "time_series_dims=2"]
+    )
+
+    trainer_overrides = [
         "trainer.max_epochs=5000",
+        "trainer.strategy=auto",
         "wandb.enabled=True",
         "wandb.project=endata",
         "wandb.entity=michael-fuest-technical-university-of-munich",
         f"wandb.name=test-{datetime.now().strftime('%Y%m%d-%H%M%S')}_{MODEL_NAME}",
-        "dataset.time_series_dims=2",
-        "dataset.include_generation=True",
-        "dataset.user_group=pv_users",
     ]
 
     trainer = Trainer(
         model_name=MODEL_NAME,
         dataset=dataset,
-        overrides=overrides,
+        overrides=trainer_overrides,
     )
 
     trainer.fit()

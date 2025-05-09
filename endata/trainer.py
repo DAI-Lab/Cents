@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 import pytorch_lightning as pl
 from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
@@ -150,7 +150,9 @@ class Trainer:
         with initialize_config_dir(str(CONF_DIR), version_base=None):
             cfg = compose(config_name="config", overrides=base_ov + ov)
         if self.dataset is not None:
-            cfg.dataset = self.dataset.cfg
+            cfg.dataset = OmegaConf.create(
+                OmegaConf.to_container(self.dataset.cfg, resolve=True)
+            )
         return cfg
 
     def _instantiate_model(self):

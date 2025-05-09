@@ -11,12 +11,12 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from endata.models.base import GenerativeModel
-from endata.models.context import ContextModule
 from endata.models.model_utils import (
     Transformer,
     cosine_beta_schedule,
     default,
     linear_beta_schedule,
+    total_correlation,
 )
 from endata.models.registry import register_model
 
@@ -52,6 +52,7 @@ class Diffusion_TS(GenerativeModel):
         self.context_reconstruction_loss_weight = (
             cfg.model.context_reconstruction_loss_weight
         )
+        _ = self.context_module
 
         # linear layer for denoised output
         self.fc = nn.Linear(
@@ -241,11 +242,30 @@ class Diffusion_TS(GenerativeModel):
         ts_batch, cond_batch = batch
         rec_loss, cond_class_logits = self(ts_batch, cond_batch)
         cond_loss = 0.0
+
         for var_name, logits in cond_class_logits.items():
             labels = cond_batch[var_name]
             cond_loss += self.auxiliary_loss(logits, labels)
-        total_loss = rec_loss + self.context_reconstruction_loss_weight * cond_loss
-        self.log("train_loss", total_loss, prog_bar=True)
+
+        h, _ = self.context_module(cond_batch)
+        tc_term = (
+            self.cfg.model.tc_loss_weight * total_correlation(h)
+            if self.cfg.model.tc_loss_weight > 0.0
+            else torch.tensor(0.0, device=self.device)
+        )
+
+        total_loss = (
+            rec_loss + self.context_reconstruction_loss_weight * cond_loss + tc_term
+        )
+        self.log_dict(
+            {
+                "train_loss": total_loss,
+                "rec_loss": rec_loss,
+                "cond_loss": cond_loss,
+                "tc_loss": tc_term,
+            },
+            prog_bar=True,
+        )
         return total_loss
 
     def configure_optimizers(self) -> dict:
