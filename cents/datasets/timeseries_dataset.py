@@ -49,6 +49,7 @@ class TimeSeriesDataset(Dataset):
         context_var_column_names: Any = None,
         normalize: bool = True,
         scale: bool = True,
+        overrides: Dict[str, Any] = {},
     ):
         # Initialize basic attributes
         self.time_series_column_names = (
@@ -85,6 +86,9 @@ class TimeSeriesDataset(Dataset):
 
         self.normalize = normalize
         self.scale = scale
+
+        if self.scale:
+            assert self.normalize, "Normalization must be enabled if scaling is enabled"
 
         # Preprocess and optionally encode context
         self.data = self._preprocess_data(data)

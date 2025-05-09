@@ -51,6 +51,8 @@ wandb = "^0.19.6"
 pytest-cov = "^6.0.0"
 boto3 = "^1.36.24"
 botocore = "^1.36.24"
+ipykernel = "^6.29.5"
+jupyter = "^1.1.1"
 
 
 [tool.poetry.group.dev.dependencies]
