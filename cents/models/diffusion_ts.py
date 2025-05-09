@@ -10,15 +10,15 @@ from omegaconf import DictConfig
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-from endata.models.base import GenerativeModel
-from endata.models.model_utils import (
+from cents.models.base import GenerativeModel
+from cents.models.model_utils import (
     Transformer,
     cosine_beta_schedule,
     default,
     linear_beta_schedule,
     total_correlation,
 )
-from endata.models.registry import register_model
+from cents.models.registry import register_model
 
 
 @register_model("diffusion_ts")

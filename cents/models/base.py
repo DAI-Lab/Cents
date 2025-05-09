@@ -5,12 +5,12 @@ import pytorch_lightning as pl
 import torch
 from omegaconf import DictConfig
 
-from endata.models.context import ContextModule
+from cents.models.context import ContextModule
 
 
 class BaseModel(pl.LightningModule, ABC):
     """
-    Abstract base class for all EnData PyTorch-Lightning models.
+    Abstract base class for all Cents PyTorch-Lightning models.
 
     This class handles common setup:
     - stores the Hydra configuration object

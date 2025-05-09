@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from endata.eval.eval import calculate_mmd, dynamic_time_warping_dist
+from cents.eval.eval import calculate_mmd, dynamic_time_warping_dist
 
 
 def test_dtw_identical_zero():

@@ -135,7 +135,7 @@ def discriminative_score_metrics(
     # Training loop
     for _ in tqdm(
         range(iterations),
-        desc="[EnData] Training Discriminative Score Model",
+        desc="[Cents] Training Discriminative Score Model",
         total=iterations,
     ):
         # Batch generation

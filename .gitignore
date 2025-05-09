@@ -106,19 +106,19 @@ ENV/
 .*.swp
 
 # Repository Specific
-endata/data/*
-endata/data/pecanstreet/*
-endata/data/custom/
+cents/data/*
+cents/data/pecanstreet/*
+cents/data/custom/
 .DS_Store
 .ipynb_checkpoints
-endata/.DS_Store
-endata/runs/*
-endata/Checkpoints_syn
-endata/logs/*
-endata/outputs/*
+cents/.DS_Store
+cents/runs/*
+cents/Checkpoints_syn
+cents/logs/*
+cents/outputs/*
 outputs/*
-endata/checkpoints/*
-endata/data/custom
+cents/checkpoints/*
+cents/data/custom
 tutorials/outputs
 checkpoints
 bfg.jar

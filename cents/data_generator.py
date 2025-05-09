@@ -10,16 +10,16 @@ import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, ListConfig
 
-from endata.datasets.utils import convert_generated_data_to_df
-from endata.models.acgan import ACGAN  # required for model registry
-from endata.models.diffusion_ts import Diffusion_TS  # required for model registry
-from endata.models.normalizer import Normalizer
-from endata.models.registry import get_model_cls
-from endata.utils.utils import _ckpt_name, get_device, get_normalizer_training_config
+from cents.datasets.utils import convert_generated_data_to_df
+from cents.models.acgan import ACGAN  # required for model registry
+from cents.models.diffusion_ts import Diffusion_TS  # required for model registry
+from cents.models.normalizer import Normalizer
+from cents.models.registry import get_model_cls
+from cents.utils.utils import _ckpt_name, get_device, get_normalizer_training_config
 
 PKG_ROOT = Path(__file__).resolve().parent
 CONF_DIR = PKG_ROOT / "config"
-CACHE_DIR = Path.home() / ".cache" / "endata" / "checkpoints"
+CACHE_DIR = Path.home() / ".cache" / "cents" / "checkpoints"
 
 torch.serialization.add_safe_globals({DictConfig, ListConfig})
 
@@ -244,7 +244,7 @@ class DataGenerator:
                 raise FileNotFoundError(src)
             obj = torch.load(src, map_location="cpu", weights_only=False)
             print(
-                f"[EnData] Loading full checkpoint (weights + metadata) from {src}. Use `.pt` for safer minimal loading."
+                f"[Cents] Loading full checkpoint (weights + metadata) from {src}. Use `.pt` for safer minimal loading."
             )
             return src, obj.get("state_dict", obj)
         elif isinstance(src, dict):
@@ -271,10 +271,10 @@ class DataGenerator:
             RuntimeError: On download failure when must_exist is True.
         """
         if tgt.exists():
-            print(f"[EnData] using cached {tgt.relative_to(tgt.parent.parent)}")
+            print(f"[Cents] using cached {tgt.relative_to(tgt.parent.parent)}")
             return tgt
         tgt.parent.mkdir(parents=True, exist_ok=True)
-        print(f"[EnData] ↓  {bucket}/{key}  →  {tgt}")
+        print(f"[Cents] ↓  {bucket}/{key}  →  {tgt}")
         try:
             boto3.client(
                 "s3", config=botocore.config.Config(signature_version=botocore.UNSIGNED)

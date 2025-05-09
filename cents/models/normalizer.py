@@ -7,10 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
-from endata.datasets.utils import split_timeseries
-from endata.models.base import NormalizerModel
-from endata.models.context import ContextModule
-from endata.models.registry import register_model
+from cents.datasets.utils import split_timeseries
+from cents.models.base import NormalizerModel
+from cents.models.context import ContextModule
+from cents.models.registry import register_model
 
 
 class _StatsHead(nn.Module):

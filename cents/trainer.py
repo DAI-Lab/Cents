@@ -10,11 +10,11 @@ from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from endata.data_generator import DataGenerator
-from endata.datasets.timeseries_dataset import TimeSeriesDataset
-from endata.eval.eval import Evaluator
-from endata.models.registry import get_model_cls
-from endata.utils.utils import get_normalizer_training_config
+from cents.data_generator import DataGenerator
+from cents.datasets.timeseries_dataset import TimeSeriesDataset
+from cents.eval.eval import Evaluator
+from cents.models.registry import get_model_cls
+from cents.utils.utils import get_normalizer_training_config
 
 PKG_ROOT = Path(__file__).resolve().parent
 CONF_DIR = PKG_ROOT / "config"
@@ -193,7 +193,7 @@ class Trainer:
         logger = False
         if getattr(self.cfg, "wandb", None) and self.cfg.wandb.enabled:
             logger = WandbLogger(
-                project=self.cfg.wandb.project or "EnData",
+                project=self.cfg.wandb.project or "cents",
                 entity=self.cfg.wandb.entity,
                 name=self.cfg.wandb.name,
                 save_dir=self.cfg.run_dir,

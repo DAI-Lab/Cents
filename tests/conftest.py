@@ -7,8 +7,8 @@ import pytest
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 
-from endata.datasets.timeseries_dataset import TimeSeriesDataset
-from endata.trainer import Trainer
+from cents.datasets.timeseries_dataset import TimeSeriesDataset
+from cents.trainer import Trainer
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

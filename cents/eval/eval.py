@@ -14,16 +14,16 @@ import torch
 import wandb
 from omegaconf import DictConfig, OmegaConf
 
-from endata.eval.discriminative_score import discriminative_score_metrics
-from endata.eval.eval_metrics import (
+from cents.eval.discriminative_score import discriminative_score_metrics
+from cents.eval.eval_metrics import (
     Context_FID,
     calculate_mmd,
     dynamic_time_warping_dist,
 )
-from endata.eval.predictive_score import predictive_score_metrics
-from endata.models.acgan import ACGAN
-from endata.models.diffusion_ts import Diffusion_TS
-from endata.utils.utils import get_device
+from cents.eval.predictive_score import predictive_score_metrics
+from cents.models.acgan import ACGAN
+from cents.models.diffusion_ts import Diffusion_TS
+from cents.utils.utils import get_device
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class Evaluator:
             results_dir = cfg.evaluator.get("save_dir") or os.path.join(
                 Path.home(),
                 ".cache",
-                "endata",
+                "cents",
                 "results",
                 self.model_name,
                 self.real_dataset.name,
@@ -109,9 +109,9 @@ class Evaluator:
         model.to(self.device)
 
         if user_id is not None:
-            logger.info(f"[EnData] Starting evaluation for user {user_id}")
+            logger.info(f"[Cents] Starting evaluation for user {user_id}")
         else:
-            logger.info("[EnData] Starting evaluation for all users")
+            logger.info("[Cents] Starting evaluation for all users")
         logger.info("----------------------")
 
         self.run_evaluation(dataset, model)
@@ -141,7 +141,7 @@ class Evaluator:
         with open(metadata_file, "w") as f:
             json.dump(self.current_results["metadata"], f, indent=2)
 
-        logger.info(f"[EnData] Saved evaluation results to {results_file}")
+        logger.info(f"[Cents] Saved evaluation results to {results_file}")
         return results_file, metadata_file
 
     def load_results(self, timestamp: Optional[str] = None) -> Dict:
@@ -188,35 +188,35 @@ class Evaluator:
             real_data_frame (pd.DataFrame): Real data subset (inverse-transformed)
             mask (Optional[np.ndarray]): Boolean array indicating which rows are "rare"
         """
-        logger.info(f"[EnData] --- Starting Full-Subset Metrics ---")
+        logger.info(f"[Cents] --- Starting Full-Subset Metrics ---")
 
         metrics = {}
 
         # Compute and store metrics
         dtw_mean, dtw_std = dynamic_time_warping_dist(real_data, syn_data)
         metrics["DTW"] = {"mean": dtw_mean, "std": dtw_std}
-        logger.info(f"[EnData] DTW completed")
+        logger.info(f"[Cents] DTW completed")
 
         mmd_mean, mmd_std = calculate_mmd(real_data, syn_data)
         metrics["MMD"] = {"mean": mmd_mean, "std": mmd_std}
-        logger.info(f"[EnData] MMD completed")
+        logger.info(f"[Cents] MMD completed")
 
         fid_score = Context_FID(real_data, syn_data)
         metrics["Context_FID"] = fid_score
-        logger.info(f"[EnData] Context-FID completed")
+        logger.info(f"[Cents] Context-FID completed")
 
         discr_score, _, _ = discriminative_score_metrics(real_data, syn_data)
         metrics["Disc_Score"] = discr_score
-        logger.info(f"[EnData] Discr Score completed")
+        logger.info(f"[Cents] Discr Score completed")
 
         pred_score = predictive_score_metrics(real_data, syn_data)
         metrics["Pred_Score"] = pred_score
-        logger.info(f"[EnData] Pred Score completed")
+        logger.info(f"[Cents] Pred Score completed")
 
         self.current_results["metrics"] = metrics
 
         if mask is not None:
-            logger.info("[EnData] Starting Rare-Subset Metrics")
+            logger.info("[Cents] Starting Rare-Subset Metrics")
             rare_metrics = {}
             rare_real_data = real_data[mask]
             rare_syn_data = syn_data[mask]
@@ -226,27 +226,27 @@ class Evaluator:
                 rare_real_data, rare_syn_data
             )
             rare_metrics["DTW"] = {"mean": dtw_mean_r, "std": dtw_std_r}
-            logger.info(f"[EnData] DTW completed")
+            logger.info(f"[Cents] DTW completed")
 
             mmd_mean_r, mmd_std_r = calculate_mmd(rare_real_data, rare_syn_data)
             rare_metrics["MMD"] = {"mean": mmd_mean_r, "std": mmd_std_r}
-            logger.info(f"[EnData] MMD completed")
+            logger.info(f"[Cents] MMD completed")
 
             fid_score_r = Context_FID(rare_real_data, rare_syn_data)
             rare_metrics["Context_FID"] = fid_score_r
-            logger.info(f"[EnData] Context-FID completed")
+            logger.info(f"[Cents] Context-FID completed")
 
             discr_score_r, _, _ = discriminative_score_metrics(
                 rare_real_data, rare_syn_data
             )
             rare_metrics["Disc_Score"] = discr_score_r
-            logger.info(f"[EnData] Discr Score completed")
+            logger.info(f"[Cents] Discr Score completed")
 
             pred_score_r = predictive_score_metrics(rare_real_data, rare_syn_data)
             rare_metrics["Pred_Score"] = pred_score_r
-            logger.info(f"[EnData] Pred Score completed")
+            logger.info(f"[Cents] Pred Score completed")
 
-            logger.info("[EnData] Done computing Rare-Subset Metrics.")
+            logger.info("[Cents] Done computing Rare-Subset Metrics.")
             metrics["rare_subset"] = rare_metrics
 
     def get_trained_model(self, dataset: Any) -> Any:
@@ -274,7 +274,7 @@ class Evaluator:
             model: The trained model.
         """
         logger.info(
-            f"[EnData] Starting evaluation of {self.model_name} with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters."
+            f"[Cents] Starting evaluation of {self.model_name} with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters."
         )
         all_indices = dataset.data.index.to_numpy()
         self.evaluate_subset(dataset, model, all_indices)

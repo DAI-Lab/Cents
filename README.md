@@ -3,12 +3,12 @@
 <i>An open source project from Data to AI Lab at MIT.</i>
 </p>
 
-[![PyPI Shield](https://img.shields.io/pypi/v/EnData.svg)](https://pypi.python.org/pypi/endata)
-[![Downloads](https://pepy.tech/badge/endata)](https://pepy.tech/project/endata)
-[![GitHub Actions Build Status](https://github.com/DAI-Lab/EnData/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DAI-Lab/EnData/actions)
+[![PyPI Shield](https://img.shields.io/pypi/v/Cents.svg)](https://pypi.python.org/pypi/cents)
+[![Downloads](https://pepy.tech/badge/cents)](https://pepy.tech/project/cents)
+[![GitHub Actions Build Status](https://github.com/DAI-Lab/Cents/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DAI-Lab/Cents/actions)
 
 
-# EnData
+# Cents
 
 A library for generative modeling and evaluation of synthetic household-level electricity load timeseries. This package is still under active development.
 
@@ -16,7 +16,7 @@ A library for generative modeling and evaluation of synthetic household-level el
 
 # Overview
 
-EnData is a library built for generating *synthetic household-level electric load and generation timeseries*. EnData supports several generative time series models that can be used to train a time series data generator from scratch on a user-defined dataset. Additionally, EnData provides functionality for loading pre-trained model checkpoints that can be used to generate data instantly. Trained models can be evaluated using a series of metrics and visualizations also implemented here.
+Cents is a library built for generating *synthetic household-level electric load and generation timeseries*. Cents supports several generative time series models that can be used to train a time series data generator from scratch on a user-defined dataset. Additionally, Cents provides functionality for loading pre-trained model checkpoints that can be used to generate data instantly. Trained models can be evaluated using a series of metrics and visualizations also implemented here.
 
 These currently supported models are:
 
@@ -29,34 +29,34 @@ Feel free to look at our [tutorial notebooks]() to get started.
 
 ## Requirements
 
-**EnData** has been developed and tested on [Python 3.9]((https://www.python.org/downloads/)), [Python 3.10]((https://www.python.org/downloads/)) and [Python 3.11]((https://www.python.org/downloads/)).
+**Cents** has been developed and tested on [Python 3.9]((https://www.python.org/downloads/)), [Python 3.10]((https://www.python.org/downloads/)) and [Python 3.11]((https://www.python.org/downloads/)).
 
 Also, although it is not strictly required, the usage of a [virtualenv](https://virtualenv.pypa.io/en/latest/)
 is highly recommended in order to avoid interfering with other software installed in the system
-in which **EnData** is run.
+in which **Cents** is run.
 
-These are the minimum commands needed to create a virtualenv using python3.8 for **EnData**:
+These are the minimum commands needed to create a virtualenv using python3.8 for **Cents**:
 
 ```bash
 pip install virtualenv
-virtualenv -p $(which python3.9) endata-venv
+virtualenv -p $(which python3.9) cents-venv
 ```
 
 Afterwards, you have to execute this command to activate the virtualenv:
 
 ```bash
-source endata-venv/bin/activate
+source cents-venv/bin/activate
 ```
 
-Remember to execute it every time you start a new console to work on **EnData**!
+Remember to execute it every time you start a new console to work on **Cents**!
 
 ## Install from PyPI
 
 After creating the virtualenv and activating it, we recommend using
-[pip](https://pip.pypa.io/en/stable/) in order to install **EnData**:
+[pip](https://pip.pypa.io/en/stable/) in order to install **Cents**:
 
 ```bash
-pip install endata
+pip install cents
 ```
 
 This will pull and install the latest stable release from [PyPI](https://pypi.org/).
@@ -68,8 +68,8 @@ With your virtualenv activated, you can clone the repository and install it from
 source by running `make install` on the `stable` branch:
 
 ```bash
-git clone git@github.com:michael-fuest/EnData.git
-cd EnData
+git clone git@github.com:michael-fuest/Cents.git
+cd Cents
 git checkout stable
 make install
 ``` -->
@@ -79,13 +79,13 @@ make install
 If you want to contribute to the project, a few more steps are required to make the project ready
 for development.
 
-Please head to the [Contributing Guide](https://michael-fuest.github.io/EnData/contributing.html#get-started)
+Please head to the [Contributing Guide](https://michael-fuest.github.io/Cents/contributing.html#get-started)
 for more details about this process. -->
 
 <!-- # Quickstart
 
 In this short tutorial we will guide you through a series of steps that will help you
-getting started with **EnData**.
+getting started with **Cents**.
 
 ## Generating Data
 

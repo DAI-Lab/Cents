@@ -1,13 +1,10 @@
 from datetime import datetime
 
-import torch
-
-from endata.datasets.pecanstreet import PecanStreetDataset
-from endata.trainer import Trainer
+from cents.datasets.pecanstreet import PecanStreetDataset
+from cents.trainer import Trainer
 
 
 def main() -> None:
-
     MODEL_NAME = "diffusion_ts"
     dataset = PecanStreetDataset(
         overrides=["user_group=pv_users", "time_series_dims=2"]
@@ -17,7 +14,7 @@ def main() -> None:
         "trainer.max_epochs=5000",
         "trainer.strategy=auto",
         "wandb.enabled=True",
-        "wandb.project=endata",
+        "wandb.project=cents",
         "wandb.entity=michael-fuest-technical-university-of-munich",
         f"wandb.name=test-{datetime.now().strftime('%Y%m%d-%H%M%S')}_{MODEL_NAME}",
     ]

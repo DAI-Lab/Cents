@@ -16,14 +16,14 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-from endata.eval.eval_utils import (
+from cents.eval.eval_utils import (
     centerize_vary_length_series,
     hierarchical_contrastive_loss,
     split_with_nan,
     take_per_row,
     torch_pad_nan,
 )
-from endata.eval.t2vec.encoder import TSEncoder
+from cents.eval.t2vec.encoder import TSEncoder
 
 
 class TS2Vec:

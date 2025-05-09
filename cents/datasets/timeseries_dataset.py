@@ -13,9 +13,9 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from sklearn.cluster import KMeans
 from torch.utils.data import DataLoader, Dataset
 
-from endata.datasets.utils import encode_context_variables
-from endata.models.normalizer import Normalizer
-from endata.utils.utils import _ckpt_name, get_normalizer_training_config
+from cents.datasets.utils import encode_context_variables
+from cents.models.normalizer import Normalizer
+from cents.utils.utils import _ckpt_name, get_normalizer_training_config
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -410,7 +410,7 @@ class TimeSeriesDataset(Dataset):
         On subsequent runs, loads that file. If loading fails, deletes the corrupted cache and retrains.
         """
         normalizer_dir = (
-            Path.home() / ".cache" / "endata" / "checkpoints" / self.name / "normalizer"
+            Path.home() / ".cache" / "cents" / "checkpoints" / self.name / "normalizer"
         )
         normalizer_dir.mkdir(parents=True, exist_ok=True)
         cache_path = normalizer_dir / _ckpt_name(
@@ -431,7 +431,7 @@ class TimeSeriesDataset(Dataset):
                 sd = state.get("state_dict", state)
                 self._normalizer.load_state_dict(sd)
                 self._normalizer.eval()
-                print(f"[EnData] Loaded normalizer from {cache_path}")
+                print(f"[Cents] Loaded normalizer from {cache_path}")
                 return
             except Exception:
                 try:
@@ -440,7 +440,7 @@ class TimeSeriesDataset(Dataset):
                     pass
 
         # train and cache a single state dict
-        print("[EnData] Training normalizer…")
+        print("[Cents] Training normalizer…")
         trainer = pl.Trainer(
             max_epochs=ncfg.n_epochs,
             accelerator=ncfg.accelerator,
@@ -451,4 +451,4 @@ class TimeSeriesDataset(Dataset):
         )
         trainer.fit(self._normalizer)
         torch.save(self._normalizer.state_dict(), cache_path)
-        print(f"[EnData] Saved normalizer to {cache_path}")
+        print(f"[Cents] Saved normalizer to {cache_path}")

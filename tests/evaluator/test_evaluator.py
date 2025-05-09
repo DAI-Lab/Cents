@@ -5,9 +5,8 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-import endata.eval.eval as eval_mod
-import endata.eval.eval_utils as utils_mod
-from endata.eval.eval import Evaluator
+import cents.eval.eval as eval_mod
+from cents.eval.eval import Evaluator
 
 
 @pytest.fixture(autouse=True)

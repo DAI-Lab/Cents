@@ -7,7 +7,7 @@ import pandas as pd
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig
 
-from endata.datasets.timeseries_dataset import TimeSeriesDataset
+from cents.datasets.timeseries_dataset import TimeSeriesDataset
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

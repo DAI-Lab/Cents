@@ -38,8 +38,8 @@ and "help wanted" is open to whoever wants to implement it.
 Write Documentation
 ~~~~~~~~~~~~~~~~~~~
 
-EnData could always use more documentation, whether as part of the
-official EnData docs, in docstrings, or even on the web in blog posts,
+Cents could always use more documentation, whether as part of the
+official Cents docs, in docstrings, or even on the web in blog posts,
 articles, and such.
 
 Submit Feedback
@@ -57,12 +57,12 @@ If you are proposing a feature:
 Get Started!
 ------------
 
-Ready to contribute? Here's how to set up `EnData` for local development.
+Ready to contribute? Here's how to set up `Cents` for local development.
 
-1. Fork the `EnData` repo on GitHub.
+1. Fork the `Cents` repo on GitHub.
 2. Clone your fork locally::
 
-    $ git clone git@github.com:your_name_here/EnData.git
+    $ git clone git@github.com:your_name_here/Cents.git
 
 3. Install your local copy into a virtualenv. Assuming you have virtualenvwrapper installed,
    this is how you set up your fork for local development::
@@ -122,9 +122,9 @@ All the Unit Tests should comply with the following requirements:
 
 1. Unit Tests should be based only in unittest and pytest modules.
 
-2. The tests that cover a module called ``endata/path/to/a_module.py``
+2. The tests that cover a module called ``Cents/path/to/a_module.py``
    should be implemented in a separated module called
-   ``tests/endata/path/to/test_a_module.py``.
+   ``tests/Cents/path/to/test_a_module.py``.
    Note that the module name has the ``test_`` prefix and is located in a path similar
    to the one of the tested module, just inside the ``tests`` folder.
 
@@ -154,7 +154,7 @@ Tips
 
 To run a subset of tests::
 
-    $ python -m pytest tests.test_endata
+    $ python -m pytest tests.test_Cents
     $ python -m pytest -k 'foo'
 
 Release Workflow
@@ -162,6 +162,6 @@ Release Workflow
 
 tbd
 
-.. _GitHub issues page: https://github.com/michael-fuest/EnData/issues
-.. _Build Status page: https://github.com/michael-fuest/EnData/actions
+.. _GitHub issues page: https://github.com/michael-fuest/Cents/issues
+.. _Build Status page: https://github.com/michael-fuest/Cents/actions
 .. _Google docstrings style: https://google.github.io/styleguide/pyguide.html?showone=Comments#Comments

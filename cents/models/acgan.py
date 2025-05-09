@@ -17,10 +17,10 @@ import torch.nn as nn
 import torch.optim as optim
 from omegaconf import DictConfig
 
-from endata.models.base import GenerativeModel
-from endata.models.context import ContextModule
-from endata.models.model_utils import total_correlation
-from endata.models.registry import register_model
+from cents.models.base import GenerativeModel
+from cents.models.context import ContextModule
+from cents.models.model_utils import total_correlation
+from cents.models.registry import register_model
 
 
 class Generator(nn.Module):

@@ -59,7 +59,7 @@ def predictive_score_metrics(ori_data, generated_data):
 
     for itt in tqdm(
         range(iterations),
-        desc="[EnData] Training Predictive Score Model",
+        desc="[Cents] Training Predictive Score Model",
         total=iterations,
     ):
         idx = np.random.permutation(len(generated_data))

@@ -7,12 +7,12 @@ import pandas as pd
 import scipy
 from dtaidistance import dtw
 
-from endata.eval.eval_utils import (
+from cents.eval.eval_utils import (
     gaussian_kernel_matrix,
     get_period_bounds,
     maximum_mean_discrepancy,
 )
-from endata.eval.t2vec.t2vec import TS2Vec
+from cents.eval.t2vec.t2vec import TS2Vec
 
 
 def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[float, float]:
