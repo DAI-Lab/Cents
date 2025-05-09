@@ -1,6 +1,7 @@
 _target_: generator.diffusion_ts.gaussian_diffusion.Diffusion_TS
 name: diffusion_ts
 context_reconstruction_loss_weight: 0.1
+tc_loss_weight: 0.0
 noise_dim: 256
 cond_emb_dim: 16
 n_layer_enc: 4
