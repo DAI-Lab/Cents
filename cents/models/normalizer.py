@@ -151,7 +151,9 @@ class Normalizer(NormalizerModel):
         self.dataset = dataset
 
         self.context_vars = list(dataset_cfg.context_vars.keys())
-        self.time_series_cols = dataset_cfg.time_series_columns
+        self.time_series_cols = dataset_cfg.time_series_columns[
+            : dataset_cfg.time_series_dims
+        ]
         self.time_series_dims = dataset_cfg.time_series_dims
         self.do_scale = dataset_cfg.scale
 

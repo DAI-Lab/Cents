@@ -123,3 +123,4 @@ tutorials/outputs
 checkpoints
 bfg.jar
 lightning_logs/*
+wandb/*

@@ -1000,3 +1000,23 @@ def create_visualizations(
 #         fig.tight_layout()
 #         wandb.log({f"ShiftPlot_{j}": wandb.Image(fig)})
 #         plt.close(fig)
+
+
+def flatten_log_dict(d: Dict[str, Any], prefix: str = "") -> Dict[str, float]:
+    """
+    Flatten a dictionary of log values into a single dictionary of floats.
+
+    Args:
+        d (Dict[str, Any]): The dictionary to flatten
+        prefix (str): The prefix to add to the keys
+    Returns:
+        Dict[str, float]: A flattened dictionary of floats
+    """
+    flat = {}
+    for k, v in d.items():
+        name = f"{prefix}{k}"
+        if isinstance(v, dict):
+            flat.update(flatten_log_dict(v, prefix=name + "/"))
+        else:
+            flat[name] = float(v)
+    return flat

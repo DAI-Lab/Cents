@@ -1,15 +1,13 @@
-import inspect
-import os
-import warnings
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import pytorch_lightning as pl
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
+import wandb
 from cents.data_generator import DataGenerator
 from cents.datasets.timeseries_dataset import TimeSeriesDataset
 from cents.eval.eval import Evaluator
@@ -189,7 +187,7 @@ class Trainer:
                 save_on_train_epoch_end=True,
             )
         )
-
+        callbacks.append(EvalAfterTraining(self.cfg, self.dataset))
         logger = False
         if getattr(self.cfg, "wandb", None) and self.cfg.wandb.enabled:
             logger = WandbLogger(
@@ -211,3 +209,23 @@ class Trainer:
             logger=logger,
             default_root_dir=self.cfg.run_dir,
         )
+
+
+class EvalAfterTraining(Callback):
+    """Run full evaluator at the *end* of training and log metrics to W&B."""
+
+    def __init__(self, cfg, dataset):
+        super().__init__()
+        self.cfg = cfg
+        self.dataset = dataset
+
+    def on_train_end(self, trainer, pl_module):
+        if not self.cfg.trainer.get("eval_after_training", False):
+            return
+
+        evaluator = Evaluator(self.cfg, self.dataset)
+        results = evaluator.evaluate_model(model=pl_module)
+
+        run = getattr(trainer.logger, "experiment", None)
+        if run is not None:
+            run.log(results["metrics"])

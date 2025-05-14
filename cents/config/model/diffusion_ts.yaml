@@ -24,4 +24,4 @@ reg_weight: null
 gradient_accumulate_every: 2
 ema_decay: 0.99
 ema_update_interval: 10
-use_ema_sampling: True
+use_ema_sampling: False

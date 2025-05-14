@@ -1,11 +1,13 @@
 from functools import partial
-from typing import Tuple
+from typing import Dict, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy
 from dtaidistance import dtw
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mutual_info_score, r2_score
 
 from cents.eval.eval_utils import (
     gaussian_kernel_matrix,
@@ -167,3 +169,96 @@ def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
     gen_represenation = gen_represenation[idx]
     results = calculate_fid(ori_represenation, gen_represenation)
     return results
+
+
+def compute_mig(
+    embeddings: np.ndarray,
+    context_vars: Dict[str, np.ndarray],
+    n_bins: int = 10,
+) -> Tuple[float, Dict[str, float]]:
+    """
+    Mutual-Information Gap (MIG) with robust binning.
+
+    Args:
+        embeddings : (N, D) float array
+        context_vars : dict[str, (N,) int array]
+        n_bins : number of equal-width bins for each latent dim
+
+    Returns:
+        overall_mig : float
+        per_var      : dict[str, float]
+    """
+    N, D = embeddings.shape
+    per_var: Dict[str, float] = {}
+    for name, labels in context_vars.items():
+        # build MI vector over latent dims
+        mi_vec = []
+        for d in range(D):
+            # skip degenerate dimensions
+            if np.allclose(embeddings[:, d], embeddings[0, d]):
+                mi_vec.append(0.0)
+                continue
+            edges = np.histogram_bin_edges(embeddings[:, d], bins=n_bins)
+            codes = np.digitize(embeddings[:, d], bins=edges[1:-1], right=False)
+            mi_vec.append(mutual_info_score(labels, codes))
+        mi = np.asarray(mi_vec)
+
+        # if MI is all zeros, MIG is zero
+        if mi.max() == 0.0:
+            per_var[name] = 0.0
+            continue
+
+        top2 = np.sort(mi)[-2:]
+        entropy = mutual_info_score(labels, labels) + 1e-12
+        per_var[name] = (top2[1] - top2[0]) / entropy  # (largest - second) / H
+
+    overall = float(np.mean(list(per_var.values()))) if per_var else 0.0
+    return overall, per_var
+
+
+def compute_sap(
+    embeddings: np.ndarray,
+    context_vars: Dict[str, np.ndarray],
+    reg_strength: float = 1e-3,
+) -> Tuple[float, Dict[str, float]]:
+    """
+    Compute the Separability-Attribute-Predictability (SAP) score.
+
+    Args:
+        embeddings : (N, D) float array
+            Latent codes h for N samples and D dimensions.
+
+        context_vars : dict[str, (N,) int array]
+            Mapping of context variable names to discrete labels.
+
+        reg_strength : float, default 1e-3
+            ℓ2-regularisation strength for the ridge regressors that predict
+            the factor labels from *one* latent coordinate at a time.
+
+    Returns:
+        overall_sap : float
+        Mean SAP score across factors.
+
+        per_var : dict[str, float]
+            SAP score for each individual context variable.
+    """
+    N, D = embeddings.shape
+    per_var = {}
+
+    for name, labels in context_vars.items():
+        # Convert labels to a float vector for regression (one-vs-rest works too)
+        y = labels.astype(float)
+        scores = []
+
+        for d in range(D):
+            # fit 1-D ridge regressor  h_d  ->  y
+            model = Ridge(alpha=reg_strength, fit_intercept=True)
+            model.fit(embeddings[:, [d]], y)
+            y_pred = model.predict(embeddings[:, [d]])
+            scores.append(r2_score(y, y_pred))  # goodness of fit
+
+        top2 = np.sort(scores)[-2:]  # best & second-best
+        per_var[name] = top2[1] - top2[0]  # SAP_i
+
+    overall = float(np.mean(list(per_var.values()))) if per_var else 0.0
+    return overall, per_var

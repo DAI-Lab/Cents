@@ -66,7 +66,7 @@ def check_inverse_transform(
         mse_list.append(mse)
 
     avg_mse = np.mean(mse_list)
-    print(f"Average MSE over all rows: {avg_mse}")
+    print(f"[Cents] Average MSE over all rows: {avg_mse}")
     return avg_mse
 
 

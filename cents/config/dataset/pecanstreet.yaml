@@ -12,7 +12,6 @@ time_series_columns: ["grid", "solar"]
 data_columns: ["dataid","local_15min","car1","grid","solar"]
 metadata_columns: ["dataid","building_type","solar","car1","city","state","total_square_footage","house_construction_year"]
 user_group: all # non_pv_users, all, pv_users
-user_id: null
 numeric_context_bins: 5
 
 context_vars: # for each desired context variable, add the name and number of categories

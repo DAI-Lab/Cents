@@ -11,15 +11,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 
+import wandb
 from cents.eval.discriminative_score import discriminative_score_metrics
 from cents.eval.eval_metrics import (
     Context_FID,
     calculate_mmd,
+    compute_mig,
+    compute_sap,
     dynamic_time_warping_dist,
 )
+from cents.eval.eval_utils import flatten_log_dict
 from cents.eval.predictive_score import predictive_score_metrics
 from cents.models.acgan import ACGAN
 from cents.models.diffusion_ts import Diffusion_TS
@@ -33,8 +36,7 @@ class Evaluator:
     A class for evaluating generative models on time series data.
 
     This class handles the evaluation process, including metric computation,
-    visualization generation, and results storage. It can evaluate models on
-    either the entire dataset or specific users.
+    visualization generation, and results storage.
 
     Attributes:
         cfg (DictConfig): Configuration for the evaluation process
@@ -85,33 +87,26 @@ class Evaluator:
 
     def evaluate_model(
         self,
-        user_id: Optional[int] = None,
         model: Optional[Any] = None,
     ) -> Dict:
         """
         Evaluate the model and store results.
 
         Args:
-            user_id (Optional[int]): The ID of the user to evaluate. If None, evaluate on the entire dataset.
             model (Optional[Any]): The model to evaluate. If None, will load or train a model.
 
         Returns:
             Dict: Dictionary containing the evaluation results
         """
-        if user_id is not None:
-            dataset = self.real_dataset.create_user_dataset(user_id)
-        else:
-            dataset = self.real_dataset
+        dataset = self.real_dataset
 
         if not model:
             model = self.get_trained_model(dataset)
 
         model.to(self.device)
+        model.eval()
 
-        if user_id is not None:
-            logger.info(f"[Cents] Starting evaluation for user {user_id}")
-        else:
-            logger.info("[Cents] Starting evaluation for all users")
+        logger.info("[Cents] Starting evaluation")
         logger.info("----------------------")
 
         self.run_evaluation(dataset, model)
@@ -120,7 +115,7 @@ class Evaluator:
             self.save_results()
 
         if self.cfg.get("wandb", {}).get("enabled", False) and wandb.run is not None:
-            wandb.log(self.current_results["metrics"])
+            wandb.log(flatten_log_dict(self.current_results["metrics"]))
 
         return self.current_results
 
@@ -172,7 +167,7 @@ class Evaluator:
 
         return {"metrics": metrics, "metadata": metadata}
 
-    def compute_metrics(
+    def compute_quality_metrics(
         self,
         real_data: np.ndarray,
         syn_data: np.ndarray,
@@ -213,8 +208,6 @@ class Evaluator:
         metrics["Pred_Score"] = pred_score
         logger.info(f"[Cents] Pred Score completed")
 
-        self.current_results["metrics"] = metrics
-
         if mask is not None:
             logger.info("[Cents] Starting Rare-Subset Metrics")
             rare_metrics = {}
@@ -248,6 +241,42 @@ class Evaluator:
 
             logger.info("[Cents] Done computing Rare-Subset Metrics.")
             metrics["rare_subset"] = rare_metrics
+
+        self.current_results["metrics"] = metrics
+
+    def compute_disentanglement_metrics(
+        self,
+        context_vars: Dict[str, torch.Tensor],
+        model: Any,
+    ) -> None:
+        """
+        Compute disentanglement metrics and store them in current_results.
+
+        Args:
+            context_vars (Dict[str, torch.Tensor]): Dictionary of context variables
+            model (Any): The model to evaluate
+        """
+        logger.info("[Cents] --- Starting Disentanglement Metrics ---")
+
+        with torch.no_grad():
+            h, _ = model.context_module(context_vars)  # (N, D)
+
+        emb_np = h.cpu().numpy()
+        ctx_np = {k: v.cpu().numpy() for k, v in context_vars.items()}
+
+        mig, mig_detail = compute_mig(emb_np, ctx_np)
+        sap, sap_detail = compute_sap(emb_np, ctx_np)
+
+        self.current_results["metrics"].setdefault("disentanglement", {})
+        self.current_results["metrics"]["disentanglement"].update(
+            {
+                "MIG": {"mean": mig, **mig_detail},
+                "SAP": {"mean": sap, **sap_detail},
+            }
+        )
+
+        logger.info("[Cents] MIG completed")
+        logger.info("[Cents] SAP completed")
 
     def get_trained_model(self, dataset: Any) -> Any:
         model_dict = {
@@ -326,6 +355,9 @@ class Evaluator:
             ):
                 rare_mask = real_data_subset["is_rare"].values
 
-            self.compute_metrics(
+            self.compute_quality_metrics(
                 real_data_array, syn_data_array, real_data_inv, rare_mask
             )
+
+        if self.cfg.evaluator.eval_disentanglement:
+            self.compute_disentanglement_metrics(context_vars, model)

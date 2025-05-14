@@ -178,7 +178,9 @@ class DataGenerator:
         if ckpt_path.suffix == ".ckpt":
             self.model = (
                 ModelCls.load_from_checkpoint(
-                    checkpoint_path=ckpt_path, map_location=device
+                    checkpoint_path=ckpt_path,
+                    map_location=device,
+                    strict=False,
                 )
                 .to(device)
                 .eval()

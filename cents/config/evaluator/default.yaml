@@ -1,7 +1,7 @@
 model_name: ${model.name}
 eval_pv_shift: False
 eval_metrics: True
-eval_vis: True
-eval_context_sparse: False
+eval_context_sparse: True
 save_results: False
+eval_disentanglement: True
 save_dir: ${run_dir}/eval
