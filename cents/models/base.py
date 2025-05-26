@@ -36,7 +36,6 @@ class BaseModel(pl.LightningModule, ABC):
         if cfg is not None:
             self.cfg = cfg
 
-            # build context embedding if needed
             if hasattr(cfg.dataset, "context_vars") and cfg.dataset.context_vars:
                 emb_dim = getattr(cfg.model, "cond_emb_dim", 256)
                 self.context_module = ContextModule(cfg.dataset.context_vars, emb_dim)

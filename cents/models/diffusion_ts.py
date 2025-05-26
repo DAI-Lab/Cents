@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from tqdm.auto import tqdm
 
 from cents.models.base import GenerativeModel
 from cents.models.model_utils import (
@@ -21,7 +22,7 @@ from cents.models.model_utils import (
 from cents.models.registry import register_model
 
 
-@register_model("diffusion_ts")
+@register_model("diffusion_ts", "Watts_2_1D", "Watts_2_2D")
 class Diffusion_TS(GenerativeModel):
     """
     PyTorch-Lightning module for a conditional time-series diffusion model.
@@ -408,7 +409,12 @@ class Diffusion_TS(GenerativeModel):
         total = len(next(iter(context_vars.values())))
         generated_samples = []
 
-        for start_idx in range(0, total, bs):
+        for start_idx in tqdm(
+            range(0, total, bs),
+            unit="seq",
+            desc="[CENTS] Generating samples",
+            leave=True,
+        ):
             end_idx = min(start_idx + bs, total)
             batch_context_vars = {
                 var_name: var_tensor[start_idx:end_idx]

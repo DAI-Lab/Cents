@@ -169,7 +169,7 @@ class Discriminator(nn.Module):
         return rf_logits, aux_logits
 
 
-@register_model("acgan")
+@register_model("acgan", "Watts_1_1D", "Watts_1_2D")
 class ACGAN(GenerativeModel):
     """
     Auxiliary Classifier GAN LightningModule combining Generator and Discriminator.

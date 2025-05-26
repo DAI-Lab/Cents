@@ -11,9 +11,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
+import wandb
 from omegaconf import DictConfig, OmegaConf
 
-import wandb
 from cents.eval.discriminative_score import discriminative_score_metrics
 from cents.eval.eval_metrics import (
     Context_FID,
@@ -61,6 +61,7 @@ class Evaluator:
         self.cfg = cfg
         self.model_name = cfg.model.name
         self.device = get_device(cfg.get("device", None))
+        print(f"[CENTS] Using device: {self.device} for evaluation")
 
         if results_dir is None:
             results_dir = cfg.evaluator.get("save_dir") or os.path.join(

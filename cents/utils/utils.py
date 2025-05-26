@@ -11,6 +11,16 @@ def _ckpt_name(dataset: str, model: str, dims: int, *, ext: str = "ckpt") -> str
     return f"{dataset}_{model}_dim{dims}.{ext}"
 
 
+def parse_dims_from_name(model_name: str) -> str:
+    # e.g., "Watts_2_1D" → "1D"
+    return model_name.split("_")[-1].replace("D", "")
+
+
+def parse_model_type_from_name(model_name: str) -> str:
+    # e.g., "Watts_2_1D" → "Watts"
+    return model_name.split("_")[0]
+
+
 def get_device(pref: str = None) -> torch.device:
     if pref in (None, "auto"):
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
