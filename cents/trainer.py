@@ -25,7 +25,7 @@ class Trainer:
     Supports ACGAN, Diffusion_TS and Normalizer via PyTorch Lightning and Hydra.
 
     Attributes:
-        model_key: Identifier of the model to train/evaluate.
+        model_type: Identifier of the model to train/evaluate.
         dataset: TimeSeriesDataset used for training and evaluation.
         cfg: Hydra configuration object.
         model: Instantiated model object.
@@ -62,7 +62,7 @@ class Trainer:
         if model_type == "normalizer" and dataset is None:
             raise ValueError("Normalizer training needs the raw dataset object.")
 
-        self.model_key = model_type
+        self.model_type = model_type
         self.dataset = dataset
         self.cfg = cfg or self._compose_cfg(overrides or [])
 
@@ -76,7 +76,7 @@ class Trainer:
         Returns:
             Self, to allow method chaining.
         """
-        if self.model_key == "normalizer":
+        if self.model_type == "normalizer":
             self.pl_trainer.fit(self.model)
         else:
             train_loader = self.dataset.get_train_dataloader(
@@ -97,7 +97,7 @@ class Trainer:
         Raises:
             RuntimeError: If called for the normalizer model (non-generative).
         """
-        if self.model_key == "normalizer":
+        if self.model_type == "normalizer":
             raise RuntimeError("Normalizer is not a generative model.")
 
         device = (
@@ -107,7 +107,7 @@ class Trainer:
         )
 
         gen = DataGenerator(
-            model_name=self.model_key,
+            model_name=self.model_type,
             device=device,
             cfg=self.cfg,
             model=self.model.eval(),
@@ -144,7 +144,7 @@ class Trainer:
         Returns:
             OmegaConf DictConfig.
         """
-        base_ov = [f"model={self.model_key}", f"trainer={self.model_key}"]
+        base_ov = [f"model={self.model_type}", f"trainer={self.model_type}"]
         with initialize_config_dir(str(CONF_DIR), version_base=None):
             cfg = compose(config_name="config", overrides=base_ov + ov)
         if self.dataset is not None:
@@ -155,10 +155,10 @@ class Trainer:
 
     def _instantiate_model(self):
         """
-        Instantiate the model class from the registry based on model_key.
+        Instantiate the model class from the registry based on model_type.
         """
-        ModelCls = get_model_cls(self.model_key)
-        if self.model_key == "normalizer":
+        ModelCls = get_model_cls(self.model_type)
+        if self.model_type == "normalizer":
             nm_cfg = get_normalizer_training_config()
             return ModelCls(
                 dataset_cfg=self.cfg.dataset,
@@ -180,7 +180,7 @@ class Trainer:
             ModelCheckpoint(
                 dirpath=self.cfg.run_dir,
                 filename=(
-                    f"{self.cfg.dataset.name}_{self.model_key}"
+                    f"{self.cfg.dataset.name}_{self.model_type}"
                     f"_dim{self.cfg.dataset.time_series_dims}"
                 ),
                 save_last=tc.checkpoint.save_last,
