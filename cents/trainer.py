@@ -2,12 +2,12 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import pytorch_lightning as pl
+import wandb
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-import wandb
 from cents.data_generator import DataGenerator
 from cents.datasets.timeseries_dataset import TimeSeriesDataset
 from cents.eval.eval import Evaluator
@@ -34,7 +34,7 @@ class Trainer:
 
     def __init__(
         self,
-        model_name: str,
+        model_type: str,
         dataset: Optional[TimeSeriesDataset] = None,
         cfg: Optional[DictConfig] = None,
         overrides: Optional[List[str]] = None,
@@ -43,26 +43,26 @@ class Trainer:
         Initialize the Trainer.
 
         Args:
-            model_name: Key of the model ("acgan", "diffusion_ts", or "normalizer").
+            model_type: Key of the model ("acgan", "diffusion_ts", or "normalizer").
             dataset: Dataset object required for generative models; optional for normalizer.
             cfg: Full OmegaConf DictConfig; if None, composed via Hydra.
             overrides: List of Hydra override strings.
 
         Raises:
-            ValueError: If model_name is unknown or dataset requirements are not met.
+            ValueError: If model_type is unknown or dataset requirements are not met.
         """
         try:
-            get_model_cls(model_name)
+            get_model_cls(model_type)
         except ValueError:
-            raise ValueError(f"Unknown model '{model_name}'")
+            raise ValueError(f"Unknown model '{model_type}'")
 
-        if model_name != "normalizer" and dataset is None:
-            raise ValueError(f"Model '{model_name}' requires a TimeSeriesDataset.")
+        if model_type != "normalizer" and dataset is None:
+            raise ValueError(f"Model '{model_type}' requires a TimeSeriesDataset.")
 
-        if model_name == "normalizer" and dataset is None:
+        if model_type == "normalizer" and dataset is None:
             raise ValueError("Normalizer training needs the raw dataset object.")
 
-        self.model_key = model_name
+        self.model_key = model_type
         self.dataset = dataset
         self.cfg = cfg or self._compose_cfg(overrides or [])
 
