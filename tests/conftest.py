@@ -149,10 +149,10 @@ def load_dataset_config(case: str) -> DictConfig:
     return ds_cfg
 
 
-def load_model_config(model_name: str) -> DictConfig:
+def load_model_config(model_type: str) -> DictConfig:
     config_dir = os.path.join(ROOT_DIR, "tests", "test_configs", "model")
     with initialize_config_dir(config_dir=config_dir, version_base=None):
-        model_cfg = compose(config_name=model_name, overrides=[])
+        model_cfg = compose(config_name=model_type, overrides=[])
     return model_cfg
 
 
@@ -227,7 +227,7 @@ def dummy_trainer_diffusion_1d(
     merged_cfg = OmegaConf.merge(merged_cfg, {"trainer": trainer_cfg_diffusion})
     merged_cfg.run_dir = str(tmp_path)
     trainer = Trainer(
-        model_name="diffusion_ts", dataset=normalized_dataset_1d, cfg=merged_cfg
+        model_type="diffusion_ts", dataset=normalized_dataset_1d, cfg=merged_cfg
     )
     return trainer
 
@@ -240,7 +240,7 @@ def dummy_trainer_acgan_1d(
     merged_cfg = OmegaConf.merge(full_cfg_1d, {"model": model_cfg_acgan})
     merged_cfg = OmegaConf.merge(merged_cfg, {"trainer": trainer_cfg_acgan})
     merged_cfg.run_dir = str(tmp_path)
-    trainer = Trainer(model_name="acgan", dataset=normalized_dataset_1d, cfg=merged_cfg)
+    trainer = Trainer(model_type="acgan", dataset=normalized_dataset_1d, cfg=merged_cfg)
     return trainer
 
 
@@ -257,7 +257,7 @@ def dummy_trainer_diffusion_2d(
     merged_cfg = OmegaConf.merge(merged_cfg, {"trainer": trainer_cfg_diffusion})
     merged_cfg.run_dir = str(tmp_path)
     trainer = Trainer(
-        model_name="diffusion_ts", dataset=normalized_dataset_2d, cfg=merged_cfg
+        model_type="diffusion_ts", dataset=normalized_dataset_2d, cfg=merged_cfg
     )
     return trainer
 
@@ -270,5 +270,5 @@ def dummy_trainer_acgan_2d(
     merged_cfg = OmegaConf.merge(full_cfg_2d, {"model": model_cfg_acgan})
     merged_cfg = OmegaConf.merge(merged_cfg, {"trainer": trainer_cfg_acgan})
     merged_cfg.run_dir = str(tmp_path)
-    trainer = Trainer(model_name="acgan", dataset=normalized_dataset_2d, cfg=merged_cfg)
+    trainer = Trainer(model_type="acgan", dataset=normalized_dataset_2d, cfg=merged_cfg)
     return trainer
