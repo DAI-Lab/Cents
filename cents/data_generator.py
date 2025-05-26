@@ -63,6 +63,7 @@ class DataGenerator:
                 self.set_dataset_spec(
                     cfg.dataset, self._read_ctx_codes(cfg.dataset.name)
                 )
+                self.model_type = cfg.model.name
         elif model_name is not None:
             self.model_type = get_model_type_from_hf_name(model_name)
             self.cfg = cfg or self._default_cfg()

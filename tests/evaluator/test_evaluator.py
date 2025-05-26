@@ -59,6 +59,7 @@ def cfg(tmp_path):
                 "eval_vis": True,
                 "eval_pv_shift": False,
                 "eval_context_sparse": False,
+                "eval_disentanglement": False,
             },
         }
     )
@@ -81,7 +82,7 @@ def test_compute_metrics_sets_all_keys(evaluator):
             "context": [0, 1, 0],
         }
     )
-    evaluator.compute_metrics(real, syn, df)
+    evaluator.compute_quality_metrics(real, syn, df)
     for key in ("DTW", "MMD", "Context_FID", "Disc_Score", "Pred_Score"):
         assert key in evaluator.current_results["metrics"], f"{key} missing"
 
@@ -101,6 +102,9 @@ def test_save_and_load_roundtrip(tmp_path, evaluator):
 def test_run_evaluation_and_evaluate_model(evaluator):
     class DummyModel:
         def to(self, device):
+            return self
+
+        def eval(self):
             return self
 
         def generate(self, ctx):
