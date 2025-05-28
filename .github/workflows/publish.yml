@@ -1,0 +1,34 @@
+name: Publish Python 🐍 distributions 📦 to PyPI
+
+on:
+  push:
+    tags:
+      - 'v*'  # Only run on version tags
+
+permissions:
+  id-token: write  # Required for OIDC
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Install dependencies
+        run: poetry install --no-root
+
+      - name: Build package
+        run: poetry build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
