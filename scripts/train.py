@@ -7,14 +7,12 @@ from cents.trainer import Trainer
 def main() -> None:
     MODEL_NAME = "acgan"
     CR_LOSS_WEIGHT = 0.1
-    TC_LOSS_WEIGHT = 0.0
-    dataset = PecanStreetDataset(
-        overrides=["user_group=pv_users", "time_series_dims=2"]
-    )
+    TC_LOSS_WEIGHT = 0.1
+    dataset = PecanStreetDataset(overrides=["user_group=all", "time_series_dims=2"])
 
     trainer_overrides = [
-        "trainer.max_epochs=3000",
-        "trainer.strategy=auto",
+        "trainer.max_epochs=5000",
+        "trainer.strategy=ddp_find_unused_parameters_true",
         "trainer.eval_after_training=True",
         "wandb.enabled=True",
         "wandb.project=cents",
@@ -25,7 +23,7 @@ def main() -> None:
     ]
 
     trainer = Trainer(
-        model_name=MODEL_NAME,
+        model_type=MODEL_NAME,
         dataset=dataset,
         overrides=trainer_overrides,
     )

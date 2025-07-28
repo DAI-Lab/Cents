@@ -10,7 +10,7 @@ from huggingface_hub import hf_hub_download
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, ListConfig
 
-import cents.models  # required for model registry
+import cents.models
 from cents.datasets.utils import convert_generated_data_to_df
 from cents.models.normalizer import Normalizer
 from cents.models.registry import get_model_cls, get_model_type_from_hf_name
@@ -23,7 +23,7 @@ from cents.utils.utils import (
 PKG_ROOT = Path(__file__).resolve().parent
 CONF_DIR = PKG_ROOT / "config"
 CACHE_DIR = Path.home() / ".cache" / "cents" / "checkpoints"
-HF_REPO_ID = "michaelfuest/watts"
+HF_REPO_ID = "mit-dailab/watts"
 torch.serialization.add_safe_globals({DictConfig, ListConfig})
 
 
@@ -65,6 +65,7 @@ class DataGenerator:
                 )
                 self.model_type = cfg.model.name
         elif model_name is not None:
+            self.model_name = model_name
             self.model_type = get_model_type_from_hf_name(model_name)
             self.cfg = cfg or self._default_cfg()
             self.model = None
@@ -80,10 +81,17 @@ class DataGenerator:
         Returns:
             Composed DictConfig from 'config/config.yaml'.
         """
+        # Extract dimensions from model name
+        dims = parse_dims_from_name(self.model_name)
+        time_series_dims = int(dims)
+
         with initialize_config_dir(str(CONF_DIR), version_base=None):
             return compose(
                 config_name="config",
-                overrides=[f"model={self.model_type}"],
+                overrides=[
+                    f"model={self.model_type}",
+                    f"dataset.time_series_dims={time_series_dims}",
+                ],
             )
 
     def set_dataset_spec(

@@ -2,24 +2,22 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-import wandb
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
+import wandb
 from cents.data_generator import DataGenerator
 from cents.datasets.pecanstreet import PecanStreetDataset
 from cents.eval.eval import Evaluator
 
-CKPT = Path("~/Cents/checkpoints/pecanstreet_diffusion_ts_dim2_juwels.ckpt")
-MODEL_KEY = "diffusion_ts"
+MODEL_KEY = "Watts_1_2D"
 OVERRIDES = [
     "dataset.user_group=pv_users",
     "dataset.time_series_dims=2",
-    "evaluator.eval_disentanglement=True",
+    "evaluator.eval_disentanglement=False",
     "wandb.enabled=True",
     "wandb.project=cents",
     "wandb.entity=michael-fuest-technical-university-of-munich",
-    "model.use_ema_sampling=False",
     f"wandb.name=eval_{MODEL_KEY}_{datetime.now().strftime('%Y%m%d-%H%M%S')}_dim2",
 ]
 
@@ -38,9 +36,7 @@ def main() -> None:
 
     CONF_DIR = Path(__file__).resolve().parents[1] / "cents" / "config"
     with initialize_config_dir(str(CONF_DIR), version_base=None):
-        cfg = compose(
-            config_name="config", overrides=[f"model={MODEL_KEY}"] + OVERRIDES
-        )
+        cfg = compose(config_name="config", overrides=[f"model=acgan"] + OVERRIDES)
 
     ds_overrides = [
         o.split("dataset.")[1] for o in OVERRIDES if o.startswith("dataset.")
@@ -48,10 +44,9 @@ def main() -> None:
     dataset = PecanStreetDataset(overrides=ds_overrides)
     cfg.dataset = OmegaConf.create(OmegaConf.to_container(dataset.cfg, resolve=True))
 
+    # Use the fixed checkpoint with DataGenerator
     gen = DataGenerator(MODEL_KEY, cfg=cfg)
-    gen.load_from_checkpoint(CKPT)
-
-    results = Evaluator(cfg, dataset).evaluate_model(model=gen.model)
+    results = Evaluator(cfg, dataset).evaluate_model(data_generator=gen)
     print(results)
 
 

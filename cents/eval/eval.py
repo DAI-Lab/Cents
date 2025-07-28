@@ -11,9 +11,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import wandb
 from omegaconf import DictConfig, OmegaConf
 
+import wandb
 from cents.eval.discriminative_score import discriminative_score_metrics
 from cents.eval.eval_metrics import (
     Context_FID,
@@ -89,19 +89,27 @@ class Evaluator:
     def evaluate_model(
         self,
         model: Optional[Any] = None,
+        data_generator: Optional[Any] = None,
     ) -> Dict:
         """
         Evaluate the model and store results.
 
         Args:
             model (Optional[Any]): The model to evaluate. If None, will load or train a model.
+            data_generator (Optional[Any]): DataGenerator instance. If provided, will use its model and normalizer.
 
         Returns:
             Dict: Dictionary containing the evaluation results
         """
         dataset = self.real_dataset
 
-        if not model:
+        if data_generator is not None:
+            if data_generator.model is not None:
+                model = data_generator.model
+            if data_generator.normalizer is not None:
+                dataset._normalizer = data_generator.normalizer
+                print("[CENTS] Using pre-trained normalizer from DataGenerator")
+        elif not model:
             model = self.get_trained_model(dataset)
 
         model.to(self.device)
