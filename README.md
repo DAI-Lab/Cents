@@ -18,7 +18,7 @@ A library for generative modeling and evaluation of synthetic household-level el
 
 Cents is a library built for generating *contextual time series data*. Cents supports several generative time series model architectures that can be used to train a time series data generator from scratch on a user-defined dataset. Additionally, Cents provides functionality for loading pre-trained model checkpoints that can be used to generate data instantly.
 
-Cents was used to train the [Watts](https://huggingface.co/michaelfuest/watts) model series.
+Cents was used to train the [Watts](https://huggingface.co/mit-dailab/watts) model series.
 
 Feel free to look at our [tutorial notebooks](https://github.com/DAI-Lab/Cents/tree/main/tutorials) to get started.
 
