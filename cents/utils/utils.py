@@ -16,6 +16,7 @@ def _ckpt_name(
     static_module_type: str = None,
     stats_head_type: str = None,
     dynamic_module_type: str = None,
+    use_global_stats_preprocessing: bool = True,
 ) -> str:
     """
     Generate checkpoint filename with optional context_module_type and stats_head_type.
@@ -25,8 +26,10 @@ def _ckpt_name(
         model: Model name
         dims: Number of dimensions
         ext: File extension (default: "ckpt")
-        context_module_type: Optional context module type (e.g., "mlp", "sep_mlp")
+        static_module_type: Optional context module type (e.g., "mlp", "sep_mlp")
         stats_head_type: Optional stats head type (e.g., "mlp")
+        dynamic_module_type: Optional dynamic module type
+        use_global_stats_preprocessing: If False, suffix "noglobal" so direct-prediction normalizer uses a separate cache.
     
     Returns:
         Formatted checkpoint filename
@@ -41,6 +44,9 @@ def _ckpt_name(
     
     if dynamic_module_type:
         parts.append(f"dyn{dynamic_module_type}")
+    
+    if not use_global_stats_preprocessing:
+        parts.append("noglobal")
     
     return "_".join(parts) + f".{ext}"
 

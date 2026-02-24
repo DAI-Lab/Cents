@@ -51,6 +51,27 @@ def _write_run_summary(run_dir: Path, run_name: str, trainer: Trainer) -> None:
     print(f"[Cents] Wrote run summary to {path}")
 
 
+def _write_run_configs(run_dir: Path, trainer: Trainer) -> None:
+    """Write dataset, model, context, and trainer configs to run_dir/config/ for eval and reproducibility."""
+    cfg = trainer.cfg
+    context_cfg = get_context_config()
+    config_dir = run_dir / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    if hasattr(cfg, "dataset") and cfg.dataset:
+        with open(config_dir / "dataset.yaml", "w") as f:
+            yaml.dump(OmegaConf.to_container(cfg.dataset, resolve=True), f, default_flow_style=False, sort_keys=False)
+    if hasattr(cfg, "model") and cfg.model:
+        with open(config_dir / "model.yaml", "w") as f:
+            yaml.dump(OmegaConf.to_container(cfg.model, resolve=True), f, default_flow_style=False, sort_keys=False)
+    if hasattr(cfg, "trainer") and cfg.trainer:
+        with open(config_dir / "trainer.yaml", "w") as f:
+            yaml.dump(OmegaConf.to_container(cfg.trainer, resolve=True), f, default_flow_style=False, sort_keys=False)
+    if context_cfg:
+        with open(config_dir / "context.yaml", "w") as f:
+            yaml.dump(OmegaConf.to_container(context_cfg, resolve=True), f, default_flow_style=False, sort_keys=False)
+    print(f"[Cents] Wrote run configs to {config_dir}")
+
+
 def main(args) -> None:
     MODEL_NAME = args.model_name
     CR_LOSS_WEIGHT = args.cr_loss_weight
@@ -73,6 +94,8 @@ def main(args) -> None:
 
     # Build dataset-specific overrides (key=value list; config is loaded from config/dataset/{dataset}.yaml)
     dataset_overrides = [f"skip_heavy_processing={args.skip_heavy_processing}"]
+    if getattr(args, "no_normalizer_global_preprocessing", False):
+        dataset_overrides.append("normalizer_use_global_stats_preprocessing=false")
     if args.dataset == "pecanstreet":
         dataset_overrides.extend(["time_series_dims=1", "user_group=all"])
     dataset_cfg = _load_dataset_config(args.dataset, dataset_overrides)
@@ -103,6 +126,7 @@ def main(args) -> None:
     trainer_overrides = [
         f"run_dir={run_dir}",
         f"trainer.max_epochs={args.epochs}",
+        f"trainer.checkpoint.every_n_epochs={args.every_n_epochs}",
         f"trainer.strategy={args.ddp_strategy}",
         f"trainer.devices={args.devices}",
         f"trainer.eval_after_training={args.eval_after_training}",
@@ -127,11 +151,13 @@ def main(args) -> None:
     )
 
     _write_run_summary(run_dir, run_name, trainer)
+    _write_run_configs(run_dir, trainer)
 
     trainer.fit(ckpt_path=args.resume_from_checkpoint)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--every_n_epochs", type=int, default=250)
     parser.add_argument("--devices", type=str, default="auto")
     parser.add_argument("--accelerator", type=str, default="gpu")
     parser.add_argument("--model_name", type=str, default="diffusion_ts")
@@ -144,12 +170,12 @@ if __name__ == "__main__":
                         help="Enable Weights and Biases logging")
     parser.add_argument("--wandb-project", type=str, default="cents")
     parser.add_argument("--wandb-entity", type=str, default=None)
-    parser.add_argument("--eval_after_training", action="store_true",
+    parser.add_argument("--eval-after-training", action="store_true",
                         help="Evaluate after training")
-    parser.add_argument("--skip_heavy_processing", action="store_true",
+    parser.add_argument("--skip-heavy-processing", action="store_true",
                         help="Skip heavy processing of dataset")
     parser.add_argument("--ddp-strategy", type=str, default="ddp_find_unused_parameters_true")
-    parser.add_argument("--enable_checkpointing", action="store_true",
+    parser.add_argument("--enable-checkpointing", action="store_true",
                         help="Enable checkpointing")
     parser.add_argument("--context-config-path", type=str, default=None, 
                         help="Path to custom context config YAML file (optional)")
@@ -157,6 +183,8 @@ if __name__ == "__main__":
                         help="Override context config values (e.g., 'static_context.type=mlp' 'dynamic_context.type=cnn')")
     parser.add_argument("--force-retrain-normalizer", action="store_true",
                         help="Force retraining of normalizer even if cached version exists")
+    parser.add_argument("--no-normalizer-global-preprocessing", action="store_true",
+                        help="Predict normalizer mu/sigma directly (no global-stats scaling). Use if commercial runs had NaNs with global preprocessing.")
     parser.add_argument("--resume-from-checkpoint", type=str, default=None,
         help="Path to checkpoint file (.ckpt) to resume training from",
     )

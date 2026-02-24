@@ -137,6 +137,10 @@ class CommercialDataset(TimeSeriesDataset):
         if merged[context_cols].isna().sum().sum() > 0:
             print(f"Warning: {merged[context_cols].isna().sum().sum()} NaN values remain after handling")
 
+        mask = merged["energy_meter"].apply(lambda x: x.std() < 0.01)
+
+        merged = merged[~mask]
+
         return merged
     
     def _handle_missing_data(self, merged):

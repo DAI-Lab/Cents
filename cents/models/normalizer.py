@@ -238,11 +238,23 @@ class Normalizer(NormalizerModel):
         self.dynamic_module_type = self.dataset.dynamic_module_type
         self.stats_head_type = self.dataset.stats_head_type
         self.loss_type = getattr(self.normalizer_training_cfg, "loss_type", "mse")
+        self.use_global_stats_preprocessing = bool(
+            getattr(self.normalizer_training_cfg, "use_global_stats_preprocessing", True)
+        )
+        if hasattr(self.dataset_cfg, "normalizer_use_global_stats_preprocessing"):
+            self.use_global_stats_preprocessing = bool(
+                self.dataset_cfg.normalizer_use_global_stats_preprocessing
+            )
+        # When not using global preprocessing: mu is predicted in asinh space; clamp to avoid sinh explosion
+        self.max_asinh_mu = float(getattr(self.normalizer_training_cfg, "max_asinh_mu", 10.0))
+        # Floor sigma and scale range so normalized values (z) cannot explode
+        self.min_sigma = float(getattr(self.normalizer_training_cfg, "min_sigma", 1e-3))
+        self.min_scale_range = float(getattr(self.normalizer_training_cfg, "min_scale_range", 0.25))
 
         self.register_buffer("global_mu_mean", torch.tensor(0.0))
         self.register_buffer("global_mu_std", torch.tensor(1.0))
         self.register_buffer("global_log_sigma_mean", torch.tensor(0.0))
-        
+
         # Create static context module
         self.static_context_module = None
         if self.static_context_vars:
@@ -310,24 +322,39 @@ class Normalizer(NormalizerModel):
         mode = getattr(self.dataset_cfg, "normalizer_stats_mode", "sample")
         self.sample_stats = self._build_training_samples(mode, use_quantile_scale=True)
 
-        # --- COMPUTE GLOBAL TARGET STATS FOR SCALING ---
-        # 1. Global Mu Stats (for Z-score scaling)
-        all_mus = np.concatenate([s[2] for s in self.sample_stats])
-        self.target_mu_mean = torch.tensor(all_mus.mean(), dtype=torch.float32)
-        self.target_mu_std = torch.tensor(all_mus.std() + 1e-8, dtype=torch.float32)
+        if self.use_global_stats_preprocessing:
+            # --- COMPUTE GLOBAL TARGET STATS FOR SCALING ---
+            # 1. Global Mu Stats (for Z-score scaling)
+            all_mus = np.concatenate([s[2] for s in self.sample_stats])
+            self.target_mu_mean = torch.tensor(all_mus.mean(), dtype=torch.float32)
+            self.target_mu_std = torch.tensor(all_mus.std() + 1e-8, dtype=torch.float32)
 
-        # 2. Global Sigma Stats (for Log-Space Centering)
-        all_sigmas_concat = np.concatenate([s[3] for s in self.sample_stats])
-        # Calculate the mean of the logs (Geometric mean center)
-        self.target_log_sigma_mean = torch.tensor(np.log(all_sigmas_concat + 1e-8).mean(), dtype=torch.float32)
+            # 2. Global Sigma Stats (for Log-Space Centering)
+            all_sigmas_concat = np.concatenate([s[3] for s in self.sample_stats])
+            self.target_log_sigma_mean = torch.tensor(
+                np.log(all_sigmas_concat + 1e-8).mean(), dtype=torch.float32
+            )
 
-        # Register buffers so they persist with model
-        self.global_mu_mean.fill_(self.target_mu_mean)
-        self.global_mu_std.fill_(self.target_mu_std)
-        self.global_log_sigma_mean.fill_(self.target_log_sigma_mean)
+            self.global_mu_mean.fill_(self.target_mu_mean)
+            self.global_mu_std.fill_(self.target_mu_std)
+            self.global_log_sigma_mean.fill_(self.target_log_sigma_mean)
 
-        print(f"Global Target Stats: Mu Mean={self.target_mu_mean:.4f}, Mu Std={self.target_mu_std:.4f}")
-        print(f"Global Target Log Sigma Mean: {self.target_log_sigma_mean:.4f}")
+            print(f"Global Target Stats: Mu Mean={self.target_mu_mean:.4f}, Mu Std={self.target_mu_std:.4f}")
+            print(f"Global Target Log Sigma Mean: {self.target_log_sigma_mean:.4f}")
+        else:
+            # No global preprocessing: mu in asinh space, log(sigma) direct; identity for sigma centering
+            self.global_mu_mean.zero_()
+            self.global_mu_std.fill_(1.0)
+            self.global_log_sigma_mean.zero_()
+            print(f"Normalizer: use_global_stats_preprocessing=False — predicting asinh(mu) (clamp ±{self.max_asinh_mu}) and log(sigma) directly.")
+
+        # Global range mean for safeguard: floor rng to 0.01 * global_rng_mean when do_scale
+        if self.do_scale:
+            all_rngs = []
+            for s in self.sample_stats:
+                zlow, zhigh = s[4], s[5]
+                if zlow is not None and zhigh is not None:
+                    all_rngs.extend((np.asarray(zhigh) - np.asarray(zlow)).flatten().tolist())
 
         # Log initial predictions
         if stage == "fit" or stage is None:
@@ -335,27 +362,34 @@ class Normalizer(NormalizerModel):
     
     def _log_initial_predictions(self):
         """Log initial model predictions to diagnose initialization issues."""
-        self.eval()
-        with torch.no_grad():
-            dataloader = self.train_dataloader()
-            batch = next(iter(dataloader))
-            cat_vars_dict, mu_t, sigma_t, zmin_t, zmax_t = batch
+        # self.eval()
+        # with torch.no_grad():
+        #     dataloader = self.train_dataloader()
+        #     batch = next(iter(dataloader))
+        #     cat_vars_dict, mu_t, sigma_t, zmin_t, zmax_t = batch
             
-            device = next(self.parameters()).device
-            cat_vars_dict = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in cat_vars_dict.items()}
-            mu_t = mu_t.to(device)
-            sigma_t = sigma_t.to(device)
+        #     device = next(self.parameters()).device
+        #     cat_vars_dict = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in cat_vars_dict.items()}
+        #     mu_t = mu_t.to(device)
+        #     sigma_t = sigma_t.to(device)
             
-            # Predict (Returns Real Unscaled values via Forward)
-            pred_mu, pred_sigma, pred_z_min, pred_z_max, _ = self(cat_vars_dict)
+        #     # Predict (Returns Real Unscaled values via Forward)
+        #     pred_mu, pred_sigma, pred_z_min, pred_z_max, _ = self(cat_vars_dict)
             
-            print(f"\n[Initial Predictions]")
-            print(f"  Target mu: mean={mu_t.mean().item():.4f}, std={mu_t.std().item():.4f}")
-            print(f"  Predicted mu: mean={pred_mu.mean().item():.4f}, std={pred_mu.std().item():.4f}")
-            print(f"  Initial loss_mu: {F.mse_loss(pred_mu, mu_t).item():.6f}")
-            print()
+        #     print(f"\n[Initial Predictions]")
+        #     print(f"  Target mu: mean={mu_t.mean().item():.4f}, std={mu_t.std().item():.4f}")
+        #     print(f"  Predicted mu: mean={pred_mu.mean().item():.4f}, std={pred_mu.std().item():.4f}")
+        #     print(f"  Initial loss_mu: {F.mse_loss(pred_mu, mu_t).item():.6f}")
+        #     print()
         
         self.train()
+ 
+    def _raw_mu_to_real(self, pred_mu_raw: torch.Tensor) -> torch.Tensor:
+        """Convert network mu output to real-world mu (handles both global and direct/asinh paths)."""
+        if self.use_global_stats_preprocessing:
+            return (pred_mu_raw * self.global_mu_std) + self.global_mu_mean
+        # Direct path: network predicts asinh(mu); invert with sinh and clamp for stability
+        return torch.sinh(torch.clamp(pred_mu_raw, -self.max_asinh_mu, self.max_asinh_mu))
 
     def forward(self, cat_vars_dict: dict):
         """
@@ -365,16 +399,17 @@ class Normalizer(NormalizerModel):
         Returns:
             Tuple of (pred_mu_real, pred_sigma_real, pred_z_min, pred_z_max, pred_log_sigma_raw).
         """
-        # Get raw network outputs (scaled space)
         pred_mu_raw, pred_sigma, pred_zmin, pred_zmax, pred_log_sigma_raw = self.normalizer_model(cat_vars_dict)
 
-        # 1. Unscale Mu: (NetworkOutput * GlobalStd) + GlobalMean
-        pred_mu_real = (pred_mu_raw * self.global_mu_std) + self.global_mu_mean
+        pred_mu_real = self._raw_mu_to_real(pred_mu_raw)
 
-        # 2. Unscale Sigma: exp(NetworkLogOutput + GlobalLogMean)
-        # Note: We reconstruct log_sigma first to ensure numerical stability
+        # Unscale Sigma: exp(NetworkLogOutput + GlobalLogMean) or exp(NetworkLogOutput) when no global
         pred_log_sigma_real = pred_log_sigma_raw + self.global_log_sigma_mean
-        pred_sigma_real = torch.exp(pred_log_sigma_real)
+        pred_sigma_real = torch.exp(pred_log_sigma_real).clamp(min=self.min_sigma)
+        # Safeguard: sigma must be at least 0.01 * global sigma (exp(global_log_sigma_mean))
+        sigma_global = torch.exp(self.global_log_sigma_mean)
+        sigma_floor = max(self.min_sigma, (0.01 * sigma_global).item())
+        pred_sigma_real = torch.clamp(pred_sigma_real, min=sigma_floor)
 
         return pred_mu_real, pred_sigma_real, pred_zmin, pred_zmax, pred_log_sigma_raw
 
@@ -399,12 +434,16 @@ class Normalizer(NormalizerModel):
         # This gives us values that match the standardized targets
         pred_mu_raw, _, pred_z_min, pred_z_max, pred_log_sigma_raw = self.normalizer_model(context_vars_dict)
 
-        # 2. Scale Targets to match Network Space
-        
-        # Scale Mu: Z-score
-        mu_t_scaled = (mu_t - self.global_mu_mean) / self.global_mu_std
-        
-        # Scale Sigma: Log-Space Centering
+        # 2. Targets: scaled (global) or asinh(mu) + log(sigma) (direct)
+        if self.use_global_stats_preprocessing:
+            mu_t_scaled = (mu_t - self.global_mu_mean) / self.global_mu_std
+        else:
+            # asinh(mu) compresses full range to ~[-8, 8]; clamp so target matches forward clamp
+            mu_t_scaled = torch.clamp(
+                torch.asinh(mu_t),
+                -self.max_asinh_mu,
+                self.max_asinh_mu,
+            )
         target_log_sigma_centered = torch.log(sigma_t + 1e-8) - self.global_log_sigma_mean
 
         # 3. Compute Loss
@@ -436,8 +475,7 @@ class Normalizer(NormalizerModel):
         
         if batch_idx % 100 == 0:
             with torch.no_grad():
-                # Reconstruct real values for logging intelligibility
-                pred_mu_real = (pred_mu_raw * self.global_mu_std) + self.global_mu_mean
+                pred_mu_real = self._raw_mu_to_real(pred_mu_raw)
                 self.log("pred_mu_mean_real", pred_mu_real.mean(), on_step=True, on_epoch=False)
                 self.log("target_mu_mean_real", mu_t.mean(), on_step=True, on_epoch=False)
         
@@ -543,8 +581,13 @@ class Normalizer(NormalizerModel):
                 
                 mu_t = torch.from_numpy(mu_arr).float()
                 sigma_t = torch.from_numpy(sigma_arr).float()
-                zmin_t = torch.from_numpy(zmin_arr).float() if self.do_scale else None
-                zmax_t = torch.from_numpy(zmax_arr).float() if self.do_scale else None
+                if self.do_scale:
+                    zmin_t = torch.from_numpy(zmin_arr).float()
+                    zmax_t = torch.from_numpy(zmax_arr).float()
+                else:
+                    # Return dummy tensors so DataLoader collate does not see None
+                    zmin_t = torch.zeros_like(mu_t)
+                    zmax_t = torch.zeros_like(mu_t)
                 return context_vars_dict, mu_t, sigma_t, zmin_t, zmax_t
 
         return _TrainSet(self.sample_stats, self.dynamic_context_vars, self.do_scale, self.dataset_cfg)
@@ -582,25 +625,16 @@ class Normalizer(NormalizerModel):
                     
                     arr = np.asarray(row[col], dtype=np.float32)
 
-                    if sigma[d] < 1e-4:
-                        print(f"[EXPLOSION ALERT] Row {i}, Col '{col}'")
-                        print(f"  -> Sigma is tiny: {sigma[d]:.8f}")
-                        print(f"  -> Raw Data Range: {arr.min()} to {arr.max()}")
-                        print(f"  -> This will multiply your data by {1/(sigma[d]+1e-8):.0f}x!")
-
-                    z = (arr - mu[d]) / (sigma[d] + 1e-8)
+                    sigma_floor = max(self.min_sigma, 0.01 * np.exp(self.global_log_sigma_mean.cpu().item()))
+                    sigma_eff = max(float(sigma[d]), sigma_floor)
+                    z = (arr - mu[d]) / sigma_eff
                     if self.do_scale:
                         zmin_, zmax_ = pred_zmin[0, d].item(), pred_zmax[0, d].item()
                         rng = (zmax_ - zmin_) + 1e-8
-                        z = (z - zmin_) / rng
+                        rng_floor = max(self.min_scale_range, .25)
+                        rng_eff = max(rng, rng_floor)
+                        z = (z - zmin_) / rng_eff
 
-                        if rng < 1e-4:
-                            print(f"[EXPLOSION ALERT] Row {i}, Col '{col}'")
-                            print(f"  -> Range Collapsed: z_min={zmin_:.4f}, z_max={zmax_:.4f}")
-                            print(f"  -> Range delta: {rng:.8f}")
-                            print(f"  -> This will multiply your data by {1/(rng+1e-8):.0f}x!")
-
-                            
                     df_out.at[i, col] = z
         return df_out
 
@@ -632,12 +666,14 @@ class Normalizer(NormalizerModel):
 
                 for d, col in enumerate(self.time_series_cols):
                     z = np.asarray(row[col], dtype=np.float32)
+                    sigma_floor = max(self.min_sigma, 0.01 * np.exp(self.global_log_sigma_mean.cpu().item()))
+                    sigma_eff = max(float(sigma[d]), sigma_floor)
                     if self.do_scale:
                         zmin_, zmax_ = pred_zmin[0, d].item(), pred_zmax[0, d].item()
                         rng = (zmax_ - zmin_) + 1e-8
-                        z = z * rng + zmin_
-                    
-                    arr = z * (sigma[d] + 1e-8) + mu[d]
+                        rng_eff = max(rng, self.min_scale_range)
+                        z = z * rng_eff + zmin_
+                    arr = z * sigma_eff + mu[d]
                     df_out.at[i, col] = arr
         return df_out
 

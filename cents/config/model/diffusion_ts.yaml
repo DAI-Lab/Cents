@@ -22,7 +22,7 @@ attn_pd: 0.0
 resid_pd: 0.0
 kernel_size: null
 padding_size: null
-use_ff: True
+use_ff: False
 reg_weight: null
 gradient_accumulate_every: 2
 ema_decay: 0.99
@@ -38,3 +38,6 @@ recon_guide_K: 3            # inner steps per t for alg2 (int or list for K[t])
 recon_cond_len: null        # int or null; if set, use fc_a / fc_b for first vs rest of sequence
 # Context embedding dropout (training only) for more robust recon-guided sampling
 context_embed_dropout: 0  # 0 = disabled
+blue_noise_power: 0.0 # 0.0 = white noise, 1.0 = blue noise, 2.0 = violet noise
+# When true and time_series_dims > 1, noise is correlated across dimensions (same draw per timestep).
+correlated_noise: True

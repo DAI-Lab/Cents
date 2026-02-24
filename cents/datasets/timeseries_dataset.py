@@ -11,7 +11,7 @@ import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
 from sklearn.cluster import KMeans
 from torch.utils.data import DataLoader, Dataset
-from omegaconf import ListConfig
+from omegaconf import ListConfig, OmegaConf
 import pickle
 
 from cents.datasets.utils import encode_context_variables
@@ -673,20 +673,27 @@ class TimeSeriesDataset(Dataset):
                 Path.home() / ".cache" / "cents" / "checkpoints" / self.name / "normalizer"
             )
         normalizer_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Get context_module_type and stats_head_type from context config
+
+        ncfg = get_normalizer_training_config()
+        if hasattr(self.cfg, "normalizer_use_global_stats_preprocessing"):
+            ncfg = OmegaConf.merge(
+                ncfg,
+                OmegaConf.create({"use_global_stats_preprocessing": self.cfg.normalizer_use_global_stats_preprocessing}),
+            )
+        use_global = ncfg.get("use_global_stats_preprocessing", True)
+
         cache_path = normalizer_dir / _ckpt_name(
-            self.name, 
-            "normalizer", 
+            self.name,
+            "normalizer",
             self.time_series_dims,
             static_module_type=self.static_module_type,
             stats_head_type=self.stats_head_type,
             dynamic_module_type=self.dynamic_module_type,
+            use_global_stats_preprocessing=use_global,
         )
 
         print(f"[Cents] cache_path: {cache_path}")
 
-        ncfg = get_normalizer_training_config()
         self._normalizer = Normalizer(
             dataset_cfg=self.cfg,
             normalizer_training_cfg=ncfg,
