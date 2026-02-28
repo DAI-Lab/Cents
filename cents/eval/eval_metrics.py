@@ -1,3 +1,4 @@
+import warnings
 from functools import partial
 from typing import Dict, Tuple
 
@@ -147,12 +148,37 @@ def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
     Calculate the FID score between original and generated data representations using TS2Vec embeddings.
 
     Args:
-        ori_data: Original time series data.
-        generated_data: Generated time series data.
+        ori_data: Original time series data (N, seq_len) or (N, seq_len, dims).
+        generated_data: Generated time series data, same shape convention.
 
     Returns:
         float: FID score between the original and generated data representations.
     """
+    ori_data = np.asarray(ori_data, dtype=np.float32)
+    generated_data = np.asarray(generated_data, dtype=np.float32)
+    # TS2Vec expects (n_instance, n_timestamps, n_features); ensure 3D
+    if ori_data.ndim == 2:
+        ori_data = ori_data[:, :, np.newaxis]
+    if generated_data.ndim == 2:
+        generated_data = generated_data[:, :, np.newaxis]
+    if ori_data.ndim != 3 or generated_data.ndim != 3:
+        warnings.warn(
+            f"Context_FID: expected 2D or 3D arrays, got ori_data.ndim={ori_data.ndim}, generated_data.ndim={generated_data.ndim}; returning nan."
+        )
+        return float("nan")
+    # Require at least one non–all-NaN row so TS2Vec.fit() does not infinite-loop
+    ori_valid = ~np.isnan(ori_data).all(axis=2).all(axis=1)
+    n_valid = int(ori_valid.sum())
+    if n_valid == 0:
+        warnings.warn(
+            "Context_FID: ori_data has no valid (non–all-NaN) rows; returning nan."
+        )
+        return float("nan")
+    # Allow single-sample (TS2Vec will get 1 batch); only reject when 0 valid
+    if np.isnan(ori_data).any() or np.isnan(generated_data).any():
+        warnings.warn(
+            "Context_FID: ori_data or generated_data contain NaN; FID may be unreliable."
+        )
     model = TS2Vec(
         input_dims=ori_data.shape[-1],
         device=0,
@@ -161,7 +187,22 @@ def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
         output_dims=320,
         max_train_length=50000,
     )
+
+    fit_log = model.fit(ori_data, verbose=False)
     model.fit(ori_data, verbose=False)
+
+    ori_rep = model.encode(ori_data, encoding_window="full_series")
+    gen_rep = model.encode(generated_data, encoding_window="full_series")
+
+    idx = np.random.permutation(ori_data.shape[0])
+    ori_rep = ori_rep[idx]
+    gen_rep = gen_rep[idx]
+
+    if not np.isfinite(ori_rep).all() or not np.isfinite(gen_rep).all():
+        return float("nan")
+
+    return calculate_fid(ori_rep, gen_rep)
+    
     ori_represenation = model.encode(ori_data, encoding_window="full_series")
     gen_represenation = model.encode(generated_data, encoding_window="full_series")
     idx = np.random.permutation(ori_data.shape[0])

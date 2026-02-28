@@ -38,6 +38,7 @@ from cents.models.model_utils import (
     default,
     linear_beta_schedule,
     total_correlation,
+    cosine_beta_schedule_logsnr,
 )
 from cents.models.registry import register_model
 
@@ -112,7 +113,7 @@ class Diffusion_TS(GenerativeModel):
     Uses a Transformer backbone to predict and denoise time series over
     discrete diffusion timesteps. Supports EMA smoothing and configurable
     beta schedules. Optional reconstruction-guided sampling (Algorithms 1 & 2)
-    via sample_reconstruction_guided(shape, context_vars, x_a, algorithm="alg1"|"alg2")
+    via sample_reconstruction_guided(shape, static_context_vars, dynamic_context_vars, algorithm="alg1"|"alg2")
     when conditional observed data x_a is provided.
 
     Training objective (config model.training_objective): x0, epsilon, or v.
@@ -203,12 +204,17 @@ class Diffusion_TS(GenerativeModel):
             betas = linear_beta_schedule(cfg.model.n_steps)
         elif cfg.model.beta_schedule == "cosine":
             betas = cosine_beta_schedule(cfg.model.n_steps)
+        elif cfg.model.beta_schedule == "cosine_logsnr":
+            betas = cosine_beta_schedule_logsnr(cfg.model.n_steps)
         else:
             raise ValueError("Unknown beta schedule")
 
-        alphas = 1.0 - betas
-        alphas_cumprod = torch.cumprod(alphas, dim=0)
-        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
+        eps = 1e-5
+        alphas = (1.0 - betas).double()
+        alphas_cumprod = torch.cumprod(alphas, dim=0).float()
+        alphas_cumprod = alphas_cumprod.clamp(min=eps, max=1.0 - eps)
+        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0 - eps)
+
         self.num_timesteps = betas.shape[0]
         self.sampling_timesteps = default(
             cfg.model.sampling_timesteps, self.num_timesteps
@@ -284,7 +290,7 @@ class Diffusion_TS(GenerativeModel):
         self.continuous_context_vars = [k for k, v in cfg.dataset.context_vars.items() if v[0] == "continuous"]
         self.categorical_context_vars = [k for k, v in cfg.dataset.context_vars.items() if v[0] == "categorical"]
 
-    def _get_context_embedding(self, context_vars: dict) -> Tuple[torch.Tensor, dict]:
+    def _get_context_embedding(self, static_context_vars: dict, dynamic_context_vars: dict = None) -> Tuple[torch.Tensor, dict]:
         """
         Get combined context embedding from static and/or dynamic context modules.
         
@@ -297,25 +303,25 @@ class Diffusion_TS(GenerativeModel):
         """
         embeddings = []
         all_logits = {}
-        for k, v in context_vars.items():
-            if isinstance(v, torch.Tensor):
-                _nan_check(v, f"_get_context_embedding context_vars[{k}]")
+        # for k, v in context_vars.items():
+        #     if isinstance(v, torch.Tensor):
+        #         _nan_check(v, f"_get_context_embedding context_vars[{k}]")
 
         # Process static context variables
         if self.static_context_module is not None:
             # Filter static context variables
-            static_vars = {
-                k: v for k, v in context_vars.items()
-                if k not in getattr(self, 'dynamic_context_vars', [])
-            }
-            if static_vars:
+            # static_vars = {
+            #     k: v for k, v in context_vars.items()
+            #     if k not in getattr(self, 'dynamic_context_vars', [])
+            # }
+            if static_context_vars:
                 device = next(self.static_context_module.parameters()).device
                 static_vars = {
                     k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
-                    for k, v in static_vars.items()
+                    for k, v in static_context_vars.items()
                 }
                 # Debug: print which static input has NaN (only when we see one)
-                for k, v in static_vars.items():
+                for k, v in static_context_vars.items():
                     if isinstance(v, torch.Tensor) and (torch.isnan(v).any() or torch.isinf(v).any()):
                         nan_c = torch.isnan(v).sum().item()
                         inf_c = torch.isinf(v).sum().item()
@@ -337,7 +343,7 @@ class Diffusion_TS(GenerativeModel):
                 #         return torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0)
                 #     return t
                 # static_vars = {k: _sanitize(v) for k, v in static_vars.items()}
-                static_embedding, static_logits = self.static_context_module(static_vars)
+                static_embedding, static_logits = self.static_context_module(static_context_vars)
                 _nan_check(static_embedding, "_get_context_embedding static_embedding")
                 embeddings.append(static_embedding)
                 all_logits.update(static_logits)
@@ -345,18 +351,18 @@ class Diffusion_TS(GenerativeModel):
         # Process dynamic context variables
         if self.dynamic_context_module is not None:
             # Filter dynamic context variables
-            dynamic_var_names = getattr(self, 'dynamic_context_vars', [])
-            dynamic_vars = {
-                k: v for k, v in context_vars.items()
-                if k in dynamic_var_names
-            }
-            if dynamic_vars:
+            # dynamic_var_names = getattr(self, 'dynamic_context_vars', [])
+            # dynamic_vars = {
+            #     k: v for k, v in context_vars.items()
+            #     if k in dynamic_var_names
+            # }
+            if dynamic_context_vars:
                 device = next(self.dynamic_context_module.parameters()).device
-                dynamic_vars = {
+                dynamic_context_vars = {
                     k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
-                    for k, v in dynamic_vars.items()
+                    for k, v in dynamic_context_vars.items()
                 }
-                dynamic_embedding, dynamic_logits = self.dynamic_context_module(dynamic_vars)
+                dynamic_embedding, dynamic_logits = self.dynamic_context_module(dynamic_context_vars)
                 _nan_check(dynamic_embedding, "_get_context_embedding dynamic_embedding")
                 embeddings.append(dynamic_embedding)
                 all_logits.update(dynamic_logits)
@@ -370,6 +376,8 @@ class Diffusion_TS(GenerativeModel):
             embedding = embeddings[0]
         else:
             raise ValueError("No context variables provided")
+        if embedding.is_floating_point():
+            embedding = embedding.float()
         _nan_check(embedding, "_get_context_embedding embedding (before dropout)")
         if self.training and self.context_embed_dropout.p > 0:
             embedding = self.context_embed_dropout(embedding)
@@ -539,7 +547,7 @@ class Diffusion_TS(GenerativeModel):
         _nan_check(plv, "q_posterior plv")
         return pm, pv, plv
 
-    def forward(self, x: torch.Tensor, context_vars: dict) -> Tuple[torch.Tensor, dict]:
+    def forward(self, x: torch.Tensor, static_context_vars: dict, dynamic_context_vars: dict = None) -> Tuple[torch.Tensor, dict]:
         """
         Single forward pass: add noise, predict denoised output and compute reconstruction loss.
 
@@ -562,7 +570,7 @@ class Diffusion_TS(GenerativeModel):
 
         b = x.shape[0]
         t = torch.randint(0, self.num_timesteps, (b,), device=self.device)
-        embedding, cond_classification_logits = self._get_context_embedding(context_vars)
+        embedding, cond_classification_logits = self._get_context_embedding(static_context_vars, dynamic_context_vars)
         _nan_check(embedding, "forward embedding")
 
         noise = blueish_noise_like(
@@ -658,15 +666,15 @@ class Diffusion_TS(GenerativeModel):
         Returns:
             total_loss: Scalar training loss.
         """
-        ts_batch, cond_batch = batch
+        ts_batch, static_context_batch, dynamic_context_batch = batch
         _nan_check(ts_batch, "training_step ts_batch")
-        rec_loss, cond_class_logits, fourier_loss = self(ts_batch, cond_batch)
+        rec_loss, cond_class_logits, fourier_loss = self(ts_batch, static_context_batch, dynamic_context_batch)
         _nan_check(rec_loss, "training_step rec_loss")
         _nan_check(fourier_loss, "training_step fourier_loss")
 
         cond_loss = 0.0
         for var_name, outputs in cond_class_logits.items():
-            labels = cond_batch[var_name]
+            labels = static_context_batch[var_name]
             if isinstance(outputs, torch.Tensor):
                 _nan_check(outputs, f"training_step cond_logits[{var_name}]")
             if isinstance(labels, torch.Tensor):
@@ -686,7 +694,7 @@ class Diffusion_TS(GenerativeModel):
         
         # cond_loss /= len(cond_class_logits)
 
-        h, _ = self._get_context_embedding(cond_batch)
+        h, _ = self._get_context_embedding(static_context_batch, dynamic_context_batch)
         _nan_check(h, "training_step h (for tc)")
         tc_term = (
             self.cfg.model.tc_loss_weight * total_correlation(h)
@@ -980,9 +988,10 @@ class Diffusion_TS(GenerativeModel):
 
     def sample_reconstruction_guided(
         self,
-        shape: Tuple[int, int, int],
-        context_vars: dict,
         x_a: torch.Tensor,
+        shape: Tuple[int, int, int],
+        static_context_vars: dict,
+        dynamic_context_vars: dict = None,
         algorithm: str = "alg1",
     ) -> torch.Tensor:
         """
@@ -990,7 +999,8 @@ class Diffusion_TS(GenerativeModel):
 
         Args:
             shape: (batch_size, seq_len, time_series_dims).
-            context_vars: context conditioning dict.
+            static_context_vars: static context conditioning dict.
+            dynamic_context_vars: dynamic context conditioning dict.
             x_a: Conditional (observed) data, shape (B, cond_len, C). First cond_len
                  time steps to reconstruct; model output is split as x̂_0 = [x̂_a, x̂_b].
             algorithm: "alg1" (one gradient step per t) or "alg2" (K inner steps per t).
@@ -1013,11 +1023,10 @@ class Diffusion_TS(GenerativeModel):
         assert x_a.shape[0] == shape[0] and x_a.shape[2] == shape[2]
         eta = self.recon_guide_eta
         gamma = self.recon_guide_gamma
-
         x = _randn_shape_correlated(
-            shape, self.device, torch.get_default_dtype(), self.correlated_noise
+            shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, _ = self._get_context_embedding(context_vars)
+        embedding, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
         x_a = x_a.to(self.device)
 
         for t in reversed(range(self.num_timesteps)):
@@ -1037,21 +1046,22 @@ class Diffusion_TS(GenerativeModel):
         return x
 
     @torch.no_grad()
-    def sample(self, shape: Tuple[int, int, int], context_vars: dict) -> torch.Tensor:
+    def sample(self, shape: Tuple[int, int, int], static_context_vars: dict, dynamic_context_vars: dict = None) -> torch.Tensor:
         """
         Full reverse-pass sampling over all timesteps.
 
         Args:
             shape: (batch_size, seq_len, dims)
-            context_vars: context conditioning dict
+            static_context_vars: static context conditioning dict
+            dynamic_context_vars: dynamic context conditioning dict
 
         Returns:
             Generated samples tensor.
         """
         x = _randn_shape_correlated(
-            shape, self.device, torch.get_default_dtype(), self.correlated_noise
+            shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, _ = self._get_context_embedding(context_vars)
+        embedding, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
         for t in reversed(range(self.num_timesteps)):
             x = self.p_sample(x, t, embedding)
         _nan_check(x, "sample() output")
@@ -1059,15 +1069,16 @@ class Diffusion_TS(GenerativeModel):
 
     @torch.no_grad()
     def fast_sample(
-        self, shape: Tuple[int, int, int], context_vars: dict
+        self, shape: Tuple[int, int, int], static_context_vars: dict,
+        dynamic_context_vars: dict = None
     ) -> torch.Tensor:
         """
         Faster sampling using a reduced number of timesteps.
         """
         x = _randn_shape_correlated(
-            shape, self.device, torch.get_default_dtype(), self.correlated_noise
+            shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, _ = self._get_context_embedding(context_vars)
+        embedding, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
         times = torch.linspace(
             -1, self.num_timesteps - 1, steps=self.sampling_timesteps + 1
         )
@@ -1105,40 +1116,46 @@ class Diffusion_TS(GenerativeModel):
         else:
             yield
 
-    def generate(self, context_vars: dict) -> torch.Tensor:
+    def generate(self, static_context_vars: dict, dynamic_context_vars: dict = None) -> torch.Tensor:
         """
         Public entry to generate conditioned samples in batches.
 
         Args:
-            context_vars: dict of context tensors for each sample.
+            static_context_vars: dict of context tensors for each sample.
+            dynamic_context_vars: dict of dynamic context tensors for each sample.
 
         Returns:
             Complete generated tensor of shape (N, seq_len, dims).
         """
         bs = self.cfg.model.sampling_batch_size
-        total = len(next(iter(context_vars.values())))
+        total = len(next(iter(static_context_vars.values())))
         generated_samples = []
 
         with self.ema_scope():
             for start_idx in tqdm(
                 range(0, total, bs),
                 unit="seq",
-                desc="[CENTS] Generating samples",
+                desc="[CENTS] Generating samples",  
                 leave=True,
             ):
                 end_idx = min(start_idx + bs, total)
-                batch_context_vars = {
+                batch_static_context_vars = {
                     var_name: var_tensor[start_idx:end_idx]
-                    for var_name, var_tensor in context_vars.items()
+                    for var_name, var_tensor in static_context_vars.items()
                 }
+                batch_dynamic_context_vars = {
+                    var_name: var_tensor[start_idx:end_idx]
+                    for var_name, var_tensor in dynamic_context_vars.items()
+                }
+
                 current_bs = end_idx - start_idx
                 shape = (current_bs, self.seq_len, self.time_series_dims)
 
                 with torch.no_grad():
                     if self.fast_sampling:
-                        samples = self.fast_sample(shape, batch_context_vars)
+                        samples = self.fast_sample(shape, batch_static_context_vars, batch_dynamic_context_vars)
                     else:
-                        samples = self.sample(shape, batch_context_vars)
+                        samples = self.sample(shape, batch_static_context_vars, batch_dynamic_context_vars)
 
 
                 generated_samples.append(samples.cpu())

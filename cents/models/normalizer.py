@@ -117,13 +117,11 @@ class _NormalizerModule(nn.Module):
         time_series_dims: int = 2,
         do_scale: bool = True,
         stats_head_type: str = "mlp",
-        dynamic_var_names: list[str] = None,
         n_layers: int = 3,
     ):
         super().__init__()
         self.static_cond_module = static_cond_module
         self.dynamic_cond_module = dynamic_cond_module
-        self.dynamic_var_names = dynamic_var_names
         
         # Determine embedding dimension from available modules
         if static_cond_module is not None:
@@ -152,38 +150,38 @@ class _NormalizerModule(nn.Module):
             n_layers=n_layers,
         )
 
-    def forward(self, context_vars_dict: dict):
+    def forward(self, static_context_vars_dict: dict = None, dynamic_context_vars_dict: dict = None):
         embeddings = []
         
         # Process static context variables
         if self.static_cond_module is not None:
-            static_vars = {
-                k: v for k, v in context_vars_dict.items()
-                if k not in getattr(self, '_dynamic_var_names', [])
-            }
-            if static_vars:
+            # static_vars = {
+            #     k: v for k, v in context_vars_dict.items()
+            #     if k not in getattr(self, '_dynamic_var_names', [])
+            # }
+            if static_context_vars_dict:
                 device = next(self.static_cond_module.parameters()).device
-                static_vars = {
+                static_context_vars_dict = {
                     k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
-                    for k, v in static_vars.items()
+                    for k, v in static_context_vars_dict.items()
                 }
-                static_embedding, _ = self.static_cond_module(static_vars)
+                static_embedding, _ = self.static_cond_module(static_context_vars_dict)
                 embeddings.append(static_embedding)
         
         # Process dynamic context variables
         if self.dynamic_cond_module is not None:
-            dynamic_var_names = getattr(self, '_dynamic_var_names', [])
-            dynamic_vars = {
-                k: v for k, v in context_vars_dict.items()
-                if k in dynamic_var_names
-            }
-            if dynamic_vars:
+            # dynamic_var_names = getattr(self, '_dynamic_var_names', [])
+            # dynamic_vars = {
+            #     k: v for k, v in context_vars_dict.items()
+            #     if k in dynamic_var_names
+            # }
+            if dynamic_context_vars_dict:
                 device = next(self.dynamic_cond_module.parameters()).device
-                dynamic_vars = {
+                dynamic_context_vars_dict = {
                     k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
-                    for k, v in dynamic_vars.items()
+                    for k, v in dynamic_context_vars_dict.items()
                 }
-                dynamic_embedding, _ = self.dynamic_cond_module(dynamic_vars)
+                dynamic_embedding, _ = self.dynamic_cond_module(dynamic_context_vars_dict)
                 if torch.isnan(dynamic_embedding).any() or torch.isinf(dynamic_embedding).any():
                     raise ValueError(f"NaN/Inf detected in dynamic embedding.")
                 embeddings.append(dynamic_embedding)
@@ -227,6 +225,21 @@ class Normalizer(NormalizerModel):
         
         self.static_context_vars = self.categorical_vars + self.continuous_vars
         self.context_vars = self.static_context_vars + self.dynamic_context_vars
+
+        # Normalizer-specific conditioning: subset of static vars for grouping / stats (e.g. per-station)
+        self.normalizer_group_vars = getattr(self.dataset_cfg, "normalizer_group_vars", None)
+        self.normalizer_static_vars = (
+            list(self.normalizer_group_vars) if self.normalizer_group_vars is not None
+            else self.static_context_vars
+        )
+        if self.normalizer_static_vars:
+            bad = [v for v in self.normalizer_static_vars if v not in self.static_context_vars]
+            if bad:
+                raise ValueError(f"normalizer_group_vars {self.normalizer_group_vars} contains vars not in static_context_vars: {bad}")
+        # When normalizer_group_vars is set it is always static-only (dynamic vars are rejected in
+        # _build_training_samples), so exclude dynamic vars from normalizer conditioning entirely.
+        self.normalizer_dynamic_vars = [] if self.normalizer_group_vars is not None else self.dynamic_context_vars
+        self._group_bin_edges = {}  # filled in setup() when grouping by continuous vars
         
         self.time_series_cols = dataset_cfg.time_series_columns[: dataset_cfg.time_series_dims]
         self.time_series_dims = dataset_cfg.time_series_dims
@@ -255,27 +268,35 @@ class Normalizer(NormalizerModel):
         self.register_buffer("global_mu_std", torch.tensor(1.0))
         self.register_buffer("global_log_sigma_mean", torch.tensor(0.0))
 
-        # Create static context module
+        # Create static context module (only normalizer_static_vars so it matches group conditioning)
         self.static_context_module = None
-        if self.static_context_vars:
+        if self.normalizer_static_vars:
             StaticContextModuleCls = get_context_module_cls(self.static_module_type)
-            self.static_context_vars_dict = {
-                k: v for k, v in self.dataset.context_var_dict.items() 
-                if k in self.static_context_vars
-            }
+            n_bins = getattr(self.dataset_cfg, "numeric_context_bins", 5)
+            self.static_context_vars_dict = {}
+            for k in self.normalizer_static_vars:
+                if k in self.continuous_vars:
+                    # Binned continuous: treat as categorical with n_bins for normalizer conditioning
+                    self.static_context_vars_dict[k] = ["categorical", n_bins]
+                else:
+                    self.static_context_vars_dict[k] = self.dataset.context_var_dict[k]
             self.static_context_module = StaticContextModuleCls(
                 self.static_context_vars_dict,
                 256,
             )
 
-        # Create dynamic context module
+        # Create dynamic context module only for vars the normalizer should condition on.
+        # Filter to vars that are both in normalizer_dynamic_vars and are actual dynamic (time_series) vars.
+        # When normalizer_group_vars is set, normalizer_dynamic_vars is empty so the dict is empty
+        # and no dynamic module is created.
         self.dynamic_context_module = None
-        if self.dynamic_context_vars and self.dynamic_module_type is not None:
+        _normalizer_dynamic_vars_dict = {
+            k: v for k, v in self.dataset_cfg.context_vars.items()
+            if k in self.normalizer_dynamic_vars and k in self.dynamic_context_vars
+        }
+        if _normalizer_dynamic_vars_dict and self.dynamic_module_type is not None:
             DynamicContextModuleCls = get_context_module_cls("dynamic", self.dynamic_module_type)
-            dynamic_context_vars_dict = {
-                k: v for k, v in self.dataset_cfg.context_vars.items() 
-                if k in self.dynamic_context_vars
-            }
+            dynamic_context_vars_dict = _normalizer_dynamic_vars_dict
             dynamic_seq_len = self.num_ts_steps if self.num_ts_steps is not None else self.seq_len
             self.dynamic_context_module = DynamicContextModuleCls(
                 dynamic_context_vars_dict,
@@ -290,7 +311,6 @@ class Normalizer(NormalizerModel):
             time_series_dims=self.time_series_dims,
             do_scale=self.do_scale,
             stats_head_type=self.stats_head_type,
-            dynamic_var_names=self.dynamic_context_vars,
             n_layers=context_cfg.normalizer.n_layers,
         )
 
@@ -320,7 +340,8 @@ class Normalizer(NormalizerModel):
         # Compute per-sample statistics
         # Note: Using robust quantile scaling for targets to avoid outlier instability
         mode = getattr(self.dataset_cfg, "normalizer_stats_mode", "sample")
-        self.sample_stats = self._build_training_samples(mode, use_quantile_scale=True)
+        group_vars = getattr(self.dataset_cfg, "normalizer_group_vars", None)
+        self.sample_stats = self._build_training_samples(mode, use_quantile_scale=True, group_vars=group_vars)
 
         if self.use_global_stats_preprocessing:
             # --- COMPUTE GLOBAL TARGET STATS FOR SCALING ---
@@ -391,7 +412,7 @@ class Normalizer(NormalizerModel):
         # Direct path: network predicts asinh(mu); invert with sinh and clamp for stability
         return torch.sinh(torch.clamp(pred_mu_raw, -self.max_asinh_mu, self.max_asinh_mu))
 
-    def forward(self, cat_vars_dict: dict):
+    def forward(self, static_context_vars_dict: dict = None, dynamic_context_vars_dict: dict = None):
         """
         Predict normalization parameters.
         Applies UNSCALING logic to convert network outputs back to real-world range.
@@ -399,7 +420,7 @@ class Normalizer(NormalizerModel):
         Returns:
             Tuple of (pred_mu_real, pred_sigma_real, pred_z_min, pred_z_max, pred_log_sigma_raw).
         """
-        pred_mu_raw, pred_sigma, pred_zmin, pred_zmax, pred_log_sigma_raw = self.normalizer_model(cat_vars_dict)
+        pred_mu_raw, pred_sigma, pred_zmin, pred_zmax, pred_log_sigma_raw = self.normalizer_model(static_context_vars_dict, dynamic_context_vars_dict)
 
         pred_mu_real = self._raw_mu_to_real(pred_mu_raw)
 
@@ -427,12 +448,8 @@ class Normalizer(NormalizerModel):
         return loss_mu, loss_sigma
 
     def training_step(self, batch, batch_idx: int):
-        context_vars_dict, mu_t, sigma_t, zmin_t, zmax_t = batch
-        
-        # 1. Get RAW network outputs (scaled space) from internal model
-        # We call self.normalizer_model directly to avoid the unscaling logic in self.forward
-        # This gives us values that match the standardized targets
-        pred_mu_raw, _, pred_z_min, pred_z_max, pred_log_sigma_raw = self.normalizer_model(context_vars_dict)
+        static_context_vars_dict, dynamic_context_vars_dict, mu_t, sigma_t, zmin_t, zmax_t = batch
+        pred_mu_raw, _, pred_z_min, pred_z_max, pred_log_sigma_raw = self.normalizer_model(static_context_vars_dict, dynamic_context_vars_dict)
 
         # 2. Targets: scaled (global) or asinh(mu) + log(sigma) (direct)
         if self.use_global_stats_preprocessing:
@@ -569,15 +586,15 @@ class Normalizer(NormalizerModel):
                 return len(self.samples)
 
             def __getitem__(self, idx: int):
-                context_vars_dict, dynamic_ctx_dict, mu_arr, sigma_arr, zmin_arr, zmax_arr = self.samples[idx]
+                static_context_vars_dict, dynamic_context_vars_dict, mu_arr, sigma_arr, zmin_arr, zmax_arr = self.samples[idx]
                 for var_name in self.dynamic_context_vars:
-                    if var_name in dynamic_ctx_dict:
-                        ts_data = np.array(dynamic_ctx_dict[var_name])
+                    if var_name in dynamic_context_vars_dict:
+                        ts_data = np.array(dynamic_context_vars_dict[var_name])
                         var_info = self.dataset_cfg.context_vars.get(var_name, None)
                         if var_info and var_info[1] is not None:
-                            context_vars_dict[var_name] = torch.from_numpy(ts_data).long()
+                            dynamic_context_vars_dict[var_name] = torch.from_numpy(ts_data).long()
                         else:
-                            context_vars_dict[var_name] = torch.from_numpy(ts_data).float()
+                            dynamic_context_vars_dict[var_name] = torch.from_numpy(ts_data).float()
                 
                 mu_t = torch.from_numpy(mu_arr).float()
                 sigma_t = torch.from_numpy(sigma_arr).float()
@@ -588,7 +605,7 @@ class Normalizer(NormalizerModel):
                     # Return dummy tensors so DataLoader collate does not see None
                     zmin_t = torch.zeros_like(mu_t)
                     zmax_t = torch.zeros_like(mu_t)
-                return context_vars_dict, mu_t, sigma_t, zmin_t, zmax_t
+                return static_context_vars_dict, dynamic_context_vars_dict, mu_t, sigma_t, zmin_t, zmax_t
 
         return _TrainSet(self.sample_stats, self.dynamic_context_vars, self.do_scale, self.dataset_cfg)
 
@@ -599,30 +616,43 @@ class Normalizer(NormalizerModel):
         
         df_out = df.copy()
         self.eval()
-        continuous_vars = getattr(self.dataset_cfg, "continuous_context_vars", None) or []
+        continuous_vars = set(self.continuous_vars)
         categorical_ts = getattr(self.dataset, 'categorical_time_series', {})
-        
+        group_edges = getattr(self, "_group_bin_edges", {})
+
         with torch.no_grad():
             for i, row in tqdm(df_out.iterrows(), total=len(df_out), desc="Normalizing"):
-                ctx = {}
+                static_context_vars_dict = {}
+                dynamic_context_vars_dict = {}
                 for v in self.context_vars:
-                    if v in continuous_vars:
-                        ctx[v] = torch.tensor(row[v], dtype=torch.float32).unsqueeze(0)
+                    if v in self.normalizer_static_vars:
+                        if v in continuous_vars and v in group_edges:
+                            edges = group_edges[v]
+                            bin_idx = np.digitize(np.asarray([float(row[v])]), edges[1:-1], right=False)
+                            bin_idx = np.clip(bin_idx, 0, len(edges) - 2).item()
+                            static_context_vars_dict[v] = torch.tensor(bin_idx, dtype=torch.long).unsqueeze(0)
+                        elif v in continuous_vars:
+                            static_context_vars_dict[v] = torch.tensor(row[v], dtype=torch.float32).unsqueeze(0)
+                        else:
+                            static_context_vars_dict[v] = torch.tensor(row[v], dtype=torch.long).unsqueeze(0)
+                    elif v in self.static_context_vars:
+                        continue
+                    elif v in self.normalizer_dynamic_vars:
+                        dynamic_context_vars_dict[v] = torch.tensor(row[v], dtype=torch.float32).unsqueeze(0)
                     elif v in self.dynamic_context_vars:
-                        dtype = torch.long if v in categorical_ts else torch.float32
-                        ctx[v] = torch.tensor(row[v], dtype=dtype).unsqueeze(0)
+                        continue  # dynamic var excluded from normalizer conditioning
                     else:
-                        ctx[v] = torch.tensor(row[v], dtype=torch.long).unsqueeze(0)
-                
+                        raise ValueError(f"Variable {v} not found in context_vars")
+
                 # self(ctx) calls forward, which automatically UNSCALES predictions
-                pred_mu, pred_sigma, pred_zmin, pred_zmax, _ = self(ctx)
+                pred_mu, pred_sigma, pred_zmin, pred_zmax, _ = self(static_context_vars_dict, dynamic_context_vars_dict)
                 mu, sigma = pred_mu[0].cpu().numpy(), pred_sigma[0].cpu().numpy()
 
                 for d, col in enumerate(self.time_series_cols):
                     if col in categorical_ts:
                         df_out.at[i, col] = np.asarray(row[col]).astype(np.int32)
                         continue
-                    
+
                     arr = np.asarray(row[col], dtype=np.float32)
 
                     sigma_floor = max(self.min_sigma, 0.01 * np.exp(self.global_log_sigma_mean.cpu().item()))
@@ -645,23 +675,45 @@ class Normalizer(NormalizerModel):
 
         df_out = df.copy()
         self.eval()
-        continuous_vars = getattr(self.dataset_cfg, "continuous_context_vars", None) or []
-        categorical_ts = getattr(self.dataset, 'categorical_time_series', {})
+        # continuous_vars = getattr(self.dataset_cfg, "continuous_context_vars", None) or []
         
+        continuous_vars = set(self.continuous_vars)
+        categorical_ts = getattr(self.dataset, "categorical_time_series", {})
+        group_edges = getattr(self, "_group_bin_edges", {})
         with torch.no_grad():
             for i, row in tqdm(df_out.iterrows(), total=len(df_out), desc="Inverse normalizing"):
-                ctx = {}
+                static_context_vars_dict = {}
+                dynamic_context_vars_dict = {}
                 for v in self.context_vars:
-                    if v in continuous_vars:
-                        ctx[v] = torch.tensor(row[v], dtype=torch.float32).unsqueeze(0)
-                    elif v in self.dynamic_context_vars:
+                    if v in self.normalizer_static_vars:
+                        # Normalizer only conditions on normalizer_static_vars (e.g. station)
+                        if v in continuous_vars and v in group_edges:
+                            edges = group_edges[v]
+                            bin_idx = np.digitize(np.asarray([float(row[v])]), edges[1:-1], right=False)
+                            bin_idx = np.clip(bin_idx, 0, len(edges) - 2).item()
+                            static_context_vars_dict[v] = torch.tensor(bin_idx, dtype=torch.long).unsqueeze(0)
+                        elif v in continuous_vars:
+                            static_context_vars_dict[v] = torch.tensor(row[v], dtype=torch.float32).unsqueeze(0)
+                        else:
+                            static_context_vars_dict[v] = torch.tensor(row[v], dtype=torch.long).unsqueeze(0)
+                    elif v in self.static_context_vars:
+                        continue  # not used by normalizer
+                    elif v in self.normalizer_dynamic_vars:
+                        # Dynamic var included in normalizer conditioning
+                        val = row[v]
+                        dtype_np = np.int64 if v in categorical_ts else np.float32
+                        arr = np.asarray(val, dtype=dtype_np)
+                        if arr.ndim == 0:
+                            arr = arr[np.newaxis, np.newaxis]
+                        elif arr.ndim == 1:
+                            arr = arr[np.newaxis, :]
                         dtype = torch.long if v in categorical_ts else torch.float32
-                        ctx[v] = torch.tensor(row[v], dtype=dtype).unsqueeze(0)
-                    else:
-                        ctx[v] = torch.tensor(row[v], dtype=torch.long).unsqueeze(0)
+                        dynamic_context_vars_dict[v] = torch.tensor(arr, dtype=dtype)
+                    elif v in self.dynamic_context_vars:
+                        continue  # dynamic var excluded from normalizer conditioning
                 
                 # self(ctx) calls forward, which automatically UNSCALES predictions
-                pred_mu, pred_sigma, pred_zmin, pred_zmax, _ = self(ctx)
+                pred_mu, pred_sigma, pred_zmin, pred_zmax, _ = self(static_context_vars_dict, dynamic_context_vars_dict)
                 mu, sigma = pred_mu[0].cpu().numpy(), pred_sigma[0].cpu().numpy()
 
                 for d, col in enumerate(self.time_series_cols):
@@ -694,12 +746,13 @@ class Normalizer(NormalizerModel):
 
         df = self.dataset.data.copy()
 
-        continuous_vars = set(getattr(self.dataset_cfg, "continuous_context_vars", None) or [])
+        continuous_vars = set(self.continuous_vars)
         dynamic_vars = set(self.dynamic_context_vars)
         static_vars = [v for v in self.static_context_vars]
 
         if group_vars is None:
-            group_vars = [v for v in static_vars if (v not in continuous_vars and v not in dynamic_vars)]
+            # Default: group by all static categorical (continuous in normalizer_static_vars get binned in group mode)
+            group_vars = [v for v in self.normalizer_static_vars if (v not in continuous_vars and v not in dynamic_vars)]
 
         bad = [v for v in group_vars if v in dynamic_vars]
         if bad:
@@ -736,16 +789,16 @@ class Normalizer(NormalizerModel):
         if mode == "sample":
             for _, row in df.iterrows():
                 context_vars_dict = {}
-                for v in static_vars:
-                    if v not in row: continue
+                for v in self.normalizer_static_vars:
+                    if v not in row:
+                        continue
                     if v in continuous_vars:
-                        # Ensure we store float for continuous, applying simple normalization if needed in dataset
                         context_vars_dict[v] = torch.tensor(row[v], dtype=torch.float32)
                     else:
                         context_vars_dict[v] = torch.tensor(row[v], dtype=torch.long)
 
                 dynamic_ctx_dict = {}
-                for v in self.dynamic_context_vars:
+                for v in self.normalizer_dynamic_vars:
                     if v not in row: continue
                     ts_data = row[v]
                     if isinstance(ts_data, (np.ndarray, list)):
@@ -760,13 +813,19 @@ class Normalizer(NormalizerModel):
             return samples
 
         # mode == "group"
-        # Pre-process continuous vars for grouping by binning
+        # Pre-process continuous vars for grouping by binning; store edges for inverse_transform
+        self._group_bin_edges = {}
         for v in group_vars:
             if v in continuous_vars:
-                n_bins = getattr(self, "numeric_context_bins", 5)
-                df[v] = pd.cut(df[v], bins=n_bins, labels=False, include_lowest=True)
-
-        grouped = df.groupby(group_vars, dropna=False)
+                n_bins = getattr(self.dataset_cfg, "numeric_context_bins", 5)
+                binned, edges = pd.cut(
+                    df[v], bins=n_bins, labels=False, include_lowest=True,
+                    duplicates="drop", retbins=True
+                )
+                self._group_bin_edges[v] = np.asarray(edges, dtype=np.float64)
+                df[v] = binned
+        print(group_vars, "group_vars")
+        grouped = df.groupby(list(group_vars), dropna=False)
 
         for group_key, gdf in grouped:
             if len(group_vars) == 1:

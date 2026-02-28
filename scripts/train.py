@@ -78,9 +78,9 @@ def main(args) -> None:
     TC_LOSS_WEIGHT = args.tc_loss_weight
     run_name = args.run_name
 
-    # Create run directory under runs/
+    # Create run directory under runs/{dataset}/{run_name}
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    run_dir = RUNS_DIR / run_name
+    run_dir = RUNS_DIR / args.dataset / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Cents] Run directory: {run_dir}")
 
@@ -189,7 +189,7 @@ if __name__ == "__main__":
         help="Path to checkpoint file (.ckpt) to resume training from",
     )
     parser.add_argument("--run-name", type=str, required=True,
-        help="Name of this run. A directory runs/<run-name> will be created for checkpoints, cache, and summary.",
+        help="Name of this run. A directory runs/<dataset>/<run-name> will be created for checkpoints, cache, and summary.",
     )
 
     args = parser.parse_args()

@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from pathlib import Path
 import json
@@ -22,8 +23,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-DATASET_OVERRIDES = ["max_samples=10000", "normalize=False"]
-PECAN_OVERRIDES = ["time_series_dims=2", "user_group=pv_users"]
+DATASET_OVERRIDES = ["normalize=False", "max_samples=10000"]
+PECAN_OVERRIDES = ["time_series_dims=1", "user_group=all"]
 
 CONFIG_DATASET_DIR = Path(__file__).resolve().parent.parent / "cents" / "config" / "dataset"
 
@@ -151,6 +152,12 @@ def main() -> None:
         help="Dataset name (must match the one used to train the model).",
     )
     parser.add_argument(
+        "--device",
+        type=int,
+        default=0,
+        help="Device index to use for evaluation.",
+    )
+    parser.add_argument(
         "--dataset-overrides",
         type=str,
         nargs="*",
@@ -234,6 +241,12 @@ def main() -> None:
         default=None,
         help="Epoch number to evaluate when using --run-path (e.g. 699). If omitted, use last.ckpt and save as metrics_last.json.",
     )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Limit evaluation to this many samples (applied as dataset max_samples override).",
+    )
     args = parser.parse_args()
 
     use_run_path = args.run_path is not None
@@ -256,15 +269,41 @@ def main() -> None:
         )
         if context_path is not None:
             set_context_config_path(str(context_path))
+        # Apply dataset overrides (e.g. max_samples) so eval uses the requested subset.
+        # normalize=False prevents the dataset from re-training or reloading a normalizer
+        # during init; the normalizer checkpoint is loaded explicitly below instead.
+        overrides = DATASET_OVERRIDES
+        if getattr(args, "max_samples", None) is not None:
+            overrides.append(f"max_samples={args.max_samples}")
+        if args.dataset_overrides:
+            overrides.extend(args.dataset_overrides)
+        dataset_cfg = apply_overrides(dataset_cfg, overrides)
+        logging.info("Applied dataset overrides: %s", overrides)
         dataset_name = dataset_cfg.get("name", "pecanstreet")
         dataset = _load_dataset(dataset_name, dataset_cfg, run_dir=str(run_path))
         model_type = model_cfg.get("name", "diffusion_ts")
+
+        # Resolve normalizer checkpoint from the run's normalizer directory so that
+        # z-space stats use the exact same normalizer the model was trained with.
+        normalizer_ckpts = sorted(normalizer_dir.glob("*.ckpt"))
+        if not normalizer_ckpts:
+            raise FileNotFoundError(
+                f"No normalizer checkpoint found in {normalizer_dir}. "
+                "Ensure the run was trained with the current code that saves normalizer/*.ckpt."
+            )
+        run_normalizer_ckpt = normalizer_ckpts[0]
+        if len(normalizer_ckpts) > 1:
+            logging.warning(
+                "Multiple normalizer checkpoints found in %s; using %s",
+                normalizer_dir, run_normalizer_ckpt.name,
+            )
+        logging.info("Using normalizer checkpoint: %s", run_normalizer_ckpt)
         eval_cfg = load_yaml(args.evaluator_config)
         top_cfg = load_yaml(args.config)
         cfg = OmegaConf.create({})
         cfg.evaluator = eval_cfg
         cfg.wandb = top_cfg.get("wandb", {})
-        cfg.device = "cuda:0"
+        cfg.device = f"cuda:{args.device}"
         cfg.model = model_cfg
         cfg.dataset = OmegaConf.create(OmegaConf.to_container(dataset.cfg, resolve=True))
         cfg.model.use_ema_sampling = args.ema
@@ -279,7 +318,7 @@ def main() -> None:
         logging.info("Loading dataset from run config (run_dir=%s)...", run_path)
         logging.info("Model checkpoint: %s", model_ckpt_path)
         gen = DataGenerator(model_type=model_type, dataset=dataset, cfg=cfg)
-        gen.load_from_checkpoint(str(model_ckpt_path), normalizer_ckpt=None)
+        gen.load_from_checkpoint(str(model_ckpt_path), normalizer_ckpt=str(run_normalizer_ckpt))
         args._metrics_epoch = metrics_epoch
     else:
         args._metrics_epoch = None
@@ -293,6 +332,8 @@ def main() -> None:
             overrides = overrides + ["scale=True"]
         if args.dataset_overrides:
             overrides = overrides + list(args.dataset_overrides)
+        if getattr(args, "max_samples", None) is not None:
+            overrides = overrides + [f"max_samples={args.max_samples}"]
         dataset_cfg = _load_dataset_config(args.dataset, overrides)
         dataset = _load_dataset(args.dataset, dataset_cfg)
 
@@ -307,7 +348,7 @@ def main() -> None:
         cfg = OmegaConf.create({})
         cfg.evaluator = eval_cfg
         cfg.wandb = top_cfg.get("wandb", {})
-        cfg.device = "cuda:0"
+        cfg.device = f"cuda:{args.device}"
         cfg.model = OmegaConf.create(
             OmegaConf.to_container(OmegaConf.load(f"cents/config/model/{model_type}.yaml"), resolve=True)
         )
@@ -394,15 +435,25 @@ def main() -> None:
         _print_metrics(normalized, prefix="")
         metrics["normalized_domain"] = normalized  # restore for save
     
+    def _sanitize_for_json(obj):
+        """Recursively replace NaN/Inf with None so json.dump produces valid JSON."""
+        if isinstance(obj, dict):
+            return {k: _sanitize_for_json(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_sanitize_for_json(v) for v in obj]
+        if isinstance(obj, float) and not math.isfinite(obj):
+            return None
+        return obj
+
     # Results are automatically saved if save_results=True
     if use_run_path and getattr(args, "_metrics_epoch", None) is not None:
         metrics_file = cfg.save_dir / f"metrics_{args._metrics_epoch}.json"
         with open(metrics_file, "w") as f:
-            json.dump(metrics, f, indent=4)
+            json.dump(_sanitize_for_json(metrics), f, indent=4)
         print(f"\n✅ Results saved to {metrics_file}")
     elif args.save_dir:
         with open(Path(args.save_dir) / "metrics.json", "w") as f:
-            json.dump(metrics, f, indent=4)
+            json.dump(_sanitize_for_json(metrics), f, indent=4)
         print(f"\n✅ Results saved to {Path(args.save_dir) / "metrics.json"}")
     print("\n" + "=" * 60)
 

@@ -11,6 +11,8 @@ Modifications:
 Note: Please ensure compliance with the repository's license and credit the original authors when using or distributing this code.
 """
 
+import warnings
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -113,13 +115,25 @@ class TS2Vec:
 
         train_data = train_data[~np.isnan(train_data).all(axis=2).all(axis=1)]
 
+        if len(train_data) == 0:
+            warnings.warn(
+                "TS2Vec.fit: no valid samples after dropping all-NaN rows; returning empty loss log."
+            )
+            return []
+
         train_dataset = TensorDataset(torch.from_numpy(train_data).to(torch.float))
+        batch_size = min(self.batch_size, len(train_dataset))
         train_loader = DataLoader(
             train_dataset,
-            batch_size=min(self.batch_size, len(train_dataset)),
+            batch_size=batch_size,
             shuffle=True,
             drop_last=True,
         )
+        if len(train_loader) == 0:
+            warnings.warn(
+                "TS2Vec.fit: DataLoader has 0 batches (e.g. drop_last=True with too few samples); returning empty loss log."
+            )
+            return []
 
         optimizer = torch.optim.AdamW(self._net.parameters(), lr=self.lr)
 

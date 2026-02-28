@@ -93,8 +93,11 @@ class TimeSeriesDataset(Dataset):
         if not hasattr(self, "name"):
             self.name = "custom"
 
-        # Add continuous variables to context_vars if specified
+        # Split context vars into static and dynamic once (no future re-splits)
         self.continuous_vars = [k for k, v in self.cfg.context_vars.items() if v[0] == "continuous"]
+        categorical_vars = [k for k, v in self.cfg.context_vars.items() if v[0] == "categorical"]
+        self.dynamic_context_vars = [k for k, v in self.cfg.context_vars.items() if v[0] == "time_series"]
+        self.static_context_vars = categorical_vars + self.continuous_vars
 
         self.normalize = normalize
         self.scale = scale
@@ -193,31 +196,36 @@ class TimeSeriesDataset(Dataset):
             idx (int): Sample index.
 
         Returns:
-            Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+            Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
                 - timeseries: Tensor of shape (seq_len, dims).
-                - context_vars: Dict of context variable tensors.
-                    Categorical variables are long tensors, continuous variables are float tensors.
+                - static_context_vars: Dict of static context tensors (categorical long, continuous float).
+                - dynamic_context_vars: Dict of dynamic (time_series) context tensors.
         """
         sample = self.data.iloc[idx]
         timeseries = torch.tensor(sample["timeseries"], dtype=torch.float32)
-        
-        continuous_vars = getattr(self.cfg, 'continuous_context_vars', None) or []
-        context_vars_dict = {}
-        for var in self.context_vars:
-            if var in continuous_vars:
-                # Continuous variables: keep as float
+
+        static_context_vars_dict = {}
+        for var in self.static_context_vars:
+            if var in self.continuous_vars:
                 val = sample[var]
-                # Check for NaN/Inf in the data itself
                 if isinstance(val, (float, int)) and (not isinstance(val, bool) and (np.isnan(val) or np.isinf(val))):
                     raise ValueError(
                         f"NaN/Inf detected in continuous variable '{var}' in dataset at index {idx}. "
                         f"Value: {val}. This should not happen if normalization was done correctly."
                     )
-                context_vars_dict[var] = torch.tensor(val, dtype=torch.float32)
+                static_context_vars_dict[var] = torch.tensor(val, dtype=torch.float32)
             else:
-                # Categorical variables: use long
-                context_vars_dict[var] = torch.tensor(sample[var], dtype=torch.long)
-        return timeseries, context_vars_dict
+                static_context_vars_dict[var] = torch.tensor(sample[var], dtype=torch.long)
+
+        dynamic_context_vars_dict = {}
+        for var in self.dynamic_context_vars:
+            arr = np.asarray(sample[var])
+            if var in self.categorical_time_series:
+                dynamic_context_vars_dict[var] = torch.from_numpy(arr).long()
+            else:
+                dynamic_context_vars_dict[var] = torch.from_numpy(arr).float()
+
+        return timeseries, static_context_vars_dict, dynamic_context_vars_dict
 
     def __getstate__(self):
         """
@@ -361,15 +369,13 @@ class TimeSeriesDataset(Dataset):
         Returns:
             Tuple of encoded DataFrame and mapping codes.
         """
-        continuous_vars = [k for k, v in self.cfg.context_vars.items() if v[0] == "continuous"]
-        time_series_cols = [k for k, v in self.cfg.context_vars.items() if v[0] == "time_series"]
         encoded_data, mapping = encode_context_variables(
             data=data,
             columns_to_encode=self.context_vars,
             bins=self.numeric_context_bins,
             numeric_cols=self.numeric_cols,
-            continuous_vars=continuous_vars,
-            time_series_cols=time_series_cols,
+            continuous_vars=self.continuous_vars,
+            time_series_cols=self.dynamic_context_vars,
             categorical_time_series=self.categorical_time_series,
         )
         

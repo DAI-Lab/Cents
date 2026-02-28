@@ -29,7 +29,7 @@ def get_context_module_cls(key: str, subkey: str = None) -> type:
     Fetch the context module class for `key` (and optionally `subkey`). Raises if not found.
     
     Args:
-        key: The name of the context module to retrieve (e.g., "default", "dynamic").
+        key: The name of the context module to retrieve (e.g., "default", "dynamic"c).
         subkey: Optional subkey for two-part registration (e.g., "mlp", "cnn").
         
     Returns:

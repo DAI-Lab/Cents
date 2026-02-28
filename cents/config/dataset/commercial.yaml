@@ -17,6 +17,7 @@ metadata_columns: ["building_id", "site_id", "primaryspaceusage", "sqft", "yearb
 numeric_context_bins: 5
 reduce_cardinality: False
 normalizer_stats_mode: group
+normalizer_group_vars: null
 
 context_vars:
   year: ["categorical", 2]

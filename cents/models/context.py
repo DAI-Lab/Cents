@@ -74,9 +74,12 @@ class MLPContextModule(BaseContextModule):
             classification_logits (Dict[str, Tensor]): Logits per variable,
                 each of shape (batch_size, num_categories).
         """
-        embeddings = [
-            layer(context_vars[name]) for name, layer in self.context_embeddings.items()
-        ]
+        embeddings = []
+        for name, layer in self.context_embeddings.items():
+            idx = context_vars[name]
+            if idx.dtype in (torch.long, torch.int, torch.int32, torch.int64):
+                idx = idx.clamp(0, layer.num_embeddings - 1)
+            embeddings.append(layer(idx))
 
         context_matrix = torch.cat(embeddings, dim=1)
         embedding = self.mlp(context_matrix)
@@ -182,7 +185,10 @@ class SepMLPContextModule(BaseContextModule):
         # Process categorical variables (only those present in context_vars)
         for name, layer in self.context_embeddings.items():
             if name in context_vars:
-                encodings[name] = layer(context_vars[name])
+                idx = context_vars[name]
+                if idx.dtype in (torch.long, torch.int, torch.int32, torch.int64):
+                    idx = idx.clamp(0, layer.num_embeddings - 1)
+                encodings[name] = layer(idx)
         
         # Process continuous variables (only those present in context_vars)
         for name, layer in self.continuous_projections.items():
@@ -351,27 +357,27 @@ class DynamicContextModule_CNN(BaseContextModule):
         """
         embeddings = []
         
-        # Process categorical time series
-        for name in self.categorical_ts_vars.keys():
-            if name in context_vars:
-                # Input: (batch, seq_len) with integer indices
-                ts_data = context_vars[name]  # (batch, seq_len)
-                # Check for NaN/Inf in input
-                if torch.isnan(ts_data).any() or torch.isinf(ts_data).any():
-                    raise ValueError(f"NaN/Inf detected in categorical time series input '{name}'")
-                # Embed: (batch, seq_len) -> (batch, seq_len, embedding_dim)
-                embedded = self.ts_embeddings[name](ts_data)
-                # Transpose for CNN: (batch, embedding_dim, seq_len)
-                embedded = embedded.transpose(1, 2)
-                # Check for NaN after embedding
-                if torch.isnan(embedded).any() or torch.isinf(embedded).any():
-                    raise ValueError(f"NaN/Inf detected after embedding for '{name}'")
-                # Encode: (batch, embedding_dim, seq_len) -> (batch, embedding_dim)
-                encoded = self.ts_encoders[name](embedded)
-                # Check for NaN after encoding
-                if torch.isnan(encoded).any() or torch.isinf(encoded).any():
-                    raise ValueError(f"NaN/Inf detected after encoding for '{name}'")
-                embeddings.append(encoded)
+        # # Process categorical time series
+        # for name in self.categorical_ts_vars.keys():
+        #     if name in context_vars:
+        #         # Input: (batch, seq_len) with integer indices
+        #         ts_data = context_vars[name]  # (batch, seq_len)
+        #         # Check for NaN/Inf in input
+        #         if torch.isnan(ts_data).any() or torch.isinf(ts_data).any():
+        #             raise ValueError(f"NaN/Inf detected in categorical time series input '{name}'")
+        #         # Embed: (batch, seq_len) -> (batch, seq_len, embedding_dim)
+        #         embedded = self.ts_embeddings[name](ts_data)
+        #         # Transpose for CNN: (batch, embedding_dim, seq_len)
+        #         embedded = embedded.transpose(1, 2)
+        #         # Check for NaN after embedding
+        #         if torch.isnan(embedded).any() or torch.isinf(embedded).any():
+        #             raise ValueError(f"NaN/Inf detected after embedding for '{name}'")
+        #         # Encode: (batch, embedding_dim, seq_len) -> (batch, embedding_dim)
+        #         encoded = self.ts_encoders[name](embedded)
+        #         # Check for NaN after encoding
+        #         if torch.isnan(encoded).any() or torch.isinf(encoded).any():
+        #             raise ValueError(f"NaN/Inf detected after encoding for '{name}'")
+        #         embeddings.append(encoded)
         
         # Process numeric time series
         for name in self.numeric_ts_vars:

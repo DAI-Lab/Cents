@@ -70,6 +70,23 @@ def cosine_beta_schedule(timesteps: int, s: float = 0.004) -> torch.Tensor:
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0, 0.999)
 
+import math
+import torch
+
+
+def cosine_beta_schedule_logsnr(
+    timesteps: int,
+    logsnr_min: float = -8.0,
+    logsnr_max: float = 15.0,
+    eps: float = 1e-5,
+) -> torch.Tensor:
+    t = torch.linspace(0, 1, timesteps + 1, dtype=torch.float32)
+    logsnr = logsnr_max + 0.5 * (logsnr_min - logsnr_max) * (1 - torch.cos(math.pi * t))
+
+    alpha_bar = torch.sigmoid(logsnr).clamp(eps, 1.0 - eps)
+
+    betas = 1 - (alpha_bar[1:] / alpha_bar[:-1])
+    return torch.clip(betas, 0, 0.999)
 
 def exists(x):
     return x is not None
@@ -239,14 +256,11 @@ class Conv_MLP(nn.Module):
     def forward(self, x):
         # x: (B, T, C)
         _nan_check(x, "Conv_MLP forward x (initial)")
-        # Print when values are extreme (even if not NaN) to debug downstream NaN
-        # if isinstance(x, torch.Tensor):
-        #     x_abs_max = x.abs().max().item()
-        #     if x_abs_max > 50.0 or torch.isnan(x).any() or torch.isinf(x).any():
-        #         print(
-        #             f"[Conv_MLP] x (initial): shape={tuple(x.shape)}, min={x.min().item():.6g}, max={x.max().item():.6g}, "
-        #             f"abs_max={x_abs_max:.6g}, has_nan={torch.isnan(x).any().item()}, has_inf={torch.isinf(x).any().item()}"
-        #         )
+        # # Print when values are extreme (even if not NaN) to debug downstream NaN
+        # print(
+        #     f"[Conv_MLP] x (initial): shape={tuple(x.shape)}, min={x.min().item():.6g}, max={x.max().item():.6g}, "
+        #     f"abs_max={x.abs().max().item():.6g}, has_nan={torch.isnan(x).any().item()}, has_inf={torch.isinf(x).any().item()}"
+        # )
         x = x.transpose(1, 2).contiguous()   # (B, C, T) contiguous
         _nan_check(x, "Conv_MLP forward x (transposed)")
         x = self.conv(x)
@@ -875,6 +889,11 @@ class Transformer(nn.Module):
 
     def forward(self, input, t, padding_masks=None, return_res=False, cond=None):
         # cond: (B, cond_dim) or None
+        # Ensure float32 so conv/linear (float32 params) never see double input
+        if input.is_floating_point():
+            input = input.float()
+        if cond is not None and cond.is_floating_point():
+            cond = cond.float()
         _nan_check(input, "forward input")
         t_emb = self.time_emb(t)
         _nan_check(t_emb, "forward t_emb")
