@@ -5,7 +5,7 @@ strategy: ddp_find_unused_parameters_true
 gradient_accumulate_every: 4
 log_every_n_steps: 1
 batch_size: 512
-max_epochs: 1000
+max_epochs: 2500
 base_lr: 1e-4
 eval_after_training: False
 
@@ -13,7 +13,7 @@ checkpoint:
   save_last: True       # Save final model
   save_top_k: 0         # 0 = only periodic saves; use >0 to also save top-k by metric
   every_n_train_steps: null
-  every_n_epochs: 100   # Save a distinct checkpoint every 250 epochs (250, 500, 750, ...)
+  every_n_epochs: 250   # Save a distinct checkpoint every 250 epochs (250, 500, 750, ...)
 
 lr_scheduler_params:
   factor: 0.5

@@ -85,16 +85,25 @@ class BaseModel(pl.LightningModule, ABC):
                         seq_len=seq_len if num_ts_steps is None else num_ts_steps,
                     )
                 
-                # Determine embedding dimension and create combine MLP if both exist
+                # Determine embedding dimension
                 if self.static_context_module is not None:
                     self.embedding_dim = self.static_context_module.embedding_dim
                 elif self.dynamic_context_module is not None:
                     self.embedding_dim = self.dynamic_context_module.embedding_dim
                 else:
                     raise ValueError("At least one of static_context_module or dynamic_context_module must be provided")
-                
-                # If both modules exist, create combine MLP
-                if self.static_context_module is not None and self.dynamic_context_module is not None:
+
+                # combine_mlp is only needed when the dynamic module returns a pooled
+                # vector (returns_sequence=False) that must be fused with the static
+                # embedding before AdaLN conditioning.  When returns_sequence=True the
+                # dynamic context is routed to cross-attention inside the backbone and
+                # must NOT be merged with the static embedding here.
+                dyn_returns_seq = getattr(self.dynamic_context_module, "returns_sequence", False) \
+                    if self.dynamic_context_module is not None else False
+
+                if (self.static_context_module is not None
+                        and self.dynamic_context_module is not None
+                        and not dyn_returns_seq):
                     combined_dim = self.static_context_module.embedding_dim + self.dynamic_context_module.embedding_dim
                     self.combine_mlp = nn.Sequential(
                         nn.Linear(combined_dim, self.embedding_dim),

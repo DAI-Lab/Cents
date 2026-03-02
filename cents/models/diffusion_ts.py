@@ -159,9 +159,12 @@ class Diffusion_TS(GenerativeModel):
         if not hasattr(self, 'static_context_module') and not hasattr(self, 'dynamic_context_module'):
             raise ValueError("At least one context module (static or dynamic) must be initialized")
 
-        # Context embedding dropout (training only) for robust reconstruction-guided sampling
-        context_embed_dropout = getattr(cfg.model, "context_embed_dropout", 0.0)
-        self.context_embed_dropout = nn.Dropout(p=context_embed_dropout)
+        # Context embedding dropout (training only): zeros the *entire* embedding for a random
+        # subset of samples (Bernoulli with prob p).  This is CFG-compatible — the model learns
+        # to denoise both with and without context, enabling guidance-scale inference later.
+        self.context_embed_dropout_p = getattr(cfg.model, "context_embed_dropout", 0.0)
+        # Keep the nn.Dropout attribute so old checkpoints that saved it don't break on load.
+        self.context_embed_dropout = nn.Dropout(p=0.0)
 
         # Optional dual head for x̂_a / x̂_b: separate output heads for conditional vs rest of sequence
         self.recon_cond_len = getattr(cfg.model, "recon_cond_len", None)
@@ -290,99 +293,85 @@ class Diffusion_TS(GenerativeModel):
         self.continuous_context_vars = [k for k, v in cfg.dataset.context_vars.items() if v[0] == "continuous"]
         self.categorical_context_vars = [k for k, v in cfg.dataset.context_vars.items() if v[0] == "categorical"]
 
-    def _get_context_embedding(self, static_context_vars: dict, dynamic_context_vars: dict = None) -> Tuple[torch.Tensor, dict]:
+    def _get_context_embedding(
+        self, static_context_vars: dict, dynamic_context_vars: dict = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], dict]:
         """
-        Get combined context embedding from static and/or dynamic context modules.
-        
-        Args:
-            context_vars: Dict of context tensors (static: single values, dynamic: time series)
-            
-        Returns:
-            embedding: Combined embedding tensor of shape (batch_size, embedding_dim)
-            all_logits: Dict of classification/regression logits from both modules
-        """
-        embeddings = []
-        all_logits = {}
-        # for k, v in context_vars.items():
-        #     if isinstance(v, torch.Tensor):
-        #         _nan_check(v, f"_get_context_embedding context_vars[{k}]")
+        Get context embeddings from static and/or dynamic context modules.
 
-        # Process static context variables
-        if self.static_context_module is not None:
-            # Filter static context variables
-            # static_vars = {
-            #     k: v for k, v in context_vars.items()
-            #     if k not in getattr(self, 'dynamic_context_vars', [])
-            # }
-            if static_context_vars:
-                device = next(self.static_context_module.parameters()).device
-                static_vars = {
-                    k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
-                    for k, v in static_context_vars.items()
-                }
-                # Debug: print which static input has NaN (only when we see one)
-                for k, v in static_context_vars.items():
-                    if isinstance(v, torch.Tensor) and (torch.isnan(v).any() or torch.isinf(v).any()):
-                        nan_c = torch.isnan(v).sum().item()
-                        inf_c = torch.isinf(v).sum().item()
-                        finite = v[~(torch.isnan(v) | torch.isinf(v))]
-                        min_s = finite.min().item() if finite.numel() > 0 else float("nan")
-                        max_s = finite.max().item() if finite.numel() > 0 else float("nan")
-                        mean_s = finite.float().mean().item() if finite.numel() > 0 else float("nan")
-                        print(
-                            f"[NaN/Inf] static_var '{k}': shape={tuple(v.shape)}, dtype={v.dtype}, "
-                            f"nan_count={nan_c}, inf_count={inf_c}, finite_min={min_s:.6g}, finite_max={max_s:.6g}, finite_mean={mean_s:.6g}"
-                        )
-                # Replace NaN/Inf in static inputs so the context module does not produce NaN embeddings
-                # def _sanitize(t: torch.Tensor) -> torch.Tensor:
-                #     if not isinstance(t, torch.Tensor):
-                #         return t
-                #     if not (torch.isnan(t).any() or torch.isinf(t).any()):
-                #         return t
-                #     if t.is_floating_point():
-                #         return torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0)
-                #     return t
-                # static_vars = {k: _sanitize(v) for k, v in static_vars.items()}
-                static_embedding, static_logits = self.static_context_module(static_context_vars)
-                _nan_check(static_embedding, "_get_context_embedding static_embedding")
-                embeddings.append(static_embedding)
-                all_logits.update(static_logits)
-        
-        # Process dynamic context variables
-        if self.dynamic_context_module is not None:
-            # Filter dynamic context variables
-            # dynamic_var_names = getattr(self, 'dynamic_context_vars', [])
-            # dynamic_vars = {
-            #     k: v for k, v in context_vars.items()
-            #     if k in dynamic_var_names
-            # }
-            if dynamic_context_vars:
-                device = next(self.dynamic_context_module.parameters()).device
-                dynamic_context_vars = {
-                    k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
-                    for k, v in dynamic_context_vars.items()
-                }
-                dynamic_embedding, dynamic_logits = self.dynamic_context_module(dynamic_context_vars)
-                _nan_check(dynamic_embedding, "_get_context_embedding dynamic_embedding")
-                embeddings.append(dynamic_embedding)
-                all_logits.update(dynamic_logits)
-        
-        # Combine embeddings if both exist
-        if len(embeddings) == 2:
-            combined = torch.cat(embeddings, dim=1)
-            _nan_check(combined, "_get_context_embedding combined")
-            embedding = self.combine_mlp(combined)
-        elif len(embeddings) == 1:
-            embedding = embeddings[0]
-        else:
-            raise ValueError("No context variables provided")
-        if embedding.is_floating_point():
-            embedding = embedding.float()
-        _nan_check(embedding, "_get_context_embedding embedding (before dropout)")
-        if self.training and self.context_embed_dropout.p > 0:
-            embedding = self.context_embed_dropout(embedding)
-        _nan_check(embedding, "_get_context_embedding embedding (final)")
-        return embedding, all_logits
+        Returns:
+            static_emb: (B, embedding_dim) — fed into AdaLN via the Transformer's cond path.
+            dyn_ctx_seq: (B, T, embedding_dim) or None — fed into cross-attention in each
+                         DecoderBlock when the dynamic module returns_sequence=True.
+            all_logits: Dict of auxiliary classification/regression logits (static only).
+        """
+        all_logits = {}
+        static_emb = None
+        dyn_ctx_seq = None
+
+        # --- Static context (categorical + continuous) → (B, emb_dim) for AdaLN ---
+        if self.static_context_module is not None and static_context_vars:
+            device = next(self.static_context_module.parameters()).device
+            static_vars = {
+                k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
+                for k, v in static_context_vars.items()
+            }
+            for k, v in static_vars.items():
+                if isinstance(v, torch.Tensor) and (torch.isnan(v).any() or torch.isinf(v).any()):
+                    nan_c = torch.isnan(v).sum().item()
+                    inf_c = torch.isinf(v).sum().item()
+                    finite = v[~(torch.isnan(v) | torch.isinf(v))]
+                    min_s = finite.min().item() if finite.numel() > 0 else float("nan")
+                    max_s = finite.max().item() if finite.numel() > 0 else float("nan")
+                    mean_s = finite.float().mean().item() if finite.numel() > 0 else float("nan")
+                    print(
+                        f"[NaN/Inf] static_var '{k}': shape={tuple(v.shape)}, dtype={v.dtype}, "
+                        f"nan_count={nan_c}, inf_count={inf_c}, finite_min={min_s:.6g}, "
+                        f"finite_max={max_s:.6g}, finite_mean={mean_s:.6g}"
+                    )
+            static_emb, static_logits = self.static_context_module(static_vars)
+            _nan_check(static_emb, "_get_context_embedding static_emb")
+            all_logits.update(static_logits)
+
+        # --- Dynamic context (time series) → (B, T, emb_dim) for cross-attention ---
+        if self.dynamic_context_module is not None and dynamic_context_vars:
+            device = next(self.dynamic_context_module.parameters()).device
+            dyn_vars = {
+                k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
+                for k, v in dynamic_context_vars.items()
+            }
+            dyn_out, dyn_logits = self.dynamic_context_module(dyn_vars)
+            _nan_check(dyn_out, "_get_context_embedding dyn_out")
+            all_logits.update(dyn_logits)
+
+            if getattr(self.dynamic_context_module, "returns_sequence", False):
+                # (B, T, emb_dim) — routed to cross-attention, not AdaLN
+                dyn_ctx_seq = dyn_out.float() if dyn_out.is_floating_point() else dyn_out
+            else:
+                # Legacy pooled vector: fuse with static embedding via combine_mlp
+                if static_emb is not None and self.combine_mlp is not None:
+                    combined = torch.cat([static_emb, dyn_out], dim=1)
+                    static_emb = self.combine_mlp(combined)
+                elif static_emb is None:
+                    static_emb = dyn_out
+
+        if static_emb is None:
+            raise ValueError("No static context embedding could be produced")
+
+        if static_emb.is_floating_point():
+            static_emb = static_emb.float()
+        _nan_check(static_emb, "_get_context_embedding static_emb (before dropout)")
+        if self.training and self.context_embed_dropout_p > 0:
+            # Sample-wise mask: zero the entire embedding for ~p fraction of samples.
+            # Each sample independently gets its context dropped (not individual features),
+            # which teaches the model to work unconditionally — enabling CFG at inference.
+            mask = torch.bernoulli(
+                torch.full((static_emb.shape[0], 1), 1.0 - self.context_embed_dropout_p,
+                           device=static_emb.device, dtype=static_emb.dtype)
+            )
+            static_emb = static_emb * mask
+        _nan_check(static_emb, "_get_context_embedding static_emb (final)")
+        return static_emb, dyn_ctx_seq, all_logits
 
     def _decode_to_x0(self, backbone: torch.Tensor) -> torch.Tensor:
         """
@@ -570,7 +559,7 @@ class Diffusion_TS(GenerativeModel):
 
         b = x.shape[0]
         t = torch.randint(0, self.num_timesteps, (b,), device=self.device)
-        embedding, cond_classification_logits = self._get_context_embedding(static_context_vars, dynamic_context_vars)
+        embedding, dyn_ctx_seq, cond_classification_logits = self._get_context_embedding(static_context_vars, dynamic_context_vars)
         _nan_check(embedding, "forward embedding")
 
         noise = blueish_noise_like(
@@ -582,7 +571,7 @@ class Diffusion_TS(GenerativeModel):
             + self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1) * noise
         )
         _nan_check(x_noisy, "forward x_noisy")
-        trend, season = self.model(x_noisy, t, padding_masks=None, cond=embedding)
+        trend, season = self.model(x_noisy, t, padding_masks=None, cond=embedding, dyn_ctx=dyn_ctx_seq)
         _nan_check(trend, "forward trend")
         _nan_check(season, "forward season")
         x_start_pred = self._decode_to_x0((trend + season).contiguous())
@@ -694,7 +683,7 @@ class Diffusion_TS(GenerativeModel):
         
         # cond_loss /= len(cond_class_logits)
 
-        h, _ = self._get_context_embedding(static_context_batch, dynamic_context_batch)
+        h, _, _ = self._get_context_embedding(static_context_batch, dynamic_context_batch)
         _nan_check(h, "training_step h (for tc)")
         tc_term = (
             self.cfg.model.tc_loss_weight * total_correlation(h)
@@ -807,20 +796,22 @@ class Diffusion_TS(GenerativeModel):
     #         raise ValueError("No EMA keys found in checkpoint")
 
     def _predict_x0_from_xt_with_grad(
-        self, x_t: torch.Tensor, t: torch.Tensor, embedding: torch.Tensor
+        self, x_t: torch.Tensor, t: torch.Tensor, embedding: torch.Tensor,
+        dyn_ctx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Predict x0 from x_t with gradients enabled (for reconstruction-guided sampling).
         Returns x_start of shape (B, L, C). Call with x_t.requires_grad_(True).
         """
-        trend, season = self.model(x_t, t, padding_masks=None, cond=embedding)
+        trend, season = self.model(x_t, t, padding_masks=None, cond=embedding, dyn_ctx=dyn_ctx)
         x_start = self._decode_to_x0((trend + season).contiguous())
         _nan_check(x_start, "_predict_x0_from_xt_with_grad x_start")
         return x_start
 
     @torch.no_grad()
     def model_predictions(
-        self, x: torch.Tensor, t: torch.Tensor, embedding: torch.Tensor
+        self, x: torch.Tensor, t: torch.Tensor, embedding: torch.Tensor,
+        dyn_ctx: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Predict both noise and clean sample from current x.
@@ -829,7 +820,7 @@ class Diffusion_TS(GenerativeModel):
             pred_noise: predicted noise tensor.
             x_start: predicted clean sample tensor.
         """
-        trend, season = self.model(x, t, padding_masks=None, cond=embedding)
+        trend, season = self.model(x, t, padding_masks=None, cond=embedding, dyn_ctx=dyn_ctx)
         x_start = self._decode_to_x0((trend + season).contiguous())
         pred_noise = self.predict_noise_from_start(x, t, x_start)
         _nan_check(x_start, "model_predictions x_start")
@@ -850,7 +841,8 @@ class Diffusion_TS(GenerativeModel):
 
     @torch.no_grad()
     def p_mean_variance(
-        self, x: torch.Tensor, t: torch.Tensor, embedding: torch.Tensor
+        self, x: torch.Tensor, t: torch.Tensor, embedding: torch.Tensor,
+        dyn_ctx: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Compute mean and variance for p(x_{t-1} | x_t).
@@ -858,20 +850,21 @@ class Diffusion_TS(GenerativeModel):
         Returns:
             pm, pv, plv, x_start: posterior parameters and predicted x0.
         """
-        pred_noise, x_start = self.model_predictions(x, t, embedding)
+        pred_noise, x_start = self.model_predictions(x, t, embedding, dyn_ctx=dyn_ctx)
         pm, pv, plv = self.q_posterior(x_start, x, t)
         _nan_check(x_start, "p_mean_variance x_start")
         return pm, pv, plv, x_start
 
     @torch.no_grad()
     def p_sample(
-        self, x: torch.Tensor, t: int, embedding: torch.Tensor
+        self, x: torch.Tensor, t: int, embedding: torch.Tensor,
+        dyn_ctx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Sample x_{t-1} from x_t using posterior distribution.
         """
         bt = torch.full((x.shape[0],), t, device=self.device, dtype=torch.long)
-        pm, pv, plv, _ = self.p_mean_variance(x, bt, embedding)
+        pm, pv, plv, _ = self.p_mean_variance(x, bt, embedding, dyn_ctx=dyn_ctx)
         noise = (
             blueish_noise_like(x, power=self.blue_noise_power, correlated=self.correlated_noise)
             if t > 0
@@ -890,6 +883,7 @@ class Diffusion_TS(GenerativeModel):
         cond_len: int,
         eta: float,
         gamma: float,
+        dyn_ctx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         One step of Algorithm 1: predict x̂_0, compute L_1 + γ*L_2, then
@@ -898,7 +892,7 @@ class Diffusion_TS(GenerativeModel):
         bt = torch.full((x_t.shape[0],), t, device=self.device, dtype=torch.long)
         x_t = x_t.detach().requires_grad_(True)
 
-        x_start = self._predict_x0_from_xt_with_grad(x_t, bt, embedding)
+        x_start = self._predict_x0_from_xt_with_grad(x_t, bt, embedding, dyn_ctx=dyn_ctx)
         _nan_check(x_start, "_reconstruction_guided_step_alg1 x_start")
         x_hat_a = x_start[:, :cond_len]
         L_1 = (x_a - x_hat_a).pow(2).mean()
@@ -942,17 +936,19 @@ class Diffusion_TS(GenerativeModel):
         eta: float,
         gamma: float,
         K: int,
+        dyn_ctx: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         One step of Algorithm 2: K inner gradient updates on x_t, then one final sample and Replace.
         """
         bt = torch.full((x_t.shape[0],), t, device=self.device, dtype=torch.long)
         embedding_detach = embedding.detach()
+        dyn_ctx_detach = dyn_ctx.detach() if dyn_ctx is not None else None
         x_t = x_t.detach().clone()
 
         for _ in range(K):
             x_t = x_t.requires_grad_(True)
-            x_start = self._predict_x0_from_xt_with_grad(x_t, bt, embedding_detach)
+            x_start = self._predict_x0_from_xt_with_grad(x_t, bt, embedding_detach, dyn_ctx=dyn_ctx_detach)
             _nan_check(x_start, "_reconstruction_guided_step_alg2 x_start (inner)")
             x_hat_a = x_start[:, :cond_len]
             L_1 = (x_a - x_hat_a).pow(2).mean()
@@ -973,7 +969,7 @@ class Diffusion_TS(GenerativeModel):
                 x_t = x_t.detach()
 
         with torch.no_grad():
-            x_start_final = self._predict_x0_from_xt_with_grad(x_t, bt, embedding_detach)
+            x_start_final = self._predict_x0_from_xt_with_grad(x_t, bt, embedding_detach, dyn_ctx=dyn_ctx_detach)
             _nan_check(x_start_final, "_reconstruction_guided_step_alg2 x_start_final")
             pm_final, pv_final, plv_final = self.q_posterior(x_start_final, x_t, bt)
             noise_final = (
@@ -1026,7 +1022,7 @@ class Diffusion_TS(GenerativeModel):
         x = _randn_shape_correlated(
             shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
+        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
         x_a = x_a.to(self.device)
 
         for t in reversed(range(self.num_timesteps)):
@@ -1037,11 +1033,11 @@ class Diffusion_TS(GenerativeModel):
             )
             if algorithm == "alg1":
                 x = self._reconstruction_guided_step_alg1(
-                    x, t, embedding, x_a, cond_len, eta, gamma
+                    x, t, embedding, x_a, cond_len, eta, gamma, dyn_ctx=dyn_ctx_seq
                 )
             else:
                 x = self._reconstruction_guided_step_alg2(
-                    x, t, embedding, x_a, cond_len, eta, gamma, K_t
+                    x, t, embedding, x_a, cond_len, eta, gamma, K_t, dyn_ctx=dyn_ctx_seq
                 )
         return x
 
@@ -1061,24 +1057,35 @@ class Diffusion_TS(GenerativeModel):
         x = _randn_shape_correlated(
             shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
+        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
         for t in reversed(range(self.num_timesteps)):
-            x = self.p_sample(x, t, embedding)
+            x = self.p_sample(x, t, embedding, dyn_ctx=dyn_ctx_seq)
         _nan_check(x, "sample() output")
         return x
 
     @torch.no_grad()
     def fast_sample(
         self, shape: Tuple[int, int, int], static_context_vars: dict,
-        dynamic_context_vars: dict = None
+        dynamic_context_vars: dict = None, cfg_scale: float = 1.0,
     ) -> torch.Tensor:
         """
-        Faster sampling using a reduced number of timesteps.
+        DDIM sampling with optional classifier-free guidance.
+
+        cfg_scale=1.0 → standard conditional sampling (no guidance).
+        cfg_scale>1.0 → CFG: runs both conditional and unconditional passes each step
+                         and blends pred_noise = uncond + scale*(cond - uncond).
+                         Requires the model to have been trained with context_embed_dropout > 0.
         """
         x = _randn_shape_correlated(
             shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
+        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
+
+        use_cfg = cfg_scale > 1.0
+        if use_cfg:
+            uncond_emb = torch.zeros_like(embedding)
+            uncond_dyn = torch.zeros_like(dyn_ctx_seq) if dyn_ctx_seq is not None else None
+
         times = torch.linspace(
             -1, self.num_timesteps - 1, steps=self.sampling_timesteps + 1
         )
@@ -1086,7 +1093,13 @@ class Diffusion_TS(GenerativeModel):
         pairs = list(zip(times[:-1], times[1:]))
         for time, time_next in pairs:
             bt = torch.full((x.shape[0],), time, device=self.device, dtype=torch.long)
-            pred_noise, x_start = self.model_predictions(x, bt, embedding)
+            if use_cfg:
+                pred_noise_u, _ = self.model_predictions(x, bt, uncond_emb, dyn_ctx=uncond_dyn)
+                pred_noise_c, _ = self.model_predictions(x, bt, embedding, dyn_ctx=dyn_ctx_seq)
+                pred_noise = pred_noise_u + cfg_scale * (pred_noise_c - pred_noise_u)
+                x_start = self.predict_start_from_noise(x, bt, pred_noise)
+            else:
+                pred_noise, x_start = self.model_predictions(x, bt, embedding, dyn_ctx=dyn_ctx_seq)
             if time_next < 0:
                 x = x_start
                 _nan_check(x, "fast_sample x (final step)")
@@ -1152,8 +1165,9 @@ class Diffusion_TS(GenerativeModel):
                 shape = (current_bs, self.seq_len, self.time_series_dims)
 
                 with torch.no_grad():
+                    cfg_scale = getattr(self, '_cfg_scale', 1.0)
                     if self.fast_sampling:
-                        samples = self.fast_sample(shape, batch_static_context_vars, batch_dynamic_context_vars)
+                        samples = self.fast_sample(shape, batch_static_context_vars, batch_dynamic_context_vars, cfg_scale=cfg_scale)
                     else:
                         samples = self.sample(shape, batch_static_context_vars, batch_dynamic_context_vars)
 

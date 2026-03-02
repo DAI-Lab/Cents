@@ -247,6 +247,18 @@ def main() -> None:
         default=None,
         help="Limit evaluation to this many samples (applied as dataset max_samples override).",
     )
+    parser.add_argument(
+        "--cfg-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Classifier-free guidance scale (default 1.0 = no guidance). "
+            "Values >1 blend unconditional and conditional noise predictions: "
+            "pred = uncond + scale*(cond - uncond). "
+            "Requires model trained with context_embed_dropout > 0. "
+            "Only applies to fast (DDIM) sampling."
+        ),
+    )
     args = parser.parse_args()
 
     use_run_path = args.run_path is not None
@@ -393,7 +405,12 @@ def main() -> None:
 
     # gen.set_dataset_spec(gen.model.cfg.dataset, dataset.get_context_var_codes())
     cfg.dataset = gen.model.cfg.dataset
-    
+
+    # Set CFG scale on the model instance (read by generate() at inference time)
+    if args.cfg_scale != 1.0:
+        logging.info("Classifier-free guidance scale: %.2f", args.cfg_scale)
+    gen.model._cfg_scale = args.cfg_scale
+
     print("\n" + "=" * 60)
     print("EVALUATION RESULTS")
     print("=" * 60 + "\n")
