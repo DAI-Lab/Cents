@@ -1,9 +1,11 @@
 import logging
 import math
 import os
+import random
 from pathlib import Path
 import json
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -15,6 +17,7 @@ from cents.models.registry import get_model_type_from_hf_name
 from cents.datasets.pecanstreet import PecanStreetDataset
 from cents.datasets.commercial import CommercialDataset
 from cents.datasets.airquality import AirQualityDataset
+from cents.datasets.metraq import MetraqDataset
 from cents.eval.eval import Evaluator
 from cents.utils.config_loader import load_yaml, apply_overrides
 from cents.utils.utils import set_context_config_path
@@ -54,6 +57,8 @@ def _load_dataset(name: str, dataset_cfg: OmegaConf, run_dir: str = None):
         return CommercialDataset(**kwargs)
     if name == "airquality":
         return AirQualityDataset(**kwargs)
+    if name == "metraq":
+        return MetraqDataset(**kwargs)
     raise ValueError(f"Dataset {name} not supported. Use: pecanstreet, commercial, airquality.")
 
 
@@ -148,7 +153,7 @@ def main() -> None:
         "--dataset",
         type=str,
         default="pecanstreet",
-        choices=("pecanstreet", "commercial", "airquality"),
+        choices=("pecanstreet", "commercial", "airquality", "metraq"),
         help="Dataset name (must match the one used to train the model).",
     )
     parser.add_argument(
@@ -246,6 +251,12 @@ def main() -> None:
         type=int,
         default=None,
         help="Limit evaluation to this many samples (applied as dataset max_samples override).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducible sampling (sets Python, NumPy, and PyTorch seeds).",
     )
     parser.add_argument(
         "--cfg-scale",
@@ -405,6 +416,15 @@ def main() -> None:
 
     # gen.set_dataset_spec(gen.model.cfg.dataset, dataset.get_context_var_codes())
     cfg.dataset = gen.model.cfg.dataset
+
+    # Set random seed for reproducible sampling
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(args.seed)
+        logging.info("Random seed set to %d", args.seed)
 
     # Set CFG scale on the model instance (read by generate() at inference time)
     if args.cfg_scale != 1.0:

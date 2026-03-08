@@ -5,6 +5,8 @@ from pathlib import Path
 from cents.datasets.pecanstreet import PecanStreetDataset
 from cents.datasets.commercial import CommercialDataset
 from cents.datasets.airquality import AirQualityDataset
+from cents.datasets.metraq import MetraqDataset
+
 from cents.trainer import Trainer
 from cents.utils.utils import set_context_config_path, set_context_overrides, get_context_config
 from cents.utils.config_loader import load_yaml, apply_overrides
@@ -118,6 +120,13 @@ def main(args) -> None:
             force_retrain_normalizer=args.force_retrain_normalizer,
             run_dir=str(run_dir),
         )
+
+    elif args.dataset == "metraq":
+        dataset = MetraqDataset(
+            cfg=dataset_cfg,
+            force_retrain_normalizer=args.force_retrain_normalizer,
+            run_dir=str(run_dir),
+        )
     else:
         raise ValueError(f"Dataset {args.dataset} not supported")
 
@@ -143,6 +152,8 @@ def main(args) -> None:
         f"model.tc_loss_weight={TC_LOSS_WEIGHT}",
         f"wandb.name=training_dai_{MODEL_NAME}_{datetime.now().strftime('%Y%m%d-%H%M%S')}_L{CR_LOSS_WEIGHT}_TC_{TC_LOSS_WEIGHT}_dim2",
     ]
+    if args.model_overrides:
+        trainer_overrides.extend(args.model_overrides)
 
     trainer = Trainer(
         model_type=MODEL_NAME,
@@ -187,6 +198,9 @@ if __name__ == "__main__":
                         help="Predict normalizer mu/sigma directly (no global-stats scaling). Use if commercial runs had NaNs with global preprocessing.")
     parser.add_argument("--resume-from-checkpoint", type=str, default=None,
         help="Path to checkpoint file (.ckpt) to resume training from",
+    )
+    parser.add_argument("--model-overrides", type=str, nargs="*", default=[],
+        help="Override model config values (e.g., 'model.cond_emb_dim=16' 'model.attn_pd=0.0')",
     )
     parser.add_argument("--run-name", type=str, required=True,
         help="Name of this run. A directory runs/<dataset>/<run-name> will be created for checkpoints, cache, and summary.",

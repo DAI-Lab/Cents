@@ -2,6 +2,8 @@ import copy
 import math
 from typing import Any, Optional, Tuple
 
+from pyparsing import alphas
+
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -194,6 +196,7 @@ class Diffusion_TS(GenerativeModel):
             n_embd=cfg.model.d_model,
             conv_params=[cfg.model.kernel_size, cfg.model.padding_size],
             cond_dim=self.embedding_dim,
+            has_dynamic_ctx=self.dynamic_context_module is not None,
         )
 
         self.blue_noise_power = cfg.model.blue_noise_power
@@ -213,10 +216,14 @@ class Diffusion_TS(GenerativeModel):
             raise ValueError("Unknown beta schedule")
 
         eps = 1e-5
-        alphas = (1.0 - betas).double()
-        alphas_cumprod = torch.cumprod(alphas, dim=0).float()
-        alphas_cumprod = alphas_cumprod.clamp(min=eps, max=1.0 - eps)
-        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0 - eps)
+        # alphas = (1.0 - betas).double()
+        # alphas_cumprod = torch.cumprod(alphas, dim=0).float()
+        # alphas_cumprod = alphas_cumprod.clamp(min=eps, max=1.0 - eps)
+        # alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0 - eps)
+
+        alphas = 1.0 - betas  # float32, no double
+        alphas_cumprod = torch.cumprod(alphas, dim=0)  # no clamp
+        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)  # exactly 1.0
 
         self.num_timesteps = betas.shape[0]
         self.sampling_timesteps = default(
@@ -656,6 +663,9 @@ class Diffusion_TS(GenerativeModel):
             total_loss: Scalar training loss.
         """
         ts_batch, static_context_batch, dynamic_context_batch = batch
+        # print("BEFORE PRINT I")
+        # print(ts_batch, static_context_batch, dynamic_context_batch)
+        # print("AFTER PRINT I")
         _nan_check(ts_batch, "training_step ts_batch")
         rec_loss, cond_class_logits, fourier_loss = self(ts_batch, static_context_batch, dynamic_context_batch)
         _nan_check(rec_loss, "training_step rec_loss")

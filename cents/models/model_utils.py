@@ -676,6 +676,7 @@ class DecoderBlock(nn.Module):
         mlp_hidden_times=4,
         activate="GELU",
         condition_dim=1024,
+        has_dynamic_ctx=False,
     ):
         super().__init__()
 
@@ -695,17 +696,20 @@ class DecoderBlock(nn.Module):
             attn_pdrop=attn_pdrop,
             resid_pdrop=resid_pdrop,
         )
-        # Cross-attention for temporally-aligned dynamic context (same seq_len as target).
-        # Conditioned via AdaLN on the same diffusion-timestep + static-context embedding
-        # as the rest of the block, so global conditioning still flows through here.
-        self.ln_dyn = AdaLayerNorm(n_embd)
-        self.attn_dyn = CrossAttention(
-            n_embd=n_embd,
-            condition_embd=condition_dim,
-            n_head=n_head,
-            attn_pdrop=attn_pdrop,
-            resid_pdrop=resid_pdrop,
-        )
+        # Cross-attention for temporally-aligned dynamic context — only created when dynamic
+        # context is actually present (has_dynamic_ctx=True). Saves ~495K params when absent.
+        if has_dynamic_ctx:
+            self.ln_dyn = AdaLayerNorm(n_embd)
+            self.attn_dyn = CrossAttention(
+                n_embd=n_embd,
+                condition_embd=condition_dim,
+                n_head=n_head,
+                attn_pdrop=attn_pdrop,
+                resid_pdrop=resid_pdrop,
+            )
+        else:
+            self.ln_dyn = None
+            self.attn_dyn = None
 
         self.ln1_1 = AdaLayerNorm(n_embd)
 
@@ -732,7 +736,7 @@ class DecoderBlock(nn.Module):
         x = x + a
         a, att = self.attn2(self.ln1_1(x, cond_emb), encoder_output, mask=mask)
         x = x + a
-        if dyn_ctx is not None:
+        if dyn_ctx is not None and self.attn_dyn is not None:
             a, _ = self.attn_dyn(self.ln_dyn(x, cond_emb), dyn_ctx)
             x = x + a
         
@@ -765,6 +769,7 @@ class Decoder(nn.Module):
         mlp_hidden_times=4,
         block_activate="GELU",
         condition_dim=512,
+        has_dynamic_ctx=False,
     ):
         super().__init__()
         self.d_model = n_embd
@@ -781,6 +786,7 @@ class Decoder(nn.Module):
                     mlp_hidden_times=mlp_hidden_times,
                     activate=block_activate,
                     condition_dim=condition_dim,
+                    has_dynamic_ctx=has_dynamic_ctx,
                 )
                 for _ in range(n_layer)
             ]
@@ -823,18 +829,19 @@ class Transformer(nn.Module):
         max_len=2048,
         conv_params=None,
         cond_dim=None,
+        has_dynamic_ctx=False,
         **kwargs
     ):
         super().__init__()
         self.emb = Conv_MLP(n_feat, n_embd, resid_pdrop=resid_pdrop)
         self.inverse = Conv_MLP(n_embd, n_feat, resid_pdrop=resid_pdrop)
-        
+
         self.cond_dim = cond_dim
         if cond_dim is not None:
             # Map static context embedding (B, cond_dim) -> (B, n_embd)
             self.cond_proj = nn.Linear(cond_dim, n_embd)
-            # Map dynamic context sequence (B, T, cond_dim) -> (B, T, n_embd)
-            self.dyn_ctx_proj = nn.Linear(cond_dim, n_embd)
+            # Map dynamic context sequence (B, T, cond_dim) -> (B, T, n_embd); only when needed
+            self.dyn_ctx_proj = nn.Linear(cond_dim, n_embd) if has_dynamic_ctx else None
         else:
             self.cond_proj = None
             self.dyn_ctx_proj = None
@@ -898,6 +905,7 @@ class Transformer(nn.Module):
             mlp_hidden_times,
             block_activate,
             condition_dim=n_embd,
+            has_dynamic_ctx=has_dynamic_ctx,
         )
         self.pos_dec = LearnablePositionalEncoding(
             n_embd, dropout=resid_pdrop, max_len=max_len

@@ -193,22 +193,10 @@ class SepMLPContextModule(BaseContextModule):
         # Process continuous variables (only those present in context_vars)
         for name, layer in self.continuous_projections.items():
             if name in context_vars:
-                # # Reshape to (batch_size, 1) for linear layer
-                # # Ensure proper shape and gradient flow
-                continuous_val = context_vars[name]
-                # # Handle different input shapes
-                # if continuous_val.dim() == 0:
-                #     # Scalar: add batch dimension
-                #     continuous_val = continuous_val.unsqueeze(0)
-                # elif continuous_val.dim() == 1:
-                #     # 1D tensor: add feature dimension
-                #     continuous_val = continuous_val.unsqueeze(-1)
-                # # Ensure float type while preserving gradients
-                # if not continuous_val.is_floating_point():
-                #     continuous_val = continuous_val.float()    
-
-                # if continuous_val.dim() == 1:
-                #     continuous_val = continuous_val.unsqueeze(-1)
+                continuous_val = context_vars[name].float()
+                # DataLoader stacks 0-dim scalars into (batch,); layer expects (batch, 1)
+                if continuous_val.dim() == 1:
+                    continuous_val = continuous_val.unsqueeze(-1)
                 encodings[name] = layer(continuous_val)
 
         embeddings = []        

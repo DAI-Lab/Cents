@@ -275,6 +275,7 @@ class Trainer:
             precision=tc.precision,
             log_every_n_steps=tc.get("log_every_n_steps", 1),
             accumulate_grad_batches=tc.get("gradient_accumulate_every", 1),
+            gradient_clip_val=tc.get("gradient_clip_val", None),
             callbacks=callbacks,
             logger=logger,
             default_root_dir=self.cfg.run_dir,

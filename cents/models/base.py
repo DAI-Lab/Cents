@@ -62,6 +62,7 @@ class BaseModel(pl.LightningModule, ABC):
                         k: v for k, v in cfg.dataset.context_vars.items() 
                         if k in static_context_vars
                     }
+                    print(static_context_vars_dict)
                     self.static_context_module = StaticContextModuleCls(
                         static_context_vars_dict,
                         emb_dim,

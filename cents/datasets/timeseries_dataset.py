@@ -509,12 +509,19 @@ class TimeSeriesDataset(Dataset):
         Returns:
             pd.DataFrame: DataFrame with 'is_frequency_rare' column.
         """
-        freq = self.data.groupby(self.context_vars).size().reset_index(name="count")
+        # Continuous vars are floats (e.g. UTM coordinates) — grouping by them would create
+        # one group per unique value, making rarity meaningless. Use only discrete vars.
+        continuous = set(getattr(self, "continuous_vars", []))
+        groupby_vars = [v for v in self.context_vars if v not in continuous]
+        if not groupby_vars:
+            self.data["is_frequency_rare"] = False
+            return self.data
+        freq = self.data.groupby(groupby_vars).size().reset_index(name="count")
         threshold = freq["count"].quantile(0.1)
         freq["is_frequency_rare"] = freq["count"] < threshold
         self.data = self.data.merge(
-            freq[self.context_vars + ["is_frequency_rare"]],
-            on=self.context_vars,
+            freq[groupby_vars + ["is_frequency_rare"]],
+            on=groupby_vars,
             how="left",
         )
         return self.data
