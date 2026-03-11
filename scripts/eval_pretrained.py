@@ -270,6 +270,13 @@ def main() -> None:
             "Only applies to fast (DDIM) sampling."
         ),
     )
+    parser.add_argument(
+        "--save-path", 
+        type=str,
+        default=None,
+        help="Path to save evaluation results."
+    )
+
     args = parser.parse_args()
 
     use_run_path = args.run_path is not None
@@ -492,6 +499,10 @@ def main() -> None:
         with open(Path(args.save_dir) / "metrics.json", "w") as f:
             json.dump(_sanitize_for_json(metrics), f, indent=4)
         print(f"\n✅ Results saved to {Path(args.save_dir) / "metrics.json"}")
+    elif args.save_path:
+        with open(args.save_path, "w") as f:
+            json.dump(_sanitize_for_json(metrics), f, indent=4)
+        print(f"\n✅ Results saved to {args.save_path}")
     print("\n" + "=" * 60)
 
 

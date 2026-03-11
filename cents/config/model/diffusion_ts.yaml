@@ -3,7 +3,7 @@ name: diffusion_ts
 context_reconstruction_loss_weight: 0.1
 tc_loss_weight: 0
 noise_dim: 256
-cond_emb_dim: 64
+cond_emb_dim: 16
 n_layer_enc: 4
 n_layer_dec: 5
 d_model: 128
@@ -18,16 +18,16 @@ beta_schedule: cosine #linear diffusion ts paper uses linear schedule
 n_heads: 4
 mlp_hidden_times: 4
 eta: 0.0
-attn_pd: 0.1
-resid_pd: 0.1
+attn_pd: 0.0
+resid_pd: 0.0
 kernel_size: null
 padding_size: null
-use_ff: False
+use_ff: True
 reg_weight: null
 gradient_accumulate_every: 2
-ema_decay: 0.99
-ema_update_interval: 10
-use_ema_sampling: False
+ema_decay: 0.9999
+ema_update_interval: 1
+use_ema_sampling: True
 k_bins: 20
 # Reconstruction-guided sampling (Algorithms 1 & 2)
 recon_guide_eta: 0.1        # gradient scale for guidance
@@ -40,4 +40,4 @@ recon_cond_len: null        # int or null; if set, use fc_a / fc_b for first vs 
 context_embed_dropout: 0  # probability of zeroing entire context embedding per sample (CFG-compatible)
 blue_noise_power: 0.0 # 0.0 = white noise, 1.0 = blue noise, 2.0 = violet noise
 # When true and time_series_dims > 1, noise is correlated across dimensions (same draw per timestep).
-correlated_noise: False
+correlated_noise: True

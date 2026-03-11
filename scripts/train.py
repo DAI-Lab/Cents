@@ -1,6 +1,10 @@
 from datetime import datetime
 import yaml
 from pathlib import Path
+import numpy as np
+import os
+import torch
+import random
 
 from cents.datasets.pecanstreet import PecanStreetDataset
 from cents.datasets.commercial import CommercialDataset
@@ -79,6 +83,12 @@ def main(args) -> None:
     CR_LOSS_WEIGHT = args.cr_loss_weight
     TC_LOSS_WEIGHT = args.tc_loss_weight
     run_name = args.run_name
+
+    np.random.seed(args.random_seed)
+    os.environ['PYTHONHASHSEED'] = str(args.random_seed)
+    random.seed(args.random_seed)
+    torch.manual_seed(args.random_seed)
+
 
     # Create run directory under runs/{dataset}/{run_name}
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -205,6 +215,8 @@ if __name__ == "__main__":
     parser.add_argument("--run-name", type=str, required=True,
         help="Name of this run. A directory runs/<dataset>/<run-name> will be created for checkpoints, cache, and summary.",
     )
+    parser.add_argument("--random-seed", type=int, default=42,
+        help="Random seed for reproducibility",)
 
     args = parser.parse_args()
     main(args)

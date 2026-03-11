@@ -732,36 +732,24 @@ class Diffusion_TS(GenerativeModel):
             self.parameters(), lr=self.cfg.trainer.base_lr, betas=(0.9, 0.96)
         )
         scheduler = ReduceLROnPlateau(optimizer, **self.cfg.trainer.lr_scheduler_params)
+        print(self.cfg.trainer.get("gradient_clip_val", 0.0), "gradient clip val")
         return {
             "optimizer": optimizer,
             "lr_scheduler": scheduler,
             "monitor": "train_loss",
+            "gradient_clip_val": self.cfg.trainer.get("gradient_clip_val", 0.0),
         }
 
     def on_train_start(self) -> None:
         """
         Initialize EMA helper at start of training.
         """
-        self._ema = EMA(
-            self.model,
-            beta=self.cfg.model.ema_decay,
-            update_every=self.cfg.model.ema_update_interval,
-        )
-
-    # def on_after_backward(self) -> None:
-    #     """
-    #     Check gradients after backward pass but before optimizer step.
-    #     This is the right place to inspect gradients before they're zeroed.
-    #     """
-    #     # Get current batch index from trainer
-    #     for name, p in self.named_parameters():
-    #         if p.grad is None:
-    #             continue
-    #         if p.grad.stride() != p.stride():
-    #             print("stride mismatch:", name,
-    #                 "param", tuple(p.shape), p.stride(),
-    #                 "grad", tuple(p.grad.shape), p.grad.stride())
-    #             break
+        if self._ema is None:
+            self._ema = EMA(
+                self.model,
+                beta=self.cfg.model.ema_decay,
+                update_every=self.cfg.model.ema_update_interval,
+            )
 
 
     def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int) -> None:
@@ -804,6 +792,23 @@ class Diffusion_TS(GenerativeModel):
     #             raise ValueError("No EMA model weights found in checkpoint")
     #     else:
     #         raise ValueError("No EMA keys found in checkpoint")
+    def on_load_checkpoint(self, checkpoint: dict) -> None:
+        if 'ema_state_dict' in checkpoint:
+            if self._ema is None:
+                self._ema = EMA(
+                    self.model,
+                    beta=self.cfg.model.ema_decay,
+                    update_every=self.cfg.model.ema_update_interval,
+                )
+            self._ema.ema_model.load_state_dict(checkpoint['ema_state_dict'])
+            print(f"[EMA] Restored EMA weights from checkpoint")
+        else:
+            print(f"[EMA] No EMA weights in checkpoint, initializing fresh")
+
+    def on_save_checkpoint(self, checkpoint: dict) -> None:
+        if self._ema is not None:
+            checkpoint['ema_state_dict'] = self._ema.ema_model.state_dict()
+
 
     def _predict_x0_from_xt_with_grad(
         self, x_t: torch.Tensor, t: torch.Tensor, embedding: torch.Tensor,
@@ -1214,40 +1219,30 @@ class Diffusion_TS(GenerativeModel):
 
 
 class EMA(nn.Module):
-    """
-    Exponential Moving Average (EMA) helper for model parameters.
-    """
-    def __init__(self, model: nn.Module, beta: float = 0.9999, update_every: int = 10):
+    def __init__(self, model, beta, update_every):
         super().__init__()
         self.beta = beta
         self.update_every = update_every
         self.step = 0
-
-        # CRITICAL FIX 1: self.ema_model is the ONLY deepcopy. 
-        # It holds the shadow weights.
         self.ema_model = copy.deepcopy(model)
         self.ema_model.eval()
         self.ema_model.requires_grad_(False)
         
-        # CRITICAL FIX 2: We keep a reference to the LIVE model (not a copy)
-        # so we can grab the latest trained weights during update().
-        self.source_model = model 
+        # Store as plain python attribute, not nn.Module attribute
+        # This prevents it being registered as a submodule and saved in state_dict
+        object.__setattr__(self, '_source_model', model)
         
-        # Buffer to store temporary weights for the context manager
         self.collected_params = []
 
-    def update(self) -> None:
-        """
-        Update the shadow parameters using the source model's current weights.
-        """
+    def update(self):
         self.step += 1
         if self.step % self.update_every != 0:
             return
-        
         with torch.no_grad():
-            # Zip the shadow model (ema) against the live model (source)
-            for ema_p, src_p in zip(self.ema_model.parameters(), self.source_model.parameters()):
-                # ema_new = beta * ema_old + (1 - beta) * current_weight
+            for ema_p, src_p in zip(
+                self.ema_model.parameters(), 
+                self._source_model.parameters()
+            ):
                 ema_p.data.mul_(self.beta).add_(src_p.data, alpha=1.0 - self.beta)
 
     def store(self, parameters):
