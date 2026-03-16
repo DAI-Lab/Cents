@@ -202,14 +202,6 @@ def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
         return float("nan")
 
     return calculate_fid(ori_rep, gen_rep)
-    
-    ori_represenation = model.encode(ori_data, encoding_window="full_series")
-    gen_represenation = model.encode(generated_data, encoding_window="full_series")
-    idx = np.random.permutation(ori_data.shape[0])
-    ori_represenation = ori_represenation[idx]
-    gen_represenation = gen_represenation[idx]
-    results = calculate_fid(ori_represenation, gen_represenation)
-    return results
 
 
 def compute_mig(

@@ -216,14 +216,9 @@ class Diffusion_TS(GenerativeModel):
             raise ValueError("Unknown beta schedule")
 
         eps = 1e-5
-        # alphas = (1.0 - betas).double()
-        # alphas_cumprod = torch.cumprod(alphas, dim=0).float()
-        # alphas_cumprod = alphas_cumprod.clamp(min=eps, max=1.0 - eps)
-        # alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0 - eps)
-
-        alphas = 1.0 - betas  # float32, no double
-        alphas_cumprod = torch.cumprod(alphas, dim=0)  # no clamp
-        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)  # exactly 1.0
+        alphas = 1.0 - betas
+        alphas_cumprod = torch.cumprod(alphas, dim=0).clamp(min=eps, max=1.0 - eps)
+        alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0 - eps)
 
         self.num_timesteps = betas.shape[0]
         self.sampling_timesteps = default(
@@ -684,14 +679,9 @@ class Diffusion_TS(GenerativeModel):
                 loss = self.auxiliary_loss(outputs, labels)
             _nan_check(loss, f"training_step cond_loss[{var_name}]")
             cond_loss += loss.mean()
-
-        #     # if var_name in self.continuous_context_vars:
-        #     #     print(var_name)
-        #     #     print(loss)
-        #     #     print(outputs.mean(), labels.mean())
-
-        
-        # cond_loss /= len(cond_class_logits)
+        # Normalize by number of context variables so the weight is dataset-independent
+        # if len(cond_class_logits) > 0:
+        #     cond_loss = cond_loss / len(cond_class_logits)
 
         h, _, _ = self._get_context_embedding(static_context_batch, dynamic_context_batch)
         _nan_check(h, "training_step h (for tc)")
@@ -707,11 +697,16 @@ class Diffusion_TS(GenerativeModel):
         )
         _nan_check(total_loss, f"training_step total_loss batch_idx={batch_idx}")
 
+        # Skip this batch entirely if loss is bad — avoids corrupting weights before EMA can help
+        if not torch.isfinite(total_loss):
+            print(f"[training_step] Non-finite loss ({total_loss.item()}) at batch {batch_idx}, skipping.")
+            return None
+
         self.log_dict(
             {
                 "train_loss": total_loss.item(),
                 "rec_loss": rec_loss.item(),
-                "cond_loss": cond_loss.item(),
+                "cond_loss": cond_loss.item() if isinstance(cond_loss, torch.Tensor) else float(cond_loss),
                 "tc_loss": tc_term,
                 "fourier_loss": fourier_loss.item(),
             },
@@ -732,12 +727,9 @@ class Diffusion_TS(GenerativeModel):
             self.parameters(), lr=self.cfg.trainer.base_lr, betas=(0.9, 0.96)
         )
         scheduler = ReduceLROnPlateau(optimizer, **self.cfg.trainer.lr_scheduler_params)
-        print(self.cfg.trainer.get("gradient_clip_val", 0.0), "gradient clip val")
         return {
             "optimizer": optimizer,
-            "lr_scheduler": scheduler,
-            "monitor": "train_loss",
-            "gradient_clip_val": self.cfg.trainer.get("gradient_clip_val", 0.0),
+            "lr_scheduler": {"scheduler": scheduler, "monitor": "train_loss"},
         }
 
     def on_train_start(self) -> None:
@@ -745,17 +737,47 @@ class Diffusion_TS(GenerativeModel):
         Initialize EMA helper at start of training.
         """
         if self._ema is None:
-            self._ema = EMA(
+            object.__setattr__(self, '_ema', EMA(
                 self.model,
                 beta=self.cfg.model.ema_decay,
                 update_every=self.cfg.model.ema_update_interval,
-            )
+            ))
+        # EMA is not a registered submodule so PL won't move it automatically
+        self._ema.to(self.device)
 
+    def on_train_epoch_start(self) -> None:
+        """
+        Apply linear LR warmup for the first warmup_epochs epochs.
+        After warmup, ReduceLROnPlateau takes over untouched.
+        """
+        warmup_epochs = self.cfg.trainer.get("warmup_epochs", 0)
+        if warmup_epochs <= 0:
+            return
+        epoch = self.current_epoch
+        if epoch >= warmup_epochs:
+            return
+        target_lr = self.cfg.trainer.base_lr
+        warmup_lr = target_lr * max(0.01, epoch / warmup_epochs)
+        for opt in self.trainer.optimizers:
+            for pg in opt.param_groups:
+                pg["lr"] = warmup_lr
+
+    def on_before_optimizer_step(self, optimizer) -> None:
+        """Log global gradient norm each step for observability."""
+        total_norm_sq = 0.0
+        for p in self.parameters():
+            if p.grad is not None:
+                total_norm_sq += p.grad.detach().float().norm(2).item() ** 2
+        grad_norm = total_norm_sq ** 0.5
+        self.log("grad_norm", grad_norm, on_step=True, on_epoch=False, prog_bar=False)
 
     def on_train_batch_end(self, outputs: Any, batch: Any, batch_idx: int) -> None:
         """
         Apply EMA update after each batch end.
+        Skip if the step was skipped due to NaN loss (outputs is None).
         """
+        if outputs is None:
+            return
         if hasattr(self, '_ema') and self._ema:
             self._ema.update()
 
@@ -792,14 +814,20 @@ class Diffusion_TS(GenerativeModel):
     #             raise ValueError("No EMA model weights found in checkpoint")
     #     else:
     #         raise ValueError("No EMA keys found in checkpoint")
+    def load_state_dict(self, state_dict, strict=True):
+        # Strip legacy _ema.* keys — EMA is restored separately via on_load_checkpoint.
+        # Old checkpoints have these because _ema was previously a registered submodule.
+        filtered = {k: v for k, v in state_dict.items() if not k.startswith('_ema.')}
+        return super().load_state_dict(filtered, strict=strict)
+
     def on_load_checkpoint(self, checkpoint: dict) -> None:
         if 'ema_state_dict' in checkpoint:
             if self._ema is None:
-                self._ema = EMA(
+                object.__setattr__(self, '_ema', EMA(
                     self.model,
                     beta=self.cfg.model.ema_decay,
                     update_every=self.cfg.model.ema_update_interval,
-                )
+                ))
             self._ema.ema_model.load_state_dict(checkpoint['ema_state_dict'])
             print(f"[EMA] Restored EMA weights from checkpoint")
         else:
@@ -1197,11 +1225,11 @@ class Diffusion_TS(GenerativeModel):
         """
         if not hasattr(self, '_ema') or self._ema is None:
             print("Initializing EMA helper for inference...")
-            self._ema = EMA(
+            object.__setattr__(self, '_ema', EMA(
                 self.model,
                 beta=self.cfg.model.ema_decay,
                 update_every=self.cfg.model.ema_update_interval,
-            )
+            ))
     def stratified_timesteps(self, batch_size: int, num_timesteps: int, k_bins: int, device=None) -> torch.Tensor:
         device = device or "cpu"
         k_bins = min(k_bins, batch_size)

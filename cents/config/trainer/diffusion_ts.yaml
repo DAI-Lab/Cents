@@ -5,8 +5,9 @@ strategy: ddp_find_unused_parameters_true
 gradient_accumulate_every: 4
 log_every_n_steps: 1
 batch_size: 512
-max_epochs: 2500
+max_epochs: 5000
 base_lr: 1e-4
+warmup_epochs: 100        # linear warmup from 1% to 100% of base_lr over first N epochs
 eval_after_training: False
 gradient_clip_val: 1.0
 
@@ -23,3 +24,10 @@ lr_scheduler_params:
   threshold: 1.0e-1
   threshold_mode: rel
   verbose: false
+
+intermediate_fid:
+  enabled: True
+  every_n_epochs: 20    # check context-FID every N epochs
+  n_samples: 3500       # number of samples to generate (subsample of dataset)
+  fast_timesteps: 50    # DDIM steps to use (vs 200 default) for speed
+  top_k: 3              # keep top-k FID checkpoints + their neighbors

@@ -39,13 +39,14 @@ def _load_dataset_config(dataset_name: str, overrides: list) -> OmegaConf:
     return cfg
 
 
-def _write_run_summary(run_dir: Path, run_name: str, trainer: Trainer) -> None:
+def _write_run_summary(run_dir: Path, run_name: str, trainer: Trainer, random_seed: int) -> None:
     """Write a summary YAML of run choices (context, model, dataset, trainer) to run_dir."""
     cfg = trainer.cfg
     context_cfg = get_context_config()
     summary = {
         "run_name": run_name,
         "run_dir": str(run_dir),
+        "random_seed": random_seed,
         "dataset": OmegaConf.to_container(cfg.dataset, resolve=True) if hasattr(cfg, "dataset") and cfg.dataset else {},
         "model": OmegaConf.to_container(cfg.model, resolve=True) if hasattr(cfg, "model") and cfg.model else {},
         "context": OmegaConf.to_container(context_cfg, resolve=True) if context_cfg else {},
@@ -148,19 +149,16 @@ def main(args) -> None:
         f"trainer.checkpoint.every_n_epochs={args.every_n_epochs}",
         f"trainer.strategy={args.ddp_strategy}",
         f"trainer.devices={args.devices}",
+        f"trainer.accelerator={args.accelerator}",
         f"trainer.eval_after_training={args.eval_after_training}",
-        f"train.accelerator={args.accelerator}",
-        "trainer.early_stopping.patience=100",
-        "trainer.early_stopping.monitor=train_loss",
-        "trainer.early_stopping.mode=min",
-        f"trainer.enable_checkpointing={args.enable_checkpointing}",
-        "trainer.logger=False",
+        f"trainer.intermediate_fid.enabled={args.intermediate_fid}",
+        f"trainer.intermediate_fid.every_n_epochs={args.fid_every_n_epochs}",
         f"wandb.enabled={args.wandb_enabled}",
         f"wandb.project={args.wandb_project}",
         f"wandb.entity={args.wandb_entity}",
+        f"wandb.name={run_name}_{MODEL_NAME}_{datetime.now().strftime('%Y%m%d-%H%M%S')}",
         f"model.context_reconstruction_loss_weight={CR_LOSS_WEIGHT}",
         f"model.tc_loss_weight={TC_LOSS_WEIGHT}",
-        f"wandb.name=training_dai_{MODEL_NAME}_{datetime.now().strftime('%Y%m%d-%H%M%S')}_L{CR_LOSS_WEIGHT}_TC_{TC_LOSS_WEIGHT}_dim2",
     ]
     if args.model_overrides:
         trainer_overrides.extend(args.model_overrides)
@@ -171,7 +169,7 @@ def main(args) -> None:
         overrides=trainer_overrides,
     )
 
-    _write_run_summary(run_dir, run_name, trainer)
+    _write_run_summary(run_dir, run_name, trainer, args.random_seed)
     _write_run_configs(run_dir, trainer)
 
     trainer.fit(ckpt_path=args.resume_from_checkpoint)
@@ -217,6 +215,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--random-seed", type=int, default=42,
         help="Random seed for reproducibility",)
+    parser.add_argument("--intermediate-fid", action="store_true", default=True,
+        help="Enable intermediate context-FID checks during training (saves top-k checkpoints)")
+    parser.add_argument("--no-intermediate-fid", dest="intermediate_fid", action="store_false",
+        help="Disable intermediate context-FID checks")
+    parser.add_argument("--fid-every-n-epochs", type=int, default=20,
+        help="How often (in epochs) to compute context-FID during training")
 
     args = parser.parse_args()
     main(args)
