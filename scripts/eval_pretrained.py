@@ -20,7 +20,7 @@ from cents.datasets.airquality import AirQualityDataset
 from cents.datasets.metraq import MetraqDataset
 from cents.eval.eval import Evaluator
 from cents.utils.config_loader import load_yaml, apply_overrides
-from cents.utils.utils import set_context_config_path
+from cents.utils.utils import set_context_config_path, set_context_overrides
 
 logging.basicConfig(
     level=logging.INFO,
@@ -230,6 +230,13 @@ def main() -> None:
         help="Path to custom context config YAML file (optional).",
     )
     parser.add_argument(
+        "--context-overrides",
+        type=str,
+        nargs="*",
+        default=[],
+        help="Override context config values (e.g., 'static_context.type=mlp' 'dynamic_context.type=cnn').",
+    )
+    parser.add_argument(
         "--no-normalizer-global-preprocessing",
         action="store_true",
         help="Use normalizer without global-stats preprocessing (match training that used --no-normalizer-global-preprocessing).",
@@ -290,6 +297,10 @@ def main() -> None:
     # Set custom context config path if provided
     if args.context_config_path:
         set_context_config_path(args.context_config_path)
+
+    # Set context config overrides if provided
+    if args.context_overrides:
+        set_context_overrides(args.context_overrides)
 
     if use_run_path:
         run_path = Path(args.run_path).resolve()

@@ -1,10 +1,10 @@
 strategy: ddp_find_unused_parameters_true
 accelerator: gpu
-devices: 3,
+devices: 2,
 log_every_n_steps: 1
 hidden_dim: 512
 embedding_dim: 256
-n_epochs: 750
+n_epochs: 500
 batch_size: 4096
 lr: 3e-4
 save_cycle: 5000

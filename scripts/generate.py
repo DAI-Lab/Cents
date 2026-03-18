@@ -5,6 +5,7 @@ Generate synthetic time series samples from a trained model.
 Supports:
   - Random context: sample context from the dataset's support (including continuous).
   - Explicit context: provide context as JSON (categorical: int codes; continuous: z-scored floats).
+  - Sample rows: sample full context (static + dynamic) from real dataset rows, preserving correlations.
   - Output to Parquet (default) or CSV.
 """
 
@@ -12,8 +13,10 @@ import argparse
 import json
 import logging
 import os
+import random
 from pathlib import Path
 
+import numpy as np
 import torch
 from omegaconf import OmegaConf
 
@@ -23,7 +26,7 @@ from cents.datasets.commercial import CommercialDataset
 from cents.datasets.airquality import AirQualityDataset
 from cents.datasets.utils import convert_generated_data_to_df
 from cents.utils.config_loader import load_yaml
-from cents.utils.utils import set_context_config_path
+from cents.utils.utils import set_context_config_path, set_context_overrides
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,16 +91,18 @@ def main() -> None:
         help="Output path for generated samples.",
     )
     parser.add_argument(
-        "--format",
-        type=str,
-        choices=("parquet", "csv"),
-        default="parquet",
-        help="Output format. Parquet preserves array columns better.",
-    )
-    parser.add_argument(
         "--random-context",
         action="store_true",
         help="Sample context randomly from the dataset support (categorical and continuous).",
+    )
+    parser.add_argument(
+        "--sample-rows",
+        action="store_true",
+        help=(
+            "Sample full context (static + dynamic) from real dataset rows. "
+            "Preserves correlations between covariates. "
+            "Samples with replacement if n > len(dataset)."
+        ),
     )
     parser.add_argument(
         "--context",
@@ -120,6 +125,13 @@ def main() -> None:
         help="Extra dataset overrides, e.g. time_series_dims=1.",
     )
     parser.add_argument(
+        "--context-overrides",
+        type=str,
+        nargs="*",
+        default=[],
+        help="Override context config values (e.g., 'static_context.type=mlp' 'dynamic_context.type=cnn').",
+    )
+    parser.add_argument(
         "--no-ema",
         action="store_true",
         help="Disable EMA sampling (EMA is used by default when present in the checkpoint).",
@@ -128,13 +140,18 @@ def main() -> None:
 
     use_random = args.random_context
     use_explicit = args.context is not None and args.context.strip() != ""
-    if not use_random and not use_explicit:
-        parser.error("Provide either --random-context or --context (JSON).")
-    if use_random and use_explicit:
-        parser.error("Provide only one of --random-context or --context.")
+    use_rows = args.sample_rows
+    n_modes = sum([use_random, use_explicit, use_rows])
+    if n_modes == 0:
+        parser.error("Provide one of --random-context, --context (JSON), or --sample-rows.")
+    if n_modes > 1:
+        parser.error("Provide only one of --random-context, --context, or --sample-rows.")
 
     if args.context_config_path:
         set_context_config_path(args.context_config_path)
+
+    if args.context_overrides:
+        set_context_overrides(args.context_overrides)
 
     overrides = list(args.dataset_overrides) if args.dataset_overrides else []
 
@@ -154,7 +171,29 @@ def main() -> None:
         target.model.use_ema_sampling = cfg.model.use_ema_sampling
     gen.set_dataset_spec(gen.model.cfg.dataset, dataset.get_context_var_codes())
 
-    if use_random:
+    if use_rows:
+        # Sample full context (static + dynamic) from real dataset rows.
+        # With-replacement sampling handles n > len(dataset).
+        indices = random.choices(range(len(dataset)), k=args.num_samples)
+        samples = [dataset[i] for i in indices]
+        static_batch = {
+            k: torch.stack([s[1][k] for s in samples]).to(gen.device)
+            for k in samples[0][1].keys()
+        }
+        dynamic_batch = {
+            k: torch.stack([s[2][k] for s in samples]).to(gen.device)
+            for k in samples[0][2].keys()
+        } if samples[0][2] else {}
+        logging.info(
+            "Generating %d samples conditioned on %d real rows (static: %s, dynamic: %s)...",
+            args.num_samples, args.num_samples,
+            list(static_batch.keys()), list(dynamic_batch.keys()),
+        )
+        with torch.no_grad():
+            ts = gen.model.generate(static_batch, dynamic_batch or None)
+        ctx_batch = {**static_batch, **dynamic_batch}
+        df = convert_generated_data_to_df(ts, ctx_batch, decode=False)
+    elif use_random:
         # Sample a new random context for each of the n samples
         contexts = [dataset.sample_random_context_vars() for _ in range(args.num_samples)]
         ctx_batch = {
@@ -184,10 +223,7 @@ def main() -> None:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    if args.format == "parquet":
-        df.to_parquet(out, index=False)
-    else:
-        df.to_csv(out, index=False)
+    df.to_parquet(out, index=False)
     logging.info("Wrote %d samples to %s", len(df), out.resolve())
 
 

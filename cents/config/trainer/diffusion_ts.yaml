@@ -9,7 +9,7 @@ max_epochs: 5000
 base_lr: 1e-4
 warmup_epochs: 100        # linear warmup from 1% to 100% of base_lr over first N epochs
 eval_after_training: False
-gradient_clip_val: 1.0
+# gradient_clip_val: 1.0
 
 checkpoint:
   save_last: True       # Save final model

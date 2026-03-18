@@ -726,7 +726,7 @@ class Normalizer(NormalizerModel):
                         rng_eff = max(rng, self.min_scale_range)
                         z = z * rng_eff + zmin_
                     arr = z * sigma_eff + mu[d]
-                    df_out.at[i, col] = arr
+                    df_out.at[i, col] = arr.tolist()
         return df_out
 
     def _build_training_samples(

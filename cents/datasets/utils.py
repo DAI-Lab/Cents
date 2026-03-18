@@ -18,7 +18,7 @@ def split_timeseries(
     if n_dim != len(time_series_columns):
         raise ValueError("shape mismatch")
     for i, col in enumerate(time_series_columns):
-        df[col] = df["timeseries"].apply(lambda x: x[:, i])
+        df[col] = df["timeseries"].apply(lambda x: x[:, i].tolist())
     return df.drop(columns=["timeseries"])
 
 
@@ -241,8 +241,12 @@ def convert_generated_data_to_df(
     n_samples = data_np.shape[0]
 
     def _get_code_at(code: Any, i: int) -> Any:
-        if isinstance(code, torch.Tensor) and code.dim() == 1 and code.shape[0] == n_samples:
-            return code[i].item()
+        if isinstance(code, torch.Tensor):
+            if code.dim() == 2 and code.shape[0] == n_samples:
+                # Dynamic (time-series) context: return as numpy array
+                return code[i].cpu().numpy()
+            if code.dim() == 1 and code.shape[0] == n_samples:
+                return code[i].item()
         return code.item() if isinstance(code, torch.Tensor) else code
 
     records = []
@@ -254,6 +258,8 @@ def convert_generated_data_to_df(
                 if mapping is None:
                     raise ValueError("Mapping must be provided when decode=True.")
                 record[var] = mapping[var][v]
+            elif isinstance(v, np.ndarray):
+                record[var] = v.tolist()
             else:
                 record[var] = v if isinstance(v, float) else int(v)
         record["timeseries"] = data_np[i]

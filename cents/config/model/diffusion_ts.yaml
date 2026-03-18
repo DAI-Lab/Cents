@@ -3,7 +3,7 @@ name: diffusion_ts
 context_reconstruction_loss_weight: 0.1
 tc_loss_weight: 0
 noise_dim: 256
-cond_emb_dim: 16
+cond_emb_dim: 64
 n_layer_enc: 4
 n_layer_dec: 5
 d_model: 128
@@ -12,7 +12,7 @@ sampling_timesteps: 200
 sampling_batch_size: 4096
 loss_type: l1 #l2
 training_objective: v
-loss_weighting: min_snr
+loss_weighting: snr
 min_snr_gamma: 5.0
 beta_schedule: cosine #linear diffusion ts paper uses linear schedule
 n_heads: 4
