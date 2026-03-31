@@ -11,7 +11,7 @@ n_steps: 1000
 sampling_timesteps: 200
 sampling_batch_size: 4096
 loss_type: l1 #l2
-training_objective: v
+training_objective: x0
 loss_weighting: snr
 min_snr_gamma: 5.0
 beta_schedule: cosine #linear diffusion ts paper uses linear schedule

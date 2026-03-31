@@ -15,6 +15,7 @@ time_series_dims: 1
 normalizer_stats_mode: group
 # Normalizer conditions only on these (e.g. per-station); diffusion still gets full context_vars
 normalizer_group_vars: ["sensor_name"]
+max_z_threshold: 15.0
 
 # Targets (what becomes the merged "timeseries" dims)
 # NOTE: use PMcoarse instead of PM10

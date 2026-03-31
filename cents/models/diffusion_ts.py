@@ -821,7 +821,7 @@ class Diffusion_TS(GenerativeModel):
         return super().load_state_dict(filtered, strict=strict)
 
     def on_load_checkpoint(self, checkpoint: dict) -> None:
-        if 'ema_state_dict' in checkpoint:
+        if 'ema_state_dict' in checkpoint and False:
             if self._ema is None:
                 object.__setattr__(self, '_ema', EMA(
                     self.model,

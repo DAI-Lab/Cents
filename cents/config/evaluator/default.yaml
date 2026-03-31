@@ -9,3 +9,29 @@ save_results: False
 eval_disentanglement: True
 job_name: diffusion_ts_commercial
 save_dir: outputs/diffusion_ts_commercial/eval
+
+# Context Faithfulness Score (CFS) and Granger Causality Preservation (GCP).
+# Runs only when enabled=True AND either:
+#   - the generated signal has multiple dimensions (multivariate), OR
+#   - the dataset uses dynamic (time-series) context variables.
+#
+# pairs: list of {x, c} dicts specifying which time series to evaluate against each other.
+#   x — name of a generated output dimension (must match time_series_columns in dataset config)
+#   c — name of a dynamic context variable (from context_vars with type "time_series")
+#         OR another generated output dimension (multivariate case, GCP only)
+#
+# CFS is computed only when c is a dynamic context variable (shared context).
+# GCP is computed for all pairs.
+#
+# Example for airquality dataset (PM2.5 generated, TEMP/DEWP as context):
+#   pairs:
+#     - {x: "PM2.5", c: "TEMP"}
+#     - {x: "PM2.5", c: "DEWP"}
+#
+eval_context_faithfulness:
+  enabled: true
+  gcp_max_lag: 5
+  pairs:
+    - {x: "PM2.5", c: "T"}
+    - {x: "PM2.5", c: "R"}
+  #   - {x: "PM2.5", c: "TEMP"}

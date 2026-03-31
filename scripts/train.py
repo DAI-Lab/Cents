@@ -10,6 +10,7 @@ from cents.datasets.pecanstreet import PecanStreetDataset
 from cents.datasets.commercial import CommercialDataset
 from cents.datasets.airquality import AirQualityDataset
 from cents.datasets.metraq import MetraqDataset
+from cents.datasets.walmart import WalmartDataset
 
 from cents.trainer import Trainer
 from cents.utils.utils import set_context_config_path, set_context_overrides, get_context_config
@@ -134,6 +135,12 @@ def main(args) -> None:
 
     elif args.dataset == "metraq":
         dataset = MetraqDataset(
+            cfg=dataset_cfg,
+            force_retrain_normalizer=args.force_retrain_normalizer,
+            run_dir=str(run_dir),
+        )
+    elif args.dataset == "walmart":
+        dataset = WalmartDataset(
             cfg=dataset_cfg,
             force_retrain_normalizer=args.force_retrain_normalizer,
             run_dir=str(run_dir),

@@ -262,7 +262,7 @@ def main() -> None:
     parser.add_argument(
         "--seed",
         type=int,
-        default=None,
+        default=42,
         help="Random seed for reproducible sampling (sets Python, NumPy, and PyTorch seeds).",
     )
     parser.add_argument(
@@ -278,10 +278,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--save-path", 
+        "--save-path",
         type=str,
         default=None,
         help="Path to save evaluation results."
+    )
+    parser.add_argument(
+        "--model-config",
+        type=str,
+        default=None,
+        help="Path to a model config YAML file. Overrides the default cents/config/model/{model_type}.yaml when using --model-ckpt.",
     )
 
     args = parser.parse_args()
@@ -390,8 +396,9 @@ def main() -> None:
         cfg.evaluator = eval_cfg
         cfg.wandb = top_cfg.get("wandb", {})
         cfg.device = f"cuda:{args.device}"
+        model_config_path = args.model_config if args.model_config else f"cents/config/model/{model_type}.yaml"
         cfg.model = OmegaConf.create(
-            OmegaConf.to_container(OmegaConf.load(f"cents/config/model/{model_type}.yaml"), resolve=True)
+            OmegaConf.to_container(OmegaConf.load(model_config_path), resolve=True)
         )
         cfg.dataset = OmegaConf.create(OmegaConf.to_container(dataset.cfg, resolve=True))
         if args.no_normalizer_global_preprocessing:

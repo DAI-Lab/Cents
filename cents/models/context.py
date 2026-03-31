@@ -502,6 +502,15 @@ class DynamicContextModule_Transformer(BaseContextModule):
         # Per-variable weight (scalar) for the additive mixture across variables
         self.var_mix = nn.Linear(n_vars * embedding_dim, embedding_dim) if n_vars > 1 else None
 
+        # Per-variable layer norm applied after each transformer encoder output
+        all_var_names = list(self.categorical_ts_vars.keys()) + self.numeric_ts_vars
+        self.post_encoder_norms = nn.ModuleDict({
+            name: nn.LayerNorm(embedding_dim)
+            for name in all_var_names
+        })
+        # Final layer norm applied after var_mix (or single-variable output)
+        self.post_mix_norm = nn.LayerNorm(embedding_dim)
+
         # Initialize weights
         self._initialize_weights()
     
@@ -548,6 +557,7 @@ class DynamicContextModule_Transformer(BaseContextModule):
                 if self.pos_encodings is not None and name in self.pos_encodings:
                     embedded = embedded + self.pos_encodings[name][:, :embedded.size(1)]
                 encoded = self.ts_encoders[name](embedded)  # (B, T, emb_dim)
+                encoded = self.post_encoder_norms[name](encoded)
                 if torch.isnan(encoded).any() or torch.isinf(encoded).any():
                     raise ValueError(f"NaN/Inf after transformer encoding '{name}'")
                 sequences.append(encoded)
@@ -569,6 +579,7 @@ class DynamicContextModule_Transformer(BaseContextModule):
                 if torch.isnan(embedded).any() or torch.isinf(embedded).any():
                     raise ValueError(f"NaN/Inf after projection for '{name}'")
                 encoded = self.ts_encoders[name](embedded)  # (B, T, emb_dim)
+                encoded = self.post_encoder_norms[name](encoded)
                 if torch.isnan(encoded).any() or torch.isinf(encoded).any():
                     raise ValueError(f"NaN/Inf after transformer encoding numeric TS '{name}'")
                 sequences.append(encoded)
@@ -587,6 +598,8 @@ class DynamicContextModule_Transformer(BaseContextModule):
         else:
             # Single-variable fallback (var_mix is None only when n_vars == 1)
             out = sequences[0]
+
+        out = self.post_mix_norm(out)
 
         if torch.isnan(out).any() or torch.isinf(out).any():
             raise ValueError("NaN/Inf in dynamic context sequence output")

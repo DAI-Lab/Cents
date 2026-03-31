@@ -53,7 +53,7 @@ class MetraqDataset(TimeSeriesDataset):
             FileNotFoundError: If required CSV files are missing.
         """
         if cfg is None:
-            cfg = load_yaml(os.path.join(ROOT_DIR, "config", "dataset", "pecanstreet.yaml"))
+            cfg = load_yaml(os.path.join(ROOT_DIR, "config", "dataset", "metraq.yaml"))
             if overrides:
                 cfg = apply_overrides(cfg, overrides)
 
