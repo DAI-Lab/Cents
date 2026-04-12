@@ -68,7 +68,7 @@ def predictive_score_metrics(ori_data, generated_data):
         X_mb = [
             generated_data[i][:-1, :] for i in train_idx
         ]  # Use all dimensions for input
-        T_mb = [generated_time[i] - 1 for i in train_idx]
+        T_mb = [max(generated_time[i] - 1, 1) for i in train_idx]
         Y_mb = [
             generated_data[i][1:, :].reshape(-1, dim) for i in train_idx
         ]  # Predict all dimensions
@@ -84,7 +84,7 @@ def predictive_score_metrics(ori_data, generated_data):
         optimizer.step()
 
     X_mb = [ori_data[i][:-1, :] for i in range(no)]
-    T_mb = [ori_time[i] - 1 for i in range(no)]
+    T_mb = [max(ori_time[i] - 1, 1) for i in range(no)]
     Y_mb = [ori_data[i][1:, :].reshape(-1, dim) for i in range(no)]
 
     X_mb = torch.tensor(np.array(X_mb), dtype=torch.float32).to(device)

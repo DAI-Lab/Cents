@@ -1,15 +1,15 @@
 model:
-  name: diffusion_ts  # Set this to your model name
+  name: diffusion_ts
 dataset:
-  name: commercial  # Set this to your dataset name (e.g., "commercial")
+  name: walmart
 eval_pv_shift: False
 eval_metrics: True
 eval_context_sparse: True
 save_results: False
 eval_disentanglement: True
 eval_context_recovery: True
-job_name: diffusion_ts_commercial
-save_dir: outputs/diffusion_ts_commercial/eval
+job_name: diffusion_ts_walmart
+save_dir: outputs/diffusion_ts_walmart/eval
 
 # Context Faithfulness Score (CFS) and Granger Causality Preservation (GCP).
 # Runs only when enabled=True AND either:
@@ -24,16 +24,11 @@ save_dir: outputs/diffusion_ts_commercial/eval
 # CFS is computed only when c is a dynamic context variable (shared context).
 # GCP is computed for all pairs.
 #
-# Example for airquality dataset (PM2.5 generated, TEMP/DEWP as context):
-#   pairs:
-#     - {x: "PM2.5", c: "TEMP"}
-#     - {x: "PM2.5", c: "DEWP"}
-#
 eval_context_faithfulness:
   enabled: true
   gcp_max_lag: 5
   pairs:
-    - {x: "PM2.5", c: "T"}
-    - {x: "PM2.5", c: "TI"}
-    - {x: "PM2.5", c: "SP"}
-  #   - {x: "PM2.5", c: "TEMP"}
+    - {x: "sales", c: "sell_price"}
+    - {x: "sales", c: "snap"}
+    - {x: "sales", c: "event_binary"}
+    - {x: "sales", c: "weekday"}

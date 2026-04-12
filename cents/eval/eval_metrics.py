@@ -377,6 +377,91 @@ def compute_gcp(
     return gcp, diagnostics
 
 
+def compute_context_recovery_score(
+    real_data: np.ndarray,
+    syn_data: np.ndarray,
+    context_labels: Dict[str, np.ndarray],
+    continuous_vars: Optional[List[str]] = None,
+    test_ratio: float = 0.2,
+) -> Tuple[float, Dict[str, Dict]]:
+    """
+    Context Recovery Score: measures whether static context is reflected in generated outputs.
+
+    Trains a predictor f: timeseries -> context_label on real data, then evaluates
+    accuracy on synthetic data conditioned on the same labels.  High score means
+    the model correctly encodes the conditioning variable in the output.
+
+    For categorical variables: classification accuracy (chance = 1/n_classes).
+    For continuous variables: R² (0 = no recovery, 1 = perfect).
+
+    Args:
+        real_data:      (N, T, D) real time series
+        syn_data:       (N, T, D) synthetic time series (same conditioning as real)
+        context_labels: {name: (N,) array of integer labels or float values}
+        continuous_vars: names of continuous context variables; all others treated as categorical
+        test_ratio:     fraction of real data held out for real_baseline evaluation
+
+    Returns:
+        overall_score: mean synth_score across all context variables
+        per_var: {name: {"synth_score": float, "real_baseline": float, "type": str}}
+    """
+    if continuous_vars is None:
+        continuous_vars = []
+
+    N, T, D = real_data.shape
+
+    def _features(data: np.ndarray) -> np.ndarray:
+        """Mean + std pool over time → (N, 2*D) fixed-size representation."""
+        return np.concatenate([data.mean(axis=1), data.std(axis=1)], axis=-1)
+
+    X_real = _features(real_data)
+    X_synth = _features(syn_data)
+
+    rng = np.random.RandomState(42)
+    idx = rng.permutation(N)
+    test_size = max(1, int(N * test_ratio))
+    train_idx = idx[test_size:]
+    test_idx = idx[:test_size]
+
+    per_var: Dict[str, Dict] = {}
+    scores: List[float] = []
+
+    for name, labels in context_labels.items():
+        labels_f = labels.astype(float)
+        if np.isnan(labels_f).any():
+            per_var[name] = {"synth_score": float("nan"), "real_baseline": float("nan"), "type": "unknown"}
+            continue
+
+        if name in continuous_vars:
+            y = labels_f
+            clf = Ridge(alpha=1e-3, fit_intercept=True)
+            clf.fit(X_real[train_idx], y[train_idx])
+            real_baseline = float(r2_score(y[test_idx], clf.predict(X_real[test_idx])))
+            synth_score = float(r2_score(y, clf.predict(X_synth)))
+            score_type = "r2"
+        else:
+            y = labels.astype(int)
+            n_classes = len(np.unique(y))
+            if n_classes < 2:
+                per_var[name] = {"synth_score": float("nan"), "real_baseline": float("nan"), "type": "accuracy"}
+                continue
+            clf = LogisticRegression(max_iter=1000, random_state=42)
+            clf.fit(X_real[train_idx], y[train_idx])
+            real_baseline = float(np.mean(clf.predict(X_real[test_idx]) == y[test_idx]))
+            synth_score = float(np.mean(clf.predict(X_synth) == y))
+            score_type = "accuracy"
+
+        per_var[name] = {
+            "synth_score": synth_score,
+            "real_baseline": real_baseline,
+            "type": score_type,
+        }
+        scores.append(synth_score)
+
+    overall = float(np.mean(scores)) if scores else float("nan")
+    return overall, per_var
+
+
 def compute_mig(
     embeddings: np.ndarray,
     context_vars: Dict[str, np.ndarray],

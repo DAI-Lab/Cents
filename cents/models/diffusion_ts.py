@@ -586,12 +586,17 @@ class Diffusion_TS(GenerativeModel):
             _nan_check(pred_noise, "forward pred_noise (eps)")
             loss_per_elem = self.recon_loss_fn(pred_noise, noise, reduction="none")
         else:  # v
-            pred_noise = self.predict_noise_from_start(x_noisy, t, x_start_pred)
-            _nan_check(pred_noise, "forward pred_noise (v)")
-            pred_v = (
-                self.sqrt_alphas_cumprod[t].view(-1, 1, 1) * pred_noise
-                - self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1) * x_start_pred
-            )
+            # Compute pred_v directly from x_start_pred and x_noisy, avoiding the
+            # two-step path through predict_noise_from_start which divides by
+            # sqrt_recipm1_alphas_cumprod — a value near 0 at low t (cosine schedule
+            # gives ~0.01 at t=0), amplifying prediction errors ~100x into pred_noise
+            # before they land in pred_v. The algebraic identity:
+            #   v = sqrt(α_bar)*ε - sqrt(1-α_bar)*x0
+            #   ε = (x_noisy - sqrt(α_bar)*x0) / sqrt(1-α_bar)
+            # => pred_v = (sqrt(α_bar)*x_noisy - x0) / sqrt(1-α_bar).clamp(min=1e-3)
+            sqrt_ab = self.sqrt_alphas_cumprod[t].view(-1, 1, 1)
+            sqrt_1mab = self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1).clamp(min=1e-3)
+            pred_v = (sqrt_ab * x_noisy - x_start_pred) / sqrt_1mab
             true_v = (
                 self.sqrt_alphas_cumprod[t].view(-1, 1, 1) * noise
                 - self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1) * x

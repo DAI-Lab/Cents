@@ -45,9 +45,10 @@ context_vars:
   # WS and WD are decomposed into wind_u/wind_v in preprocessing to handle
   # the circularity of wind direction (WD=355° ≈ WD=5°, but z-score would give opposite signs).
   T: ["time_series", null]
-  wind_u: ["time_series", null]
-  wind_v: ["time_series", null]
-  wd_valid: ["time_series", null]
-  RH: ["time_series", null]
-  AP: ["time_series", null]
-  R: ["time_series", null]
+  # wind_u: ["time_series", null]
+  # wind_v: ["time_series", null]
+  # wd_valid: ["time_series", null]
+  # RH, AP, R dropped — per-sample correlation with PM2.5 < 0.025 across all stations
+  # Traffic: TI = vehicles/hour (Kriging interpolation); SP = avg speed km/h
+  TI: ["time_series", null]
+  SP: ["time_series", null]

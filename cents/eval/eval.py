@@ -19,6 +19,7 @@ from cents.eval.eval_metrics import (
     Context_FID,
     calculate_mmd,
     compute_cfs,
+    compute_context_recovery_score,
     compute_gcp,
     compute_mig,
     compute_sap,
@@ -193,6 +194,8 @@ class Evaluator:
         log_prefix: str = "",
         context_arrays: Optional[Dict[str, np.ndarray]] = None,
         ts_column_names: Optional[list] = None,
+        static_context_arrays: Optional[Dict[str, np.ndarray]] = None,
+        continuous_vars: Optional[list] = None,
     ) -> Dict:
         """
         Compute evaluation metrics and store them in current_results (or in target if provided).
@@ -239,6 +242,14 @@ class Evaluator:
                 real_data, syn_data, context_arrays, ts_column_names, cf_cfg
             )
             metrics["context_faithfulness"] = cf_metrics
+
+        # Context Recovery Score — tests whether static context is encoded in generated outputs
+        if self.cfg.evaluator.get("eval_context_recovery", False) and static_context_arrays:
+            crs_score, crs_per_var = compute_context_recovery_score(
+                real_data, syn_data, static_context_arrays, continuous_vars=continuous_vars
+            )
+            metrics["context_recovery"] = {"overall": crs_score, "per_var": crs_per_var}
+            logger.info(f"[Cents] Context Recovery Score completed: {crs_score:.4f}")
 
         if mask is not None:
             logger.info("[Cents] Starting Rare-Subset Metrics")
@@ -536,6 +547,12 @@ class Evaluator:
             and (has_dynamic_context or has_multivariate_signal)
         )
 
+        # Build static context numpy arrays for Context Recovery Score
+        static_context_np: Dict[str, np.ndarray] = {
+            name: tensor.cpu().numpy() for name, tensor in static_context_vars.items()
+        }
+        dataset_continuous_vars: list = getattr(dataset, "continuous_vars", [])
+
         if self.cfg.evaluator.eval_metrics:
             rare_mask = None
 
@@ -551,6 +568,8 @@ class Evaluator:
                 log_prefix="[raw] ",
                 context_arrays=context_np if run_cf else None,
                 ts_column_names=ts_col_names if run_cf else None,
+                static_context_arrays=static_context_np if static_context_np else None,
+                continuous_vars=dataset_continuous_vars,
             )
 
             # Metrics in normalized (z) domain for cross-domain comparability.
@@ -570,6 +589,8 @@ class Evaluator:
                     log_prefix="[normalized] ",
                     context_arrays=context_np if run_cf else None,
                     ts_column_names=ts_col_names if run_cf else None,
+                    static_context_arrays=static_context_np if static_context_np else None,
+                    continuous_vars=dataset_continuous_vars,
                 )
                 self.current_results["metrics"]["normalized_domain"] = normalized_metrics
 

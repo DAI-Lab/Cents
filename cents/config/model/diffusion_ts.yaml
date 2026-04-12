@@ -11,7 +11,7 @@ n_steps: 1000
 sampling_timesteps: 200
 sampling_batch_size: 4096
 loss_type: l1 #l2
-training_objective: x0
+training_objective: v
 loss_weighting: snr
 min_snr_gamma: 5.0
 beta_schedule: cosine #linear diffusion ts paper uses linear schedule
@@ -25,7 +25,7 @@ padding_size: null
 use_ff: True
 reg_weight: null
 gradient_accumulate_every: 2
-ema_decay: 0.9999
+ema_decay: 0.999
 ema_update_interval: 1
 use_ema_sampling: True
 k_bins: 20

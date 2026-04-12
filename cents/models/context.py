@@ -610,3 +610,121 @@ class DynamicContextModule_Transformer(BaseContextModule):
         unused = [n for n,p in self.named_parameters() if p.requires_grad and p.grad is None]
         if unused:
             print("UNUSED:", unused[:50])
+
+
+@register_context_module("dynamic_joint_transformer")
+class DynamicContextModule_JointTransformer(BaseContextModule):
+    """
+    Joint multi-channel encoder for dynamic context.
+
+    All numeric time-series variables are stacked as channels (B, T, n_vars),
+    projected jointly to (B, T, embedding_dim), then encoded by a single shared
+    Transformer. Self-attention operates across time steps while seeing all
+    variables simultaneously, allowing it to learn non-linear variable
+    interactions (e.g. high TI + low wind → elevated PM2.5).
+
+    Compare to DynamicContextModule_Transformer which runs one independent
+    transformer per variable and combines them with a linear mix — that
+    architecture can only learn additive contributions.
+    """
+
+    returns_sequence = True
+
+    def __init__(
+        self,
+        context_vars: dict,
+        embedding_dim: int,
+        seq_len: int = None,
+        n_layers: int = 2,
+        n_heads: int = 4,
+        dropout: float = 0.1,
+        dim_feedforward: int = 256,
+    ):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.seq_len = seq_len
+
+        self.numeric_ts_vars = [
+            k for k, v in context_vars.items()
+            if v[0] == "time_series" and v[1] is None
+        ]
+        self.categorical_ts_vars = {
+            k: v[1] for k, v in context_vars.items()
+            if v[0] == "time_series" and v[1] is not None
+        }
+
+        n_numeric = len(self.numeric_ts_vars)
+
+        # Project all numeric channels jointly: (B, T, n_vars) → (B, T, emb_dim)
+        # This single linear sees every variable at every timestep simultaneously.
+        if n_numeric > 0:
+            self.numeric_input_proj = nn.Linear(n_numeric, embedding_dim)
+        else:
+            self.numeric_input_proj = None
+
+        # Categorical time-series: embed each to emb_dim and add into the joint repr
+        self.ts_cat_embeddings = nn.ModuleDict({
+            name: nn.Embedding(num_categories, embedding_dim)
+            for name, num_categories in self.categorical_ts_vars.items()
+        })
+
+        if seq_len is not None:
+            self.pos_encoding = nn.Parameter(torch.zeros(1, seq_len, embedding_dim))
+        else:
+            self.pos_encoding = None
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embedding_dim,
+            nhead=n_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation='gelu',
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.post_norm = nn.LayerNorm(embedding_dim)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        if self.pos_encoding is not None:
+            nn.init.normal_(self.pos_encoding, std=0.02)
+
+    def forward(self, context_vars: dict) -> tuple:
+        numeric_tensors = []
+        for name in self.numeric_ts_vars:
+            if name in context_vars:
+                ts = context_vars[name]
+                if not ts.is_floating_point():
+                    ts = ts.float()
+                ts = torch.where(torch.isfinite(ts), ts, torch.zeros_like(ts))
+                ts_mean = ts.mean(dim=1, keepdim=True)
+                ts_std = ts.std(dim=1, keepdim=True) + 1e-8
+                ts = (ts - ts_mean) / ts_std
+                numeric_tensors.append(ts)
+
+        if numeric_tensors and self.numeric_input_proj is not None:
+            # (B, T, n_vars) → (B, T, emb_dim)
+            x = self.numeric_input_proj(torch.stack(numeric_tensors, dim=-1))
+        else:
+            device = next(iter(context_vars.values())).device
+            B = next(iter(context_vars.values())).size(0)
+            T = self.seq_len or 1
+            x = torch.zeros(B, T, self.embedding_dim, device=device)
+
+        for name, emb_layer in self.ts_cat_embeddings.items():
+            if name in context_vars:
+                x = x + emb_layer(context_vars[name])  # (B, T, emb_dim)
+
+        if self.pos_encoding is not None:
+            x = x + self.pos_encoding[:, :x.size(1)]
+
+        x = self.encoder(x)
+        x = self.post_norm(x)
+
+        return x, {}

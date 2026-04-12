@@ -193,36 +193,45 @@ class MetraqDataset(TimeSeriesDataset):
 
         ctx_numeric = [c for c in ctx_ts if c not in self.categorical_time_series]
 
-        log1p_channels = {"R"}
+        # TI (traffic intensity) is strictly non-negative — log1p compresses the
+        # heavy right tail (rush-hour spikes) before z-scoring.
+        log1p_channels = {"TI"}
         binary_channels = {"wd_valid"}  # already in [0, 1] — skip z-scoring
         clip_bound = 5.0
         eps = 1e-8
-        # Compute global mean/std per channel over all rows and timesteps
-        ctx_stats = {}
-        for c in ctx_numeric:
-            # stacked shape: (N, L)
-            X = np.stack(grouped[c].values).astype(np.float32)
 
+        # Per-station z-score normalization: compute (mu, sd) separately for each
+        # sensor_name so the model sees locally-relative deviations. A global
+        # z-score would conflate cross-station level differences with within-station
+        # variation, obscuring the context–target relationship the model needs to learn.
+        ctx_stats = {}  # {channel: {sensor_name: (mu, sd)}}
+        for c in ctx_numeric:
             if c in binary_channels:
-                # Already in [0, 1] — pass through without z-scoring
-                grouped[c] = list(X)
+                grouped[c] = list(np.stack(grouped[c].values).astype(np.float32))
                 continue
 
+            ctx_stats[c] = {}
+            col_arrays = grouped[c].map(np.asarray)
+
             if c in log1p_channels:
-                X = np.log1p(np.clip(X, a_min=0.0, a_max=None))
+                col_arrays = col_arrays.map(lambda x: np.log1p(np.clip(x, 0.0, None)))
 
-            mu = float(X.mean())
-            sd = float(X.std())
-            if sd < 1e-6:
-                sd = 1.0  # avoid divide-by-zero; effectively makes it "center only"
-            ctx_stats[c] = (mu, sd)
+            normalized = col_arrays.copy()
+            for stn, idx in grouped.groupby("sensor_name").groups.items():
+                # idx contains label-based indices (not positional) — use .loc
+                X = np.stack(col_arrays.loc[idx].values).astype(np.float32)
+                mu = float(X.mean())
+                sd = float(X.std())
+                if sd < 1e-6:
+                    sd = 1.0
+                ctx_stats[c][stn] = (mu, sd)
+                Xn = np.clip((X - mu) / (sd + eps), -clip_bound, clip_bound)
+                for arr_i, row_i in enumerate(idx):
+                    normalized.loc[row_i] = Xn[arr_i]
 
-            Xn = (X - mu) / (sd + eps)
-            Xn = np.clip(Xn, -clip_bound, clip_bound).astype(np.float32)
+            grouped[c] = list(normalized)
 
-            grouped[c] = list(Xn)
-
-        # (Optional) store for later inverse-transform / debugging
+        # Store for later inverse-transform / debugging
         self.context_ts_stats_ = ctx_stats
 
         # arrays -> tuples (hashable)
