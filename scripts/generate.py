@@ -24,26 +24,40 @@ from cents.data_generator import DataGenerator
 from cents.datasets.pecanstreet import PecanStreetDataset
 from cents.datasets.commercial import CommercialDataset
 from cents.datasets.airquality import AirQualityDataset
+from cents.datasets.walmart import WalmartDataset
 from cents.datasets.utils import convert_generated_data_to_df
-from cents.utils.config_loader import load_yaml
+from cents.utils.config_loader import load_yaml, apply_overrides
 from cents.utils.utils import set_context_config_path, set_context_overrides
+
+CONFIG_DATASET_DIR = Path(__file__).resolve().parent.parent / "cents" / "config" / "dataset"
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-DATASET_OVERRIDES = ["max_samples=10000", "skip_heavy_processing=True"]
+DATASET_OVERRIDES = ["normalize=False", "max_samples=10000", "skip_heavy_processing=True"]
 PECAN_OVERRIDES = ["time_series_dims=1", "user_group=all"]
 
 
-def _load_dataset(name: str, overrides: list):
+def _load_dataset_config(dataset_name: str, overrides: list) -> OmegaConf:
+    config_path = CONFIG_DATASET_DIR / f"{dataset_name}.yaml"
+    cfg = load_yaml(str(config_path))
+    if overrides:
+        cfg = apply_overrides(cfg, overrides)
+    return cfg
+
+
+def _load_dataset(name: str, dataset_cfg: OmegaConf):
+    kwargs = {"cfg": dataset_cfg}
     if name == "pecanstreet":
-        return PecanStreetDataset(overrides=DATASET_OVERRIDES + PECAN_OVERRIDES + (overrides or []))
+        return PecanStreetDataset(**kwargs)
     if name == "commercial":
-        return CommercialDataset(overrides=DATASET_OVERRIDES + (overrides or []))
+        return CommercialDataset(**kwargs)
     if name == "airquality":
-        return AirQualityDataset(overrides=DATASET_OVERRIDES + (overrides or []))
-    raise ValueError(f"Dataset {name} not supported. Use: pecanstreet, commercial, airquality.")
+        return AirQualityDataset(**kwargs)
+    if name == "walmart":
+        return WalmartDataset(**kwargs)
+    raise ValueError(f"Dataset {name} not supported. Use: pecanstreet, commercial, airquality, walmart.")
 
 
 def main() -> None:
@@ -73,7 +87,7 @@ def main() -> None:
         "--dataset",
         type=str,
         default="pecanstreet",
-        choices=("pecanstreet", "commercial", "airquality"),
+        choices=("pecanstreet", "commercial", "airquality", "walmart"),
         help="Dataset name (must match the one used to train the model).",
     )
     parser.add_argument(
@@ -136,6 +150,27 @@ def main() -> None:
         action="store_true",
         help="Disable EMA sampling (EMA is used by default when present in the checkpoint).",
     )
+    parser.add_argument(
+        "--stochastic-round",
+        action="store_true",
+        help=(
+            "Round output to non-negative integers using stochastic rounding "
+            "(floor + Bernoulli on fractional part). Applied after inverse-transform. "
+            "Useful for count-valued datasets such as Walmart unit sales."
+        ),
+    )
+    parser.add_argument(
+        "--model-config",
+        type=str,
+        default=None,
+        help="Path to a model config YAML file. Overrides the default cents/config/model/{model_type}.yaml.",
+    )
+    parser.add_argument(
+        "--dataset-config",
+        type=str,
+        default=None,
+        help="Path to a dataset config YAML file. Overrides the default cents/config/dataset/{dataset}.yaml.",
+    )
     args = parser.parse_args()
 
     use_random = args.random_context
@@ -153,12 +188,22 @@ def main() -> None:
     if args.context_overrides:
         set_context_overrides(args.context_overrides)
 
-    overrides = list(args.dataset_overrides) if args.dataset_overrides else []
+    base_overrides = list(DATASET_OVERRIDES)
+    if args.dataset == "pecanstreet":
+        base_overrides += PECAN_OVERRIDES
+    if args.dataset_overrides:
+        base_overrides += list(args.dataset_overrides)
 
     logging.info("Loading dataset %s...", args.dataset)
-    dataset = _load_dataset(args.dataset, overrides)
+    if args.dataset_config:
+        dataset_cfg = OmegaConf.load(args.dataset_config)
+        dataset_cfg = apply_overrides(dataset_cfg, base_overrides)
+    else:
+        dataset_cfg = _load_dataset_config(args.dataset, base_overrides)
+    dataset = _load_dataset(args.dataset, dataset_cfg)
     cfg = OmegaConf.create({})
-    cfg.model = load_yaml(Path("cents/config/model") / f"{args.model_type}.yaml")
+    model_config_path = args.model_config if args.model_config else f"cents/config/model/{args.model_type}.yaml"
+    cfg.model = OmegaConf.create(OmegaConf.to_container(OmegaConf.load(model_config_path), resolve=True))
     cfg.dataset = OmegaConf.create(OmegaConf.to_container(dataset.cfg, resolve=True))
     cfg.model.use_ema_sampling = not args.no_ema
 
@@ -220,6 +265,16 @@ def main() -> None:
         logging.info("Inverse-normalized outputs to original scale.")
     else:
         logging.warning("No normalizer loaded; outputs are in normalized space.")
+
+    if args.stochastic_round:
+        def _stochastic_round(x):
+            x = np.clip(x, 0, None)
+            floor = np.floor(x).astype(int)
+            return floor + (np.random.random(x.shape) < (x - floor)).astype(int)
+    
+        col_name = dataset_cfg.time_series_columns[0]
+        df[col_name] = df[col_name].apply(_stochastic_round)
+        logging.info("Applied stochastic rounding to integer counts.")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -438,6 +438,14 @@ class IntermediateFIDCallback(Callback):
         if (epoch + 1) % self.every_n_epochs != 0:
             return
 
+        # Checkpoint saving must happen on all ranks — DDP collects state across processes.
+        ckpt_path = str(self._fid_ckpt_dir / f"fid_epoch={epoch:04d}.ckpt")
+        trainer.save_checkpoint(ckpt_path)
+
+        # Everything else (generation, FID, logging, pruning) only on rank 0.
+        if not trainer.is_global_zero:
+            return
+
         import numpy as np
         import torch
         from cents.eval.eval_metrics import Context_FID
@@ -516,15 +524,12 @@ class IntermediateFIDCallback(Callback):
         fid = Context_FID(real_data_array, syn_data_array)
         print(f"[IntermediateFID] Epoch {epoch + 1}: Context-FID = {fid:.4f}")
 
-        # Save checkpoint for this FID-check epoch, then prune
-        ckpt_path = str(self._fid_ckpt_dir / f"fid_epoch={epoch:04d}.ckpt")
-        trainer.save_checkpoint(ckpt_path)
         self._fid_records.append((fid, epoch, ckpt_path))
         self._prune_fid_checkpoints()
 
         self._log_csv(epoch + 1, fid)
         self._log_wandb(trainer, epoch, fid)
-        pl_module.log("intermediate_context_fid", fid, on_step=False, on_epoch=True, prog_bar=True)
+        pl_module.log("intermediate_context_fid", fid, on_step=False, on_epoch=True, prog_bar=True, sync_dist=False)
 
     # ------------------------------------------------------------------
     # Checkpoint pruning

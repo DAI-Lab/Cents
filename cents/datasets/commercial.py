@@ -91,6 +91,16 @@ class CommercialDataset(TimeSeriesDataset):
             data = data[data["site_id"] == self.geography]
             metadata = metadata[metadata["site_id"] == self.geography]
 
+        max_samples = self.cfg.get('max_samples', None)
+        if max_samples is not None:
+            unique_ids = data['dataid'].unique()
+            # Each building produces ~700 daily sequences; 2x buffer accounts for filtering
+            est_seqs_per_id = 700
+            n_ids = min(len(unique_ids), max(1, int(np.ceil(max_samples * 2.0 / est_seqs_per_id))))
+            kept_ids = np.random.choice(unique_ids, size=n_ids, replace=False)
+            data = data[data['dataid'].isin(kept_ids)]
+            print(f"CommercialDataset: subsampling {n_ids} building IDs (est. ~{n_ids * est_seqs_per_id} sequences) for max_samples={max_samples}")
+
         self.data = data
         self.metadata = metadata
 

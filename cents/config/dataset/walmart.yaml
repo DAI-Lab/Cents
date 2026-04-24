@@ -31,7 +31,7 @@ context_vars:
   state_id: ["categorical", 3]   # CA, TX, WI
 
   # Dynamic time-series context (co-occurring with target, length = seq_len)
-  # sell_price: ["time_series", null]    # weekly price broadcast to daily, z-scored
-  # snap: ["time_series", null]          # binary SNAP eligibility for the item's state
+  sell_price: ["time_series", null]    # weekly price broadcast to daily, z-scored
+  snap: ["time_series", null]          # binary SNAP eligibility for the item's state
   event_binary: ["time_series", null]  # 1 if a named calendar event falls on that day
   weekday: ["time_series", null]        # day of week encoded as 0 (Mon) – 6 (Sun), z-scored

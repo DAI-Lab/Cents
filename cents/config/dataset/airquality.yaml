@@ -11,14 +11,14 @@ max_samples: null
 path: "./data/airquality"
 numeric_context_bins: 1
 reduce_cardinality: False
-time_series_dims: 4
+time_series_dims: 1
 normalizer_stats_mode: group
 # Normalizer conditions only on these (e.g. per-station); diffusion still gets full context_vars
 normalizer_group_vars: ["station"]
 
 # Targets (what becomes the merged "timeseries" dims)
 # NOTE: use PMcoarse instead of PM10
-time_series_columns: ["PM2.5", "SO2", "NO2", "CO"]
+time_series_columns: ["PM2.5" ] # "SO2", "NO2", "CO"]
 
 # Raw CSV columns to load
 # Keep wd/WSPM because we need them to engineer wind_u/wind_v

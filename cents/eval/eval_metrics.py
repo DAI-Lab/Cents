@@ -13,6 +13,8 @@ from scipy.stats import wasserstein_distance
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import mutual_info_score, r2_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.tsatools import lagmat
 
 from cents.eval.eval_utils import (
@@ -445,7 +447,7 @@ def compute_context_recovery_score(
             if n_classes < 2:
                 per_var[name] = {"synth_score": float("nan"), "real_baseline": float("nan"), "type": "accuracy"}
                 continue
-            clf = LogisticRegression(max_iter=1000, random_state=42)
+            clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, random_state=42))
             clf.fit(X_real[train_idx], y[train_idx])
             real_baseline = float(np.mean(clf.predict(X_real[test_idx]) == y[test_idx]))
             synth_score = float(np.mean(clf.predict(X_synth) == y))

@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from cents.models.context import MLPContextModule, SepMLPContextModule  # Import to trigger registration
+from cents.models.context import MLPContextModule, SepMLPContextModule, TransformerStaticContextModule  # Import to trigger registration
 from cents.models.context_registry import get_context_module_cls
 from cents.utils.utils import get_context_config
 
@@ -63,9 +63,15 @@ class BaseModel(pl.LightningModule, ABC):
                         if k in static_context_vars
                     }
                     print(static_context_vars_dict)
+                    static_ctx_kwargs = {
+                        k: getattr(context_cfg.static_context, k)
+                        for k in ("n_heads", "n_layers", "dropout", "dim_feedforward")
+                        if hasattr(context_cfg.static_context, k)
+                    }
                     self.static_context_module = StaticContextModuleCls(
                         static_context_vars_dict,
                         emb_dim,
+                        **static_ctx_kwargs,
                     )
                 
                 # Create dynamic context module (for time_series)

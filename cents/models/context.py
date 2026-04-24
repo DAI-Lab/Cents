@@ -238,6 +238,124 @@ class SepMLPContextModule(BaseContextModule):
         return embedding, all_outputs
 
 
+@register_context_module("transformer")
+class TransformerStaticContextModule(BaseContextModule):
+    """
+    Transformer-based static context embedder.
+
+    Each context variable is projected to a token of size embedding_dim,
+    augmented with a per-variable type embedding, then normalised before
+    being fed into a shared Transformer encoder.  Mean-pooling across the
+    variable tokens produces the final (B, embedding_dim) conditioning vector.
+
+    Compared to MLPContextModule:
+    - Attention captures interactions between context variables
+    - pre-LN (norm_first=True) and GELU throughout → more stable gradients
+    - No hardcoded bottleneck; width is controlled by dim_feedforward
+    """
+
+    def __init__(
+        self,
+        context_vars: dict[str, list],
+        embedding_dim: int,
+        n_heads: int = 4,
+        n_layers: int = 2,
+        dropout: float = 0.1,
+        dim_feedforward: int = 256,
+    ) -> None:
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.continuous_vars = [k for k, v in context_vars.items() if v[0] == "continuous"]
+        self.categorical_vars = {k: v[1] for k, v in context_vars.items() if v[0] == "categorical"}
+        self.var_names = list(self.categorical_vars.keys()) + self.continuous_vars
+
+        self.cat_embeddings = nn.ModuleDict({
+            name: nn.Embedding(n_cats, embedding_dim)
+            for name, n_cats in self.categorical_vars.items()
+        })
+        self.cont_projections = nn.ModuleDict({
+            name: nn.Linear(1, embedding_dim)
+            for name in self.continuous_vars
+        })
+        # Per-variable learnable offset so attention can distinguish variable identity
+        self.type_embeddings = nn.Embedding(len(self.var_names), embedding_dim)
+        self.register_buffer("_var_indices", torch.arange(len(self.var_names)))
+
+        # Normalise tokens before encoder to equalize scales across embed/projection types
+        self.token_norm = nn.LayerNorm(embedding_dim)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=embedding_dim,
+            nhead=n_heads,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.output_norm = nn.LayerNorm(embedding_dim)
+
+        self.classification_heads = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.Linear(embedding_dim, embedding_dim),
+                nn.GELU(),
+                nn.Linear(embedding_dim, n_cats),
+            )
+            for name, n_cats in self.categorical_vars.items()
+        })
+        self.regression_heads = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.Linear(embedding_dim, embedding_dim),
+                nn.GELU(),
+                nn.Linear(embedding_dim, 1),
+            )
+            for name in self.continuous_vars
+        })
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        nn.init.normal_(self.type_embeddings.weight, std=0.02)
+
+    def forward(self, context_vars: dict[str, torch.Tensor]) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        all_type_embs = self.type_embeddings(self._var_indices)  # (N_vars, D)
+        tokens = []
+        for i, name in enumerate(self.var_names):
+            if name in self.categorical_vars:
+                idx = context_vars[name]
+                if idx.dtype in (torch.long, torch.int, torch.int32, torch.int64):
+                    idx = idx.clamp(0, self.cat_embeddings[name].num_embeddings - 1)
+                tok = self.cat_embeddings[name](idx) + all_type_embs[i]
+            else:
+                val = context_vars[name].float()
+                if val.dim() == 1:
+                    val = val.unsqueeze(-1)
+                tok = self.cont_projections[name](val) + all_type_embs[i]
+            tokens.append(self.token_norm(tok))
+
+        x = torch.stack(tokens, dim=1)          # (B, N_vars, D)
+        x = self.encoder(x)                     # (B, N_vars, D)
+        embedding = self.output_norm(x.mean(dim=1))  # (B, D)
+
+        classification_logits = {
+            name: head(embedding)
+            for name, head in self.classification_heads.items()
+            if name in context_vars
+        }
+        regression_outputs = {
+            name: head(embedding).squeeze(-1)
+            for name, head in self.regression_heads.items()
+            if name in context_vars
+        }
+        return embedding, {**classification_logits, **regression_outputs}
+
+
 @register_context_module("dynamic_cnn")
 class DynamicContextModule_CNN(BaseContextModule):
     """

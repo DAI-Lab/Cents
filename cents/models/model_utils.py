@@ -788,7 +788,7 @@ class Decoder(nn.Module):
                     condition_dim=condition_dim,
                     has_dynamic_ctx=has_dynamic_ctx,
                 )
-                for _ in range(n_layer)
+        for _ in range(n_layer)
             ]
         )
 

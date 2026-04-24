@@ -172,12 +172,16 @@ class DataGenerator:
                 self._ctx_buff[var] = torch.tensor(code, dtype=torch.long, device=self.device)
 
     @torch.no_grad()
-    def generate(self, n: int = 128) -> "pd.DataFrame":
+    def generate(self, n: int = 128, stochastic_round: bool = False) -> "pd.DataFrame":
         """
         Produce n synthetic samples under the previously set context.
 
         Args:
             n: Number of samples to generate.
+            stochastic_round: If True, round output to non-negative integers using
+                stochastic rounding (floor + bernoulli on fractional part). Applied
+                after inverse_transform so normalizer stats are unaffected. Useful
+                for count-valued datasets (e.g. Walmart unit sales).
 
         Returns:
             DataFrame with context columns + 'timeseries'.
@@ -195,7 +199,20 @@ class DataGenerator:
         ctx_batch = {k: v.repeat(n) for k, v in self._ctx_buff.items()}
         ts = self.model.generate(ctx_batch)
         df = convert_generated_data_to_df(ts, self._ctx_buff, decode=False)
-        return self.normalizer.inverse_transform(df) if self.normalizer else df
+        df = self.normalizer.inverse_transform(df) if self.normalizer else df
+
+        if stochastic_round:
+            import numpy as np
+
+            def _stochastic_round(x):
+                x = np.clip(x, 0, None)
+                floor = np.floor(x).astype(int)
+                frac = x - floor
+                return floor + (np.random.random(x.shape) < frac).astype(int)
+
+            df["timeseries"] = df["timeseries"].apply(_stochastic_round)
+
+        return df
 
     def load_from_checkpoint(
         self,
