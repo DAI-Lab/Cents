@@ -15,23 +15,6 @@ from tqdm.auto import tqdm
 from contextlib import contextmanager
 
 
-def _nan_check(t: Optional[torch.Tensor], name: str, extra: str = "") -> None:
-    """Print location and stats when tensor contains NaN or Inf (for debugging)."""
-    if t is None or not isinstance(t, torch.Tensor):
-        return
-    if not (torch.isnan(t).any() or torch.isinf(t).any()):
-        return
-    nan_c = torch.isnan(t).sum().item()
-    inf_c = torch.isinf(t).sum().item()
-    finite = t[~(torch.isnan(t) | torch.isinf(t))]
-    min_s = finite.min().item() if finite.numel() > 0 else float("nan")
-    max_s = finite.max().item() if finite.numel() > 0 else float("nan")
-    mean_s = finite.float().mean().item() if finite.numel() > 0 else float("nan")
-    print(
-        f"[NaN/Inf] {name}: shape={tuple(t.shape)}, nan_count={nan_c}, inf_count={inf_c}, "
-        f"finite_min={min_s:.6g}, finite_max={max_s:.6g}, finite_mean={mean_s:.6g} {extra}".strip()
-    )
-
 
 from cents.models.base import GenerativeModel
 from cents.models.model_utils import (
@@ -103,7 +86,6 @@ def blueish_noise_like(
         n_blue = n_blue.expand(B, L, C).clone()
 
     out = n_blue.to(dtype=x.dtype)
-    _nan_check(out, "blueish_noise_like output")
     return out
 
 
@@ -277,9 +259,6 @@ class Diffusion_TS(GenerativeModel):
                 gamma=min_snr_gamma,
             )
         self.register_buffer("loss_weight", lw)
-        _nan_check(self.loss_weight, "init loss_weight")
-        _nan_check(self.betas, "init betas")
-        _nan_check(self.sqrt_alphas_cumprod, "init sqrt_alphas_cumprod")
 
         # choose reconstruction loss
         if self.loss_type == "l1":
@@ -296,7 +275,8 @@ class Diffusion_TS(GenerativeModel):
         self.categorical_context_vars = [k for k, v in cfg.dataset.context_vars.items() if v[0] == "categorical"]
 
     def _get_context_embedding(
-        self, static_context_vars: dict, dynamic_context_vars: dict = None
+        self, static_context_vars: dict, dynamic_context_vars: dict = None,
+        batch_size: int = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], dict]:
         """
         Get context embeddings from static and/or dynamic context modules.
@@ -318,21 +298,7 @@ class Diffusion_TS(GenerativeModel):
                 k: v.to(device, non_blocking=False) if isinstance(v, torch.Tensor) else v
                 for k, v in static_context_vars.items()
             }
-            for k, v in static_vars.items():
-                if isinstance(v, torch.Tensor) and (torch.isnan(v).any() or torch.isinf(v).any()):
-                    nan_c = torch.isnan(v).sum().item()
-                    inf_c = torch.isinf(v).sum().item()
-                    finite = v[~(torch.isnan(v) | torch.isinf(v))]
-                    min_s = finite.min().item() if finite.numel() > 0 else float("nan")
-                    max_s = finite.max().item() if finite.numel() > 0 else float("nan")
-                    mean_s = finite.float().mean().item() if finite.numel() > 0 else float("nan")
-                    print(
-                        f"[NaN/Inf] static_var '{k}': shape={tuple(v.shape)}, dtype={v.dtype}, "
-                        f"nan_count={nan_c}, inf_count={inf_c}, finite_min={min_s:.6g}, "
-                        f"finite_max={max_s:.6g}, finite_mean={mean_s:.6g}"
-                    )
             static_emb, static_logits = self.static_context_module(static_vars)
-            _nan_check(static_emb, "_get_context_embedding static_emb")
             all_logits.update(static_logits)
 
         # --- Dynamic context (time series) → (B, T, emb_dim) for cross-attention ---
@@ -343,7 +309,6 @@ class Diffusion_TS(GenerativeModel):
                 for k, v in dynamic_context_vars.items()
             }
             dyn_out, dyn_logits = self.dynamic_context_module(dyn_vars)
-            _nan_check(dyn_out, "_get_context_embedding dyn_out")
             all_logits.update(dyn_logits)
 
             if getattr(self.dynamic_context_module, "returns_sequence", False):
@@ -358,21 +323,19 @@ class Diffusion_TS(GenerativeModel):
                     static_emb = dyn_out
 
         if static_emb is None:
-            raise ValueError("No static context embedding could be produced")
+            if batch_size is None:
+                raise ValueError("No context provided and batch_size not given — cannot create unconditional embedding")
+            device = next(self.parameters()).device
+            static_emb = torch.zeros(batch_size, self.embedding_dim, device=device)
 
         if static_emb.is_floating_point():
             static_emb = static_emb.float()
-        _nan_check(static_emb, "_get_context_embedding static_emb (before dropout)")
         if self.training and self.context_embed_dropout_p > 0:
-            # Sample-wise mask: zero the entire embedding for ~p fraction of samples.
-            # Each sample independently gets its context dropped (not individual features),
-            # which teaches the model to work unconditionally — enabling CFG at inference.
             mask = torch.bernoulli(
                 torch.full((static_emb.shape[0], 1), 1.0 - self.context_embed_dropout_p,
                            device=static_emb.device, dtype=static_emb.dtype)
             )
             static_emb = static_emb * mask
-        _nan_check(static_emb, "_get_context_embedding static_emb (final)")
         return static_emb, dyn_ctx_seq, all_logits
 
     def _decode_to_x0(self, backbone: torch.Tensor) -> torch.Tensor:
@@ -380,7 +343,6 @@ class Diffusion_TS(GenerativeModel):
         Map backbone output (trend+season) to x0 prediction. Uses single fc or dual fc_a/fc_b when recon_cond_len is set.
         backbone: (B, L, time_series_dims).
         """
-        _nan_check(backbone, "_decode_to_x0 backbone")
         if self.fc is not None:
             out = self.fc(backbone)
         else:
@@ -389,7 +351,6 @@ class Diffusion_TS(GenerativeModel):
                 self.fc_a(backbone[:, :cond_len]),
                 self.fc_b(backbone[:, cond_len:]),
             ], dim=1)
-        _nan_check(out, "_decode_to_x0 output")
         return out
 
     def predict_noise_from_start(
@@ -409,7 +370,6 @@ class Diffusion_TS(GenerativeModel):
         out = (
             self.sqrt_recip_alphas_cumprod[t].view(-1, 1, 1) * x_t - x0
         ) / self.sqrt_recipm1_alphas_cumprod[t].view(-1, 1, 1)
-        _nan_check(out, "predict_noise_from_start output")
         return out
 
     def predict_start_from_noise(
@@ -430,7 +390,6 @@ class Diffusion_TS(GenerativeModel):
             self.sqrt_recip_alphas_cumprod[t].view(-1, 1, 1) * x_t
             - self.sqrt_recipm1_alphas_cumprod[t].view(-1, 1, 1) * noise
         )
-        _nan_check(out, "predict_start_from_noise output")
         return out
 
     def predict_start_from_v(
@@ -444,7 +403,6 @@ class Diffusion_TS(GenerativeModel):
             self.sqrt_alphas_cumprod[t].view(-1, 1, 1) * x_t
             - self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1) * v
         )
-        _nan_check(out, "predict_start_from_v output")
         return out
 
     def predict_noise_from_v(
@@ -458,7 +416,6 @@ class Diffusion_TS(GenerativeModel):
             self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1) * x_t
             + self.sqrt_alphas_cumprod[t].view(-1, 1, 1) * v
         )
-        _nan_check(out, "predict_noise_from_v output")
         return out
 
 
@@ -533,9 +490,6 @@ class Diffusion_TS(GenerativeModel):
         )
         pv = self.posterior_variance[t].view(-1, 1, 1)
         plv = self.posterior_log_variance_clipped[t].view(-1, 1, 1)
-        _nan_check(pm, "q_posterior pm")
-        _nan_check(pv, "q_posterior pv")
-        _nan_check(plv, "q_posterior plv")
         return pm, pv, plv
 
     def forward(self, x: torch.Tensor, static_context_vars: dict, dynamic_context_vars: dict = None) -> Tuple[torch.Tensor, dict]:
@@ -550,50 +504,27 @@ class Diffusion_TS(GenerativeModel):
             rec_loss: Reconstruction loss tensor.
             cond_logits: Classification logits dict from context module.
         """
-        _nan_check(x, "forward input x")
-        # Log when x is in reasonable range but we still see NaN later (helps distinguish bad input vs numerical instability)
-        # if isinstance(x, torch.Tensor):
-        #     x_abs_max = x.abs().max().item()
-        #     if x_abs_max > 50.0:
-        #         print(
-        #             f"[forward] input x has large values: min={x.min().item():.6g}, max={x.max().item():.6g}, abs_max={x_abs_max:.6g}"
-        #         )
 
         b = x.shape[0]
         t = torch.randint(0, self.num_timesteps, (b,), device=self.device)
-        embedding, dyn_ctx_seq, cond_classification_logits = self._get_context_embedding(static_context_vars, dynamic_context_vars)
-        _nan_check(embedding, "forward embedding")
+        embedding, dyn_ctx_seq, cond_classification_logits = self._get_context_embedding(static_context_vars, dynamic_context_vars, batch_size=b)
 
         noise = blueish_noise_like(
             x, power=self.blue_noise_power, correlated=self.correlated_noise
         )
-        _nan_check(noise, "forward noise")
         x_noisy = (
             self.sqrt_alphas_cumprod[t].view(-1, 1, 1) * x
             + self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1) * noise
         )
-        _nan_check(x_noisy, "forward x_noisy")
         trend, season = self.model(x_noisy, t, padding_masks=None, cond=embedding, dyn_ctx=dyn_ctx_seq)
-        _nan_check(trend, "forward trend")
-        _nan_check(season, "forward season")
         x_start_pred = self._decode_to_x0((trend + season).contiguous())
-        _nan_check(x_start_pred, "forward x_start_pred")
         # Compute loss based on training objective (network always predicts x0; we derive epsilon/v as needed)
         if self.training_objective == "x0":
             loss_per_elem = self.recon_loss_fn(x_start_pred, x, reduction="none")
         elif self.training_objective == "eps":
             pred_noise = self.predict_noise_from_start(x_noisy, t, x_start_pred)
-            _nan_check(pred_noise, "forward pred_noise (eps)")
             loss_per_elem = self.recon_loss_fn(pred_noise, noise, reduction="none")
         else:  # v
-            # Compute pred_v directly from x_start_pred and x_noisy, avoiding the
-            # two-step path through predict_noise_from_start which divides by
-            # sqrt_recipm1_alphas_cumprod — a value near 0 at low t (cosine schedule
-            # gives ~0.01 at t=0), amplifying prediction errors ~100x into pred_noise
-            # before they land in pred_v. The algebraic identity:
-            #   v = sqrt(α_bar)*ε - sqrt(1-α_bar)*x0
-            #   ε = (x_noisy - sqrt(α_bar)*x0) / sqrt(1-α_bar)
-            # => pred_v = (sqrt(α_bar)*x_noisy - x0) / sqrt(1-α_bar).clamp(min=1e-3)
             sqrt_ab = self.sqrt_alphas_cumprod[t].view(-1, 1, 1)
             sqrt_1mab = self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1).clamp(min=1e-3)
             pred_v = (sqrt_ab * x_noisy - x_start_pred) / sqrt_1mab
@@ -601,20 +532,10 @@ class Diffusion_TS(GenerativeModel):
                 self.sqrt_alphas_cumprod[t].view(-1, 1, 1) * noise
                 - self.sqrt_one_minus_alphas_cumprod[t].view(-1, 1, 1) * x
             )
-            _nan_check(pred_v, "forward pred_v")
-            _nan_check(true_v, "forward true_v")
             loss_per_elem = self.recon_loss_fn(pred_v, true_v, reduction="none")
-        _nan_check(loss_per_elem, "forward loss_per_elem")
         rec_loss = (
             self.loss_weight[t].view(-1, 1, 1) * loss_per_elem
         ).mean()
-        _nan_check(rec_loss, "forward rec_loss")
-        # When loss is NaN but input x was in reasonable range, point to numerical instability downstream
-        if (torch.isnan(rec_loss) | torch.isinf(rec_loss)).any():
-            print(
-                f"[forward] rec_loss is NaN/Inf while input x had min={x.min().item():.6g}, max={x.max().item():.6g}, abs_max={x.abs().max().item():.6g}"
-            )
-
         fourier_loss = torch.tensor(0.0, device=self.device)
         if self.use_ff:
             # FFT is not generally supported in fp16 for non power-of-2 sizes on cuFFT.
@@ -628,26 +549,11 @@ class Diffusion_TS(GenerativeModel):
 
             mag1 = torch.abs(fft1)
             mag2 = torch.abs(fft2)
-            _nan_check(mag1, "forward fourier mag1")
-            _nan_check(mag2, "forward fourier mag2")
 
-            fourier_loss = (
-                self.recon_loss_fn(mag1, mag2, reduction="none")
-            )
-            _nan_check(fourier_loss, "forward fourier_loss (per-elem)")
-            fourier_loss = (
-                self.loss_weight[t].view(-1, 1, 1) * fourier_loss
-            ).mean()
-        _nan_check(fourier_loss, "forward fourier_loss (scalar)")
+            fourier_loss = self.recon_loss_fn(mag1, mag2, reduction="none")
 
+            fourier_loss = (self.loss_weight[t].view(-1, 1, 1) * fourier_loss).mean()
 
-            # fourier_loss = (
-            #     self.recon_loss_fn(fft1.real, fft2.real, reduction="none")
-            #     + self.recon_loss_fn(fft1.imag, fft2.imag, reduction="none")
-            # )
-            # fourier_loss = (
-            #     self.loss_weight[t].view(-1, 1, 1) * fourier_loss
-            # ).mean()
 
         return rec_loss, cond_classification_logits, fourier_loss.mean()
 
@@ -663,49 +569,29 @@ class Diffusion_TS(GenerativeModel):
             total_loss: Scalar training loss.
         """
         ts_batch, static_context_batch, dynamic_context_batch = batch
-        # print("BEFORE PRINT I")
-        # print(ts_batch, static_context_batch, dynamic_context_batch)
-        # print("AFTER PRINT I")
-        _nan_check(ts_batch, "training_step ts_batch")
         rec_loss, cond_class_logits, fourier_loss = self(ts_batch, static_context_batch, dynamic_context_batch)
-        _nan_check(rec_loss, "training_step rec_loss")
-        _nan_check(fourier_loss, "training_step fourier_loss")
 
         cond_loss = 0.0
         for var_name, outputs in cond_class_logits.items():
             labels = static_context_batch[var_name]
-            if isinstance(outputs, torch.Tensor):
-                _nan_check(outputs, f"training_step cond_logits[{var_name}]")
-            if isinstance(labels, torch.Tensor):
-                _nan_check(labels, f"training_step cond_labels[{var_name}]")
             if var_name in self.continuous_context_vars:
                 loss = F.mse_loss(outputs, labels.float())
             elif var_name in self.categorical_context_vars:
                 loss = self.auxiliary_loss(outputs, labels)
-            _nan_check(loss, f"training_step cond_loss[{var_name}]")
             cond_loss += loss.mean()
-        # Normalize by number of context variables so the weight is dataset-independent
-        # if len(cond_class_logits) > 0:
-        #     cond_loss = cond_loss / len(cond_class_logits)
 
-        h, _, _ = self._get_context_embedding(static_context_batch, dynamic_context_batch)
-        _nan_check(h, "training_step h (for tc)")
+        h, _, _ = self._get_context_embedding(static_context_batch, dynamic_context_batch, batch_size=ts_batch.shape[0])
         tc_term = (
             self.cfg.model.tc_loss_weight * total_correlation(h)
             if self.cfg.model.tc_loss_weight > 0.0
             else torch.tensor(0.0, device=self.device)
         )
-        _nan_check(tc_term, "training_step tc_term")
 
         total_loss = (
             rec_loss + self.context_reconstruction_loss_weight * cond_loss + tc_term + fourier_loss * self.ff_weight
         )
-        _nan_check(total_loss, f"training_step total_loss batch_idx={batch_idx}")
 
         # Skip this batch entirely if loss is bad — avoids corrupting weights before EMA can help
-        if not torch.isfinite(total_loss):
-            print(f"[training_step] Non-finite loss ({total_loss.item()}) at batch {batch_idx}, skipping.")
-            return None
 
         self.log_dict(
             {
@@ -786,39 +672,7 @@ class Diffusion_TS(GenerativeModel):
         if hasattr(self, '_ema') and self._ema:
             self._ema.update()
 
-    # def on_load_checkpoint(self, checkpoint: dict) -> None:
-    #     """
-    #     Restore EMA weights from checkpoint after loading.
-    #     """
-    #     super().on_load_checkpoint(checkpoint)
-        
-    #     # Check if EMA weights exist in checkpoint
-    #     state_dict = checkpoint.get('state_dict', {})
-    #     ema_keys = [key for key in state_dict.keys() if key.startswith('_ema.')]
-        
-    #     if ema_keys:
-    #         if not hasattr(self, '_ema') or self._ema is None:
-    #             self._ema = EMA(
-    #                 self.model,
-    #                 beta=self.cfg.model.ema_decay,
-    #                 update_every=self.cfg.model.ema_update_interval,
-    #             )
-            
-    #         # Load EMA weights into the EMA helper
-    #         ema_state_dict = {}
-    #         for key, value in state_dict.items():
-    #             if key.startswith('_ema.ema_model.'):
-    #                 # Map '_ema.ema_model.*' -> 'ema_model.*' (remove the _ema prefix)
-    #                 ema_key = key.replace('_ema.ema_model.', 'ema_model.')
-    #                 ema_state_dict[ema_key] = value
-            
-    #         if ema_state_dict:
-    #             print(f"Loading {len(ema_state_dict)} EMA weights from checkpoint")
-    #             self._ema.ema_model.load_state_dict(ema_state_dict, strict=False)
-    #         else:
-    #             raise ValueError("No EMA model weights found in checkpoint")
-    #     else:
-    #         raise ValueError("No EMA keys found in checkpoint")
+
     def load_state_dict(self, state_dict, strict=True):
         # Strip legacy _ema.* keys — EMA is restored separately via on_load_checkpoint.
         # Old checkpoints have these because _ema was previously a registered submodule.
@@ -853,7 +707,6 @@ class Diffusion_TS(GenerativeModel):
         """
         trend, season = self.model(x_t, t, padding_masks=None, cond=embedding, dyn_ctx=dyn_ctx)
         x_start = self._decode_to_x0((trend + season).contiguous())
-        _nan_check(x_start, "_predict_x0_from_xt_with_grad x_start")
         return x_start
 
     @torch.no_grad()
@@ -871,8 +724,6 @@ class Diffusion_TS(GenerativeModel):
         trend, season = self.model(x, t, padding_masks=None, cond=embedding, dyn_ctx=dyn_ctx)
         x_start = self._decode_to_x0((trend + season).contiguous())
         pred_noise = self.predict_noise_from_start(x, t, x_start)
-        _nan_check(x_start, "model_predictions x_start")
-        _nan_check(pred_noise, "model_predictions pred_noise")
         return pred_noise, x_start
 
     @staticmethod
@@ -900,7 +751,6 @@ class Diffusion_TS(GenerativeModel):
         """
         pred_noise, x_start = self.model_predictions(x, t, embedding, dyn_ctx=dyn_ctx)
         pm, pv, plv = self.q_posterior(x_start, x, t)
-        _nan_check(x_start, "p_mean_variance x_start")
         return pm, pv, plv, x_start
 
     @torch.no_grad()
@@ -919,7 +769,6 @@ class Diffusion_TS(GenerativeModel):
             else 0
         )
         out = pm + (0.5 * plv).exp() * noise
-        _nan_check(out, "p_sample output")
         return out
 
     def _reconstruction_guided_step_alg1(
@@ -941,10 +790,8 @@ class Diffusion_TS(GenerativeModel):
         x_t = x_t.detach().requires_grad_(True)
 
         x_start = self._predict_x0_from_xt_with_grad(x_t, bt, embedding, dyn_ctx=dyn_ctx)
-        _nan_check(x_start, "_reconstruction_guided_step_alg1 x_start")
         x_hat_a = x_start[:, :cond_len]
         L_1 = (x_a - x_hat_a).pow(2).mean()
-        _nan_check(L_1, "_reconstruction_guided_step_alg1 L_1")
 
         pm, pv, plv = self.q_posterior(x_start, x_t, bt)
         noise = (
@@ -954,15 +801,11 @@ class Diffusion_TS(GenerativeModel):
         )
         x_prev_initial = (pm + (0.5 * plv).exp() * noise).detach()
         L_2 = ((x_prev_initial - pm).pow(2) / pv.clamp(min=1e-8)).mean()
-        _nan_check(L_2, "_reconstruction_guided_step_alg1 L_2")
 
         loss = L_1 + gamma * L_2
-        _nan_check(loss, "_reconstruction_guided_step_alg1 loss")
         loss.backward()
         with torch.no_grad():
             x_tilde_0 = x_start.detach() + eta * x_t.grad
-            _nan_check(x_t.grad, "_reconstruction_guided_step_alg1 x_t.grad")
-            _nan_check(x_tilde_0, "_reconstruction_guided_step_alg1 x_tilde_0")
             pm_final, pv_final, plv_final = self.q_posterior(x_tilde_0, x_t.detach(), bt)
             noise_final = (
                 _randn_like_correlated(x_t, self.correlated_noise)
@@ -971,7 +814,6 @@ class Diffusion_TS(GenerativeModel):
             )
             x_prev = pm_final + (0.5 * plv_final).exp() * noise_final
             x_prev = self._replace_conditional(x_a, x_prev, cond_len)
-        _nan_check(x_prev, "_reconstruction_guided_step_alg1 x_prev")
         return x_prev
 
     def _reconstruction_guided_step_alg2(
@@ -997,7 +839,6 @@ class Diffusion_TS(GenerativeModel):
         for _ in range(K):
             x_t = x_t.requires_grad_(True)
             x_start = self._predict_x0_from_xt_with_grad(x_t, bt, embedding_detach, dyn_ctx=dyn_ctx_detach)
-            _nan_check(x_start, "_reconstruction_guided_step_alg2 x_start (inner)")
             x_hat_a = x_start[:, :cond_len]
             L_1 = (x_a - x_hat_a).pow(2).mean()
             pm, pv, plv = self.q_posterior(x_start, x_t, bt)
@@ -1009,16 +850,13 @@ class Diffusion_TS(GenerativeModel):
             x_prev_initial = (pm + (0.5 * plv).exp() * noise).detach()
             L_2 = ((x_prev_initial - pm).pow(2) / pv.clamp(min=1e-8)).mean()
             loss = L_1 + gamma * L_2
-            _nan_check(loss, "_reconstruction_guided_step_alg2 loss (inner)")
             loss.backward()
             with torch.no_grad():
-                _nan_check(x_t.grad, "_reconstruction_guided_step_alg2 x_t.grad")
                 x_t = x_t + eta * x_t.grad
                 x_t = x_t.detach()
 
         with torch.no_grad():
             x_start_final = self._predict_x0_from_xt_with_grad(x_t, bt, embedding_detach, dyn_ctx=dyn_ctx_detach)
-            _nan_check(x_start_final, "_reconstruction_guided_step_alg2 x_start_final")
             pm_final, pv_final, plv_final = self.q_posterior(x_start_final, x_t, bt)
             noise_final = (
                 blueish_noise_like(x_t, power=self.blue_noise_power, correlated=self.correlated_noise)
@@ -1027,7 +865,6 @@ class Diffusion_TS(GenerativeModel):
             )
             x_prev = pm_final + (0.5 * plv_final).exp() * noise_final
             x_prev = self._replace_conditional(x_a, x_prev, cond_len)
-        _nan_check(x_prev, "_reconstruction_guided_step_alg2 x_prev")
         return x_prev
 
     def sample_reconstruction_guided(
@@ -1070,7 +907,7 @@ class Diffusion_TS(GenerativeModel):
         x = _randn_shape_correlated(
             shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
+        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars, batch_size=shape[0])
         x_a = x_a.to(self.device)
 
         for t in reversed(range(self.num_timesteps)):
@@ -1105,10 +942,9 @@ class Diffusion_TS(GenerativeModel):
         x = _randn_shape_correlated(
             shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
+        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars, batch_size=shape[0])
         for t in reversed(range(self.num_timesteps)):
             x = self.p_sample(x, t, embedding, dyn_ctx=dyn_ctx_seq)
-        _nan_check(x, "sample() output")
         return x
 
     @torch.no_grad()
@@ -1127,7 +963,7 @@ class Diffusion_TS(GenerativeModel):
         x = _randn_shape_correlated(
             shape, self.device, torch.float32, self.correlated_noise
         )
-        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars)
+        embedding, dyn_ctx_seq, _ = self._get_context_embedding(static_context_vars, dynamic_context_vars, batch_size=shape[0])
 
         use_cfg = cfg_scale > 1.0
         if use_cfg:
@@ -1150,7 +986,6 @@ class Diffusion_TS(GenerativeModel):
                 pred_noise, x_start = self.model_predictions(x, bt, embedding, dyn_ctx=dyn_ctx_seq)
             if time_next < 0:
                 x = x_start
-                _nan_check(x, "fast_sample x (final step)")
                 continue
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
@@ -1161,8 +996,6 @@ class Diffusion_TS(GenerativeModel):
             c = (1 - alpha_next - sigma**2).sqrt()
             noise = _randn_like_correlated(x, self.correlated_noise)
             x = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
-            _nan_check(x, "fast_sample x (mid)")
-        _nan_check(x, "fast_sample x (final)")
         return x
 
     @contextmanager
@@ -1177,26 +1010,32 @@ class Diffusion_TS(GenerativeModel):
         else:
             yield
 
-    def generate(self, static_context_vars: dict, dynamic_context_vars: dict = None) -> torch.Tensor:
+    def generate(self, static_context_vars: dict, dynamic_context_vars: dict = None, n: int = None) -> torch.Tensor:
         """
         Public entry to generate conditioned samples in batches.
 
         Args:
-            static_context_vars: dict of context tensors for each sample.
+            static_context_vars: dict of context tensors for each sample. Pass {} for unconditional generation.
             dynamic_context_vars: dict of dynamic context tensors for each sample.
+            n: number of samples to generate; required when static_context_vars is empty.
 
         Returns:
             Complete generated tensor of shape (N, seq_len, dims).
         """
         bs = self.cfg.model.sampling_batch_size
-        total = len(next(iter(static_context_vars.values())))
+        if static_context_vars:
+            total = len(next(iter(static_context_vars.values())))
+        elif n is not None:
+            total = n
+        else:
+            raise ValueError("Pass n= when generating unconditionally (empty static_context_vars)")
         generated_samples = []
 
         with self.ema_scope():
             for start_idx in tqdm(
                 range(0, total, bs),
                 unit="seq",
-                desc="[CENTS] Generating samples",  
+                desc="[CENTS] Generating samples",
                 leave=True,
             ):
                 end_idx = min(start_idx + bs, total)
@@ -1206,7 +1045,7 @@ class Diffusion_TS(GenerativeModel):
                 }
                 batch_dynamic_context_vars = {
                     var_name: var_tensor[start_idx:end_idx]
-                    for var_name, var_tensor in dynamic_context_vars.items()
+                    for var_name, var_tensor in (dynamic_context_vars or {}).items()
                 }
 
                 current_bs = end_idx - start_idx

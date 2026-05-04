@@ -17,6 +17,7 @@ import wandb
 from cents.eval.discriminative_score import discriminative_score_metrics
 from cents.eval.eval_metrics import (
     Context_FID,
+    calculate_banded_mse,
     calculate_mmd,
     compute_cfs,
     compute_context_recovery_score,
@@ -223,6 +224,10 @@ class Evaluator:
         metrics["MMD"] = {"mean": mmd_mean, "std": mmd_std}
         logger.info(f"[Cents] MMD completed")
 
+        banded_mse = calculate_banded_mse(real_data, syn_data)
+        metrics["Banded_MSE"] = banded_mse
+        logger.info(f"[Cents] Banded MSE completed")
+
         fid_score = Context_FID(real_data, syn_data)
         metrics["Context_FID"] = fid_score
         logger.info(f"[Cents] Context-FID completed")
@@ -231,7 +236,8 @@ class Evaluator:
         metrics["Disc_Score"] = discr_score
         logger.info(f"[Cents] Discr Score completed")
 
-        pred_score = predictive_score_metrics(real_data, syn_data)
+        trtr = self.cfg.evaluator.get("pred_score_trtr", False)
+        pred_score = predictive_score_metrics(real_data, syn_data, trtr=trtr)
         metrics["Pred_Score"] = pred_score
         logger.info(f"[Cents] Pred Score completed")
 

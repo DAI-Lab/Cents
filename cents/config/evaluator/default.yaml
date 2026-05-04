@@ -4,6 +4,7 @@ dataset:
   name: commercial  # Set this to your dataset name (e.g., "commercial")
 eval_pv_shift: False
 eval_metrics: True
+pred_score_trtr: True  # If True, also trains on real data (TRTR) and reports MAE delta alongside TSTR MAE
 eval_context_sparse: True
 save_results: False
 eval_disentanglement: True

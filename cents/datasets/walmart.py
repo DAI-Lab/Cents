@@ -9,6 +9,7 @@ from omegaconf import DictConfig
 from cents.utils.config_loader import load_yaml, apply_overrides
 
 from cents.datasets.timeseries_dataset import TimeSeriesDataset
+from cents.datasets.utils import is_all_nan, is_any_nan, fill_with_row_mean
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -103,10 +104,6 @@ class WalmartDataset(TimeSeriesDataset):
         vel_threshold = day_means.quantile(0.80)
         keep_ids = set(sales.loc[day_means >= vel_threshold, "id"].values)
 
-        # --- Early ID subsampling when max_samples is set ---
-        # Each high-velocity ID produces ~60 monthly windows across the ~5-year dataset.
-        # Keeping 2× the IDs needed gives a safe buffer for windows dropped during
-        # preprocessing (missing data, near-constant sequences, etc.).
         max_samples = self.cfg.get("max_samples", None)
         if max_samples is not None and len(keep_ids) > 0:
             est_windows_per_id = 60
@@ -117,7 +114,6 @@ class WalmartDataset(TimeSeriesDataset):
                 n_ids, n_ids * est_windows_per_id, max_samples,
             )
 
-        # Filter BEFORE the melt — dramatically reduces the wide→long expansion cost
         sales = sales[sales["id"].isin(keep_ids)]
 
         sales_long = sales[meta_cols + day_cols].melt(
@@ -146,7 +142,6 @@ class WalmartDataset(TimeSeriesDataset):
             .transform(lambda x: x.ffill().bfill())
         )
 
-        # --- State-specific SNAP eligibility (vectorised) ---
         sales_long["snap"] = np.where(
             sales_long["state_id"] == "CA", sales_long["snap_CA"],
             np.where(
@@ -155,20 +150,16 @@ class WalmartDataset(TimeSeriesDataset):
             ),
         ).astype(np.int8)
 
-        # --- Binary calendar-event indicator ---
         sales_long["event_binary"] = sales_long["event_name_1"].notna().astype(np.int8)
 
-        # --- Month name (consistent with other datasets) ---
         sales_long["month"] = sales_long["month"].map(lambda x: _MONTHS[int(x) - 1])
 
-        # --- Weekday as integer 0 (Mon) – 6 (Sun) for use as dynamic context ---
         _WEEKDAY_MAP = {
             "Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3,
             "Friday": 4, "Saturday": 5, "Sunday": 6,
         }
         sales_long["weekday"] = sales_long["weekday"].map(_WEEKDAY_MAP).astype(np.int8)
 
-        # Drop columns that are no longer needed after engineering
         sales_long.drop(
             columns=["snap_CA", "snap_TX", "snap_WI", "event_name_1",
                      "wm_yr_wk", "d", "item_id"],
@@ -290,17 +281,3 @@ class WalmartDataset(TimeSeriesDataset):
         mask = data.apply(lambda row: _low_std(row, self.target_time_series_columns), axis=1)
         data = data[~mask]
         return data
-
-
-def is_all_nan(arr):
-    return pd.isna(arr).all()
-
-
-def is_any_nan(arr):
-    return pd.isna(arr).any()
-
-
-def fill_with_row_mean(lst):
-    s = pd.Series(lst, dtype=float)
-    m = s.mean(skipna=True)
-    return s.fillna(m).tolist()

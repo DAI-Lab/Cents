@@ -8,6 +8,7 @@ from omegaconf import DictConfig
 from cents.utils.config_loader import load_yaml, apply_overrides
 
 from cents.datasets.timeseries_dataset import TimeSeriesDataset
+from cents.datasets.utils import is_all_nan, is_any_nan, fill_with_row_mean
 
 warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -132,21 +133,15 @@ class MetraqDataset(TimeSeriesDataset):
         if "PMcoarse" in data.columns:
             tgt_ts = ["PMcoarse" if c == "PM10" else c for c in tgt_ts]
 
-        # Decompose circular wind direction into Cartesian components so z-score
-        # normalization is meaningful. WD=355° and WD=5° are 10° apart but would
-        # get opposite signs after z-scoring — wind_u/wind_v avoids this.
         if "WD" in data.columns and "WS" in data.columns:
             wd_deg = pd.to_numeric(data["WD"], errors="coerce")
             ws = pd.to_numeric(data["WS"], errors="coerce").clip(lower=0.0)
-            # Binary mask: 1 where WD is measured, 0 where it is missing
             data["wd_valid"] = wd_deg.notna().astype(np.int8)
             wd_deg = wd_deg.fillna(0.0)
             ws = ws.fillna(0.0)
             wd_rad = np.deg2rad(wd_deg)
             data["wind_u"] = ws * np.sin(wd_rad)
             data["wind_v"] = ws * np.cos(wd_rad)
-            # Replace WS/WD in ctx_ts with wind_u/wind_v (handles legacy configs that
-            # listed WS/WD; current config lists wind_u/wind_v/wd_valid directly).
             ctx_ts = [
                 "wind_u" if c == "WS" else "wind_v" if c == "WD" else c
                 for c in ctx_ts
@@ -160,12 +155,7 @@ class MetraqDataset(TimeSeriesDataset):
     
         data = data.sort_values(["sensor_name", "timestamp"])
 
-        # print(data)
-
         group_keys = ["sensor_name", "year", "month", "day", "weekday"]
-
-        # Continuous (scalar) context vars are constant per station — carry them through
-        # with "first" so they survive the groupby without being collapsed into lists.
         static_continuous_cols = [
             k for k, v in self.cfg.context_vars.items()
             if v[0] == "continuous" and k in data.columns
@@ -178,7 +168,6 @@ class MetraqDataset(TimeSeriesDataset):
                 .agg(agg_dict)
         )
 
-        # print(grouped)
 
         for c in ts_cols:
             grouped[c] = grouped[c].map(np.asarray)
@@ -188,22 +177,12 @@ class MetraqDataset(TimeSeriesDataset):
 
         grouped = self._handle_missing_data(grouped)
 
-        # print("POST CLEAN")
-        # print(grouped)
-
         ctx_numeric = [c for c in ctx_ts if c not in self.categorical_time_series]
-
-        # TI (traffic intensity) is strictly non-negative — log1p compresses the
-        # heavy right tail (rush-hour spikes) before z-scoring.
         log1p_channels = {"TI"}
         binary_channels = {"wd_valid"}  # already in [0, 1] — skip z-scoring
         clip_bound = 5.0
         eps = 1e-8
 
-        # Per-station z-score normalization: compute (mu, sd) separately for each
-        # sensor_name so the model sees locally-relative deviations. A global
-        # z-score would conflate cross-station level differences with within-station
-        # variation, obscuring the context–target relationship the model needs to learn.
         ctx_stats = {}  # {channel: {sensor_name: (mu, sd)}}
         for c in ctx_numeric:
             if c in binary_channels:
@@ -218,7 +197,6 @@ class MetraqDataset(TimeSeriesDataset):
 
             normalized = col_arrays.copy()
             for stn, idx in grouped.groupby("sensor_name").groups.items():
-                # idx contains label-based indices (not positional) — use .loc
                 X = np.stack(col_arrays.loc[idx].values).astype(np.float32)
                 mu = float(X.mean())
                 sd = float(X.std())
@@ -231,10 +209,8 @@ class MetraqDataset(TimeSeriesDataset):
 
             grouped[c] = list(normalized)
 
-        # Store for later inverse-transform / debugging
         self.context_ts_stats_ = ctx_stats
 
-        # arrays -> tuples (hashable)
         for c in ts_cols:
             grouped[c] = grouped[c].map(tuple)
 
@@ -249,15 +225,12 @@ class MetraqDataset(TimeSeriesDataset):
         for col in numeric_series:
             data[col] = data[col].apply(fill_with_row_mean)
 
-        # categorical time series must have no NaNs
         cat_cols = list(self.categorical_time_series.keys())
         if cat_cols:
             mask = data[cat_cols].applymap(is_any_nan).any(axis=1)
             data = data[~mask]
 
-        # ensure no NaNs in target series columns
         for tcol in self.target_time_series_columns:
-            # If you replaced PM10->PMcoarse in cfg, this remains correct
             if tcol in data.columns:
                 data = data.loc[data[tcol].apply(lambda x: not np.isnan(np.asarray(x, dtype=float)).any())]
 
@@ -275,15 +248,3 @@ class MetraqDataset(TimeSeriesDataset):
 
         data = data[~mask]
         return data
-
-
-def is_all_nan(arr):
-    return pd.isna(arr).all()
-
-def is_any_nan(arr):
-    return pd.isna(arr).any()
-
-def fill_with_row_mean(lst):
-    s = pd.Series(lst, dtype=float)
-    m = s.mean(skipna=True)
-    return s.fillna(m).tolist()

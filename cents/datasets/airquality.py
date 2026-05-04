@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
 from cents.utils.config_loader import load_yaml, apply_overrides
+from cents.datasets.utils import is_all_nan, is_any_nan, fill_with_row_mean
 
 from cents.datasets.timeseries_dataset import TimeSeriesDataset
 
@@ -115,22 +116,16 @@ class AirQualityDataset(TimeSeriesDataset):
             wd_clean = data["wd"].astype(str).str.strip().str.upper()
             wd_deg = wd_clean.map(wd_deg_map)
 
-            # indicator can help if any weird labels slip in
             data["wd_valid"] = wd_deg.notna().astype(np.int8)
 
             theta = np.deg2rad(wd_deg.fillna(0.0).to_numpy(dtype=float))
             wspm = pd.to_numeric(data["WSPM"], errors="coerce").fillna(0.0)
 
-            # u = speed * cos(theta), v = speed * sin(theta)
-            # (note: choice of axes is arbitrary here; consistency matters more than convention)
             data["wind_u"] = wspm * np.cos(theta)
             data["wind_v"] = wspm * np.sin(theta)
 
-            # Drop raw wind columns after engineering
             data.drop(columns=["wd", "WSPM"], inplace=True)
         else:
-            # If one is missing, don't silently create nonsense
-            # You can choose to raise instead if this should never happen.
             if "wd" in data.columns:
                 data.drop(columns=["wd"], inplace=True)
             if "WSPM" in data.columns:
@@ -147,38 +142,30 @@ class AirQualityDataset(TimeSeriesDataset):
         # -------------------------
         # Choose time-series columns
         # -------------------------
-        # Context TS columns come from cfg; targets come from cfg.time_series_columns
         ctx_ts = list(self.context_series_names)
         tgt_ts = list(self.target_time_series_columns)
 
-        # Replace context wind variables: remove wd/WSPM if present, add wind_u/wind_v (+wd_valid if you want)
         ctx_ts = [c for c in ctx_ts if c not in ("wd", "WSPM")]
         for c in ("wind_u", "wind_v"):
             if c in data.columns and c not in ctx_ts:
                 ctx_ts.append(c)
-        # optional
         if "wd_valid" in data.columns and "wd_valid" not in ctx_ts:
             ctx_ts.append("wd_valid")
 
-        # Replace PM10 target with PMcoarse if PM10 is in targets
         if "PMcoarse" in data.columns:
             tgt_ts = ["PMcoarse" if c == "PM10" else c for c in tgt_ts]
-        # (optional) if you *also* want to drop PM10 if it still exists
         tgt_ts = [c for c in tgt_ts if c != "PM10"]
 
 
 
         ts_cols = ctx_ts + tgt_ts
 
-        # Ensure all ts_cols exist
         missing = [c for c in ts_cols if c not in data.columns]
         if missing:
             raise ValueError(f"Missing required time-series columns after preprocessing: {missing}")
 
-        # Sort
         data = data.sort_values(["station", "year", "month", "day", "hour"])
 
-        # Month name mapping (keeps your categorical month encoding behavior)
         months = [
             "January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December",
@@ -192,25 +179,20 @@ class AirQualityDataset(TimeSeriesDataset):
                 .agg({c: list for c in ts_cols})
         )
 
-        # lists -> numpy arrays
         for c in ts_cols:
             grouped[c] = grouped[c].map(np.asarray)
         
 
-        # Keep only full-length sequences
-        # Use the first target if possible, else fall back to first ts col
         len_col = tgt_ts[0] if len(tgt_ts) > 0 else ts_cols[0]
         grouped = grouped[grouped[len_col].apply(len) == self.cfg.seq_len].reset_index(drop=True)
 
         grouped = self._handle_missing_data(grouped)
 
         ctx_numeric = [c for c in ctx_ts if c not in self.categorical_time_series]
-        # Optional: handle heavy-tailed / zero-inflated channels
         log1p_channels = {"RAIN"}  # add more if needed
 
         clip_bound = 5.0
         eps = 1e-8
-        # Compute global mean/std per channel over all rows and timesteps
         ctx_stats = {}
         for c in ctx_numeric:
             # stacked shape: (N, L)
@@ -230,10 +212,8 @@ class AirQualityDataset(TimeSeriesDataset):
 
             grouped[c] = list(Xn)
 
-        # (Optional) store for later inverse-transform / debugging
         self.context_ts_stats_ = ctx_stats
 
-        # arrays -> tuples (hashable)
         for c in ts_cols:
             grouped[c] = grouped[c].map(tuple)
 
@@ -249,15 +229,12 @@ class AirQualityDataset(TimeSeriesDataset):
         for col in numeric_series:
             data[col] = data[col].apply(fill_with_row_mean)
 
-        # categorical time series must have no NaNs
         cat_cols = list(self.categorical_time_series.keys())
         if cat_cols:
             mask = data[cat_cols].applymap(is_any_nan).any(axis=1)
             data = data[~mask]
 
-        # ensure no NaNs in target series columns
         for tcol in self.target_time_series_columns:
-            # If you replaced PM10->PMcoarse in cfg, this remains correct
             if tcol in data.columns:
                 data = data.loc[data[tcol].apply(lambda x: not np.isnan(np.asarray(x, dtype=float)).any())]
 
@@ -278,13 +255,3 @@ class AirQualityDataset(TimeSeriesDataset):
 
 
 
-def is_all_nan(arr):
-    return pd.isna(arr).all()
-
-def is_any_nan(arr):
-    return pd.isna(arr).any()
-
-def fill_with_row_mean(lst):
-    s = pd.Series(lst, dtype=float)
-    m = s.mean(skipna=True)
-    return s.fillna(m).tolist()

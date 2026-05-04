@@ -1,6 +1,6 @@
 strategy: ddp_find_unused_parameters_true
 accelerator: gpu
-devices: 0,
+devices: 1,
 log_every_n_steps: 1
 hidden_dim: 512
 embedding_dim: 256

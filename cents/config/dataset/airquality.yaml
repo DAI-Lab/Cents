@@ -18,7 +18,7 @@ normalizer_group_vars: ["station"]
 
 # Targets (what becomes the merged "timeseries" dims)
 # NOTE: use PMcoarse instead of PM10
-time_series_columns: ["PM2.5" ] # "SO2", "NO2", "CO"]
+time_series_columns: ["PM2.5"]
 
 # Raw CSV columns to load
 # Keep wd/WSPM because we need them to engineer wind_u/wind_v

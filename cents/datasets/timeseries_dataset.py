@@ -107,9 +107,6 @@ class TimeSeriesDataset(Dataset):
         # Store categorical time series info
         self.categorical_time_series = categorical_time_series or {}
 
-        # if self.scale:
-        #     assert self.normalize, "Normalization must be enabled if scaling is enabled"
-
         # Preprocess and optionally encode context
         self.data = self._preprocess_data(data)
 
@@ -126,9 +123,6 @@ class TimeSeriesDataset(Dataset):
 
         self.context_cfg = get_context_config()
         self.dynamic_module_type = self.context_cfg.dynamic_context.type
-        # Normalizer uses its own context type (defaults to mlp) so that switching the
-        # diffusion model to a heavier static embedder (e.g. transformer) doesn't affect
-        # the much simpler normalizer training.
         self.static_module_type = getattr(self.context_cfg.normalizer, "context_type", "mlp")
         self.stats_head_type = self.context_cfg.normalizer.stats_head_type
 

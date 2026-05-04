@@ -151,7 +151,7 @@ class DataGenerator:
                     context_vars[var] = random.uniform(0.0, 1.0)
                 else:
                     context_vars.setdefault(var, random.randrange(n))
-        else:
+        elif context_vars:
             missing = set(required) - set(context_vars)
             if missing:
                 raise ValueError(f"Missing context vars: {missing}")
@@ -193,11 +193,9 @@ class DataGenerator:
             raise RuntimeError(
                 "No model loaded. Call `load_from_checkpoint(...)` first."
             )
-        if not self._ctx_buff:
-            raise RuntimeError("No context set – call `set_context()` first.")
 
         ctx_batch = {k: v.repeat(n) for k, v in self._ctx_buff.items()}
-        ts = self.model.generate(ctx_batch)
+        ts = self.model.generate(ctx_batch, n=n)
         df = convert_generated_data_to_df(ts, self._ctx_buff, decode=False)
         df = self.normalizer.inverse_transform(df) if self.normalizer else df
 
@@ -238,7 +236,6 @@ class DataGenerator:
         ckpt_path, state = self._resolve_ckpt(model_ckpt)
         ModelCls = get_model_cls(self.model_type)
 
-        print(self.cfg)
 
         if ckpt_path.suffix == ".ckpt":
             print(f"[Cents] Loading model from checkpoint: {ckpt_path}")

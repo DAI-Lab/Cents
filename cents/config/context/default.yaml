@@ -1,7 +1,6 @@
 # Context configuration
 # This file defines the context modules used across the codebase
 
-# Static context: used by generative models (ACGAN, Diffusion_TS) for conditioning
 static_context:
   type: mlp  # Options: "mlp", "sep_mlp", "transformer"
   # TransformerStaticContextModule hyperparameters (ignored by mlp/sep_mlp):
@@ -13,14 +12,9 @@ static_context:
 # Normalizer: stats head configuration for the normalizer
 normalizer:
   stats_head_type: mlp  # Stats head type (e.g., "mlp")
-  # Future parameters can be added here:
   n_layers: 5
   # hidden_dim: 512
 
 # Dynamic context: context module used by the normalizer for time series context variables
 dynamic_context:
   type: null  # Context module type for dynamic context (e.g., "cnn")
-  # Future parameters can be added here:
-  # n_layers: 2
-  # hidden_dim: 256
-

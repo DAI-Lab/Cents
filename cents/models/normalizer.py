@@ -12,7 +12,7 @@ from omegaconf import ListConfig
 
 from cents.datasets.utils import split_timeseries
 from cents.models.base import NormalizerModel
-from cents.models.context import MLPContextModule, SepMLPContextModule, DynamicContextModule_CNN, DynamicContextModule_Transformer # Import to trigger registration
+from cents.models.context import MLPContextModule, SepMLPContextModule, DynamicContextModule_Transformer # Import to trigger registration
 from cents.models.context_registry import get_context_module_cls
 from cents.models.stats_head_registry import register_stats_head, get_stats_head_cls
 from cents.models.registry import register_model
@@ -56,10 +56,6 @@ class MLPStatsHead(nn.Module):
             if self.do_scale:
                 # 1. Initialize z_min to -2.0
                 out_layer.bias[2 * D : 3 * D].fill_(-2.0)
-                
-                # 2. Initialize the RAW DELTA to ~4.0 
-                # Softplus(4.0) is approx 4.018. 
-                # z_max = -2.0 + 4.018 = 2.018 (Perfect starting point)
                 out_layer.bias[3 * D : 4 * D].fill_(4.0)
 
     @staticmethod
@@ -155,10 +151,6 @@ class _NormalizerModule(nn.Module):
         
         # Process static context variables
         if self.static_cond_module is not None:
-            # static_vars = {
-            #     k: v for k, v in context_vars_dict.items()
-            #     if k not in getattr(self, '_dynamic_var_names', [])
-            # }
             if static_context_vars_dict:
                 device = next(self.static_cond_module.parameters()).device
                 static_context_vars_dict = {
@@ -170,11 +162,6 @@ class _NormalizerModule(nn.Module):
         
         # Process dynamic context variables
         if self.dynamic_cond_module is not None:
-            # dynamic_var_names = getattr(self, '_dynamic_var_names', [])
-            # dynamic_vars = {
-            #     k: v for k, v in context_vars_dict.items()
-            #     if k in dynamic_var_names
-            # }
             if dynamic_context_vars_dict:
                 device = next(self.dynamic_cond_module.parameters()).device
                 dynamic_context_vars_dict = {
@@ -379,31 +366,7 @@ class Normalizer(NormalizerModel):
 
         # Log initial predictions
         if stage == "fit" or stage is None:
-            self._log_initial_predictions()
-    
-    def _log_initial_predictions(self):
-        """Log initial model predictions to diagnose initialization issues."""
-        # self.eval()
-        # with torch.no_grad():
-        #     dataloader = self.train_dataloader()
-        #     batch = next(iter(dataloader))
-        #     cat_vars_dict, mu_t, sigma_t, zmin_t, zmax_t = batch
-            
-        #     device = next(self.parameters()).device
-        #     cat_vars_dict = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in cat_vars_dict.items()}
-        #     mu_t = mu_t.to(device)
-        #     sigma_t = sigma_t.to(device)
-            
-        #     # Predict (Returns Real Unscaled values via Forward)
-        #     pred_mu, pred_sigma, pred_z_min, pred_z_max, _ = self(cat_vars_dict)
-            
-        #     print(f"\n[Initial Predictions]")
-        #     print(f"  Target mu: mean={mu_t.mean().item():.4f}, std={mu_t.std().item():.4f}")
-        #     print(f"  Predicted mu: mean={pred_mu.mean().item():.4f}, std={pred_mu.std().item():.4f}")
-        #     print(f"  Initial loss_mu: {F.mse_loss(pred_mu, mu_t).item():.6f}")
-        #     print()
-        
-        self.train()
+            self.train()
  
     def _raw_mu_to_real(self, pred_mu_raw: torch.Tensor) -> torch.Tensor:
         """Convert network mu output to real-world mu (handles both global and direct/asinh paths)."""
@@ -680,8 +643,23 @@ class Normalizer(NormalizerModel):
         continuous_vars = set(self.continuous_vars)
         categorical_ts = getattr(self.dataset, "categorical_time_series", {})
         group_edges = getattr(self, "_group_bin_edges", {})
+        # Pre-compute global fallback stats (used when row has no context columns)
+        _global_mu = np.full(self.time_series_dims, self.global_mu_mean.item(), dtype=np.float32)
+        _global_sigma = np.full(
+            self.time_series_dims,
+            max(float(np.exp(self.global_log_sigma_mean.item())), self.min_sigma),
+            dtype=np.float32,
+        )
+
         with torch.no_grad():
             for i, row in tqdm(df_out.iterrows(), total=len(df_out), desc="Inverse normalizing"):
+                # Unconditional path: no context columns present → use global stats directly
+                if not any(v in row for v in self.normalizer_static_vars + self.normalizer_dynamic_vars):
+                    for d, col in enumerate(self.time_series_cols):
+                        z = np.asarray(row[col], dtype=np.float32)
+                        df_out.at[i, col] = (z * _global_sigma[d] + _global_mu[d]).tolist()
+                    continue
+
                 static_context_vars_dict = {}
                 dynamic_context_vars_dict = {}
                 for v in self.context_vars:
@@ -824,7 +802,6 @@ class Normalizer(NormalizerModel):
                 )
                 self._group_bin_edges[v] = np.asarray(edges, dtype=np.float64)
                 df[v] = binned
-        print(group_vars, "group_vars")
         grouped = df.groupby(list(group_vars), dropna=False)
 
         for group_key, gdf in grouped:

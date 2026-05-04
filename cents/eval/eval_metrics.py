@@ -1,21 +1,36 @@
 import warnings
 from functools import partial
 from itertools import product
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from dtaidistance import dtw
 from scipy.stats import f as f_dist
 from scipy.stats import wasserstein_distance
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import mutual_info_score, r2_score, roc_auc_score
-from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.tsatools import lagmat
+
+_cfs_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+class _CFSDiscriminator(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int):
+        super().__init__()
+        self.gru = nn.GRU(input_dim, hidden_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        _, h_n = self.gru(x)
+        return self.fc(h_n.squeeze(0))
 
 from cents.eval.eval_utils import (
     gaussian_kernel_matrix,
@@ -52,6 +67,56 @@ def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[float, floa
 
     dtw_distances = np.array(dtw_distances)
     return np.mean(dtw_distances), np.std(dtw_distances)
+
+
+def calculate_banded_mse(
+    real_data: np.ndarray,
+    syn_data: np.ndarray,
+    n_bands: int = 5,
+) -> Dict[str, Any]:
+    """
+    Compute MSE between real and synthetic time series broken down by amplitude band.
+
+    Band boundaries are quantile-derived from the real data, so each band contains
+    an equal number of real observations. Per-band MSE is averaged over samples
+    that have at least one timestep in the band.
+
+    Args:
+        real_data: Real time series (N, T, D).
+        syn_data:  Synthetic time series (N, T, D).
+        n_bands:   Number of quantile bands (default 5).
+
+    Returns:
+        Dict with keys "band_1" … "band_N", each containing
+        {"mean": float, "std": float, "range": [lo, hi]}.
+    """
+    assert real_data.shape == syn_data.shape, "real_data and syn_data must have the same shape"
+    N, T, D = real_data.shape
+
+    edges = np.percentile(real_data.reshape(-1), np.linspace(0, 100, n_bands + 1))
+    edges[-1] += 1e-8  # make upper bound inclusive for max value
+
+    sq_err = (real_data - syn_data) ** 2  # (N, T, D)
+    results: Dict[str, Any] = {}
+
+    for i in range(n_bands):
+        lo, hi = edges[i], edges[i + 1]
+        in_band = (real_data >= lo) & (real_data < hi)  # (N, T, D)
+
+        band_mses = []
+        for n in range(N):
+            mask = in_band[n]  # (T, D)
+            if mask.sum() == 0:
+                continue
+            band_mses.append(float(sq_err[n][mask].mean()))
+
+        results[f"band_{i + 1}"] = {
+            "mean": float(np.mean(band_mses)) if band_mses else float("nan"),
+            "std": float(np.std(band_mses)) if band_mses else float("nan"),
+            "range": [round(float(lo), 4), round(float(hi), 4)],
+        }
+
+    return results
 
 
 def calculate_period_bound_mse(
@@ -215,54 +280,87 @@ def compute_cfs(
     x_real: np.ndarray,
     x_synth: np.ndarray,
     c: np.ndarray,
-    n_folds: int = 5,
+    iterations: int = 2000,
+    batch_size: int = 128,
+    test_ratio: float = 0.2,
 ) -> float:
     """
     Compute Context Faithfulness Score (CFS).
 
-    Trains a classifier to distinguish real (x, c) pairs from synthetic (x, c) pairs
-    using cross-validation, then returns 2 * |AUROC - 0.5|.
+    Trains a GRU to distinguish real (x, c) pairs from synthetic (x, c) pairs,
+    then returns 2 * |AUROC - 0.5|.
 
     Args:
-        x_real:  (N, T, D_x) real time series
-        x_synth: (N, T, D_x) synthetic time series
-        c:       (N, T, D_c) shared context (same for real and synthetic)
-        n_folds: number of cross-validation folds
+        x_real:     (N, T, D_x) real time series
+        x_synth:    (N, T, D_x) synthetic time series
+        c:          (N, T, D_c) shared context (same for real and synthetic)
+        iterations: number of training steps
+        batch_size: training batch size
+        test_ratio: fraction of data held out for AUROC evaluation
 
     Returns:
         float: CFS in [0, 1]. 0 = indistinguishable (perfect), 1 = fully separable (failed).
     """
-    N = x_real.shape[0]
+    N, T, _ = x_real.shape
 
-    real_pairs = np.concatenate([x_real, c], axis=-1)   # (N, T, D_x+D_c)
-    synth_pairs = np.concatenate([x_synth, c], axis=-1)  # (N, T, D_x+D_c)
+    # Concatenate signal and context along feature dim: (N, T, D_x+D_c)
+    real_seq = np.concatenate([x_real, c], axis=-1).astype(np.float32)
+    synth_seq = np.concatenate([x_synth, c], axis=-1).astype(np.float32)
 
-    # Mean pool over time → fixed-size vectors
-    X_real_enc = real_pairs.mean(axis=1)   # (N, D_x+D_c)
-    X_synth_enc = synth_pairs.mean(axis=1) # (N, D_x+D_c)
+    # Drop samples with NaN
+    valid = ~(np.isnan(real_seq).any(axis=(1, 2)) | np.isnan(synth_seq).any(axis=(1, 2)))
+    real_seq, synth_seq = real_seq[valid], synth_seq[valid]
+    N = len(real_seq)
 
-    X_all = np.concatenate([X_real_enc, X_synth_enc], axis=0)  # (2N, D)
-    y_all = np.concatenate([np.ones(N), np.zeros(N)])           # (2N,)
-
-    # Drop rows with NaN
-    valid = ~np.isnan(X_all).any(axis=1)
-    X_all = X_all[valid]
-    y_all = y_all[valid]
-
-    if len(X_all) < 2 * n_folds or len(np.unique(y_all)) < 2:
+    if N < 4:
         warnings.warn("compute_cfs: insufficient valid samples; returning nan.")
         return float("nan")
 
-    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
-    auroc_scores = []
-    for train_idx, val_idx in skf.split(X_all, y_all):
-        clf = LogisticRegression(max_iter=1000, random_state=42)
-        clf.fit(X_all[train_idx], y_all[train_idx])
-        proba = clf.predict_proba(X_all[val_idx])[:, 1]
-        auroc_scores.append(roc_auc_score(y_all[val_idx], proba))
+    # Train/test split
+    idx = np.random.RandomState(42).permutation(N)
+    test_n = max(1, int(N * test_ratio))
+    train_idx, test_idx = idx[test_n:], idx[:test_n]
 
-    mean_auroc = float(np.mean(auroc_scores))
-    return float(2.0 * abs(mean_auroc - 0.5))
+    train_real, test_real = real_seq[train_idx], real_seq[test_idx]
+    train_synth, test_synth = synth_seq[train_idx], synth_seq[test_idx]
+
+    input_dim = real_seq.shape[-1]
+    hidden_dim = int(input_dim * 2)
+    model = _CFSDiscriminator(input_dim, hidden_dim).to(_cfs_device)
+    optimizer = optim.Adam(model.parameters())
+    criterion = nn.BCEWithLogitsLoss()
+
+    n_train = len(train_real)
+    for _ in range(iterations):
+        idx_r = np.random.randint(0, n_train, batch_size)
+        idx_s = np.random.randint(0, n_train, batch_size)
+
+        xr = torch.tensor(train_real[idx_r]).to(_cfs_device)
+        xs = torch.tensor(train_synth[idx_s]).to(_cfs_device)
+
+        optimizer.zero_grad()
+        logits_r = model(xr)
+        logits_s = model(xs)
+        loss = criterion(logits_r, torch.ones_like(logits_r)) + \
+               criterion(logits_s, torch.zeros_like(logits_s))
+        loss.backward()
+        optimizer.step()
+
+    with torch.no_grad():
+        xr_test = torch.tensor(test_real).to(_cfs_device)
+        xs_test = torch.tensor(test_synth).to(_cfs_device)
+        prob_r = torch.sigmoid(model(xr_test)).cpu().numpy().squeeze()
+        prob_s = torch.sigmoid(model(xs_test)).cpu().numpy().squeeze()
+
+    probs = np.concatenate([prob_r, prob_s])
+    labels = np.concatenate([np.ones(len(prob_r)), np.zeros(len(prob_s))])
+
+    if len(np.unique(labels)) < 2:
+        warnings.warn("compute_cfs: test set has only one class; returning nan.")
+        return float("nan")
+
+    auroc = float(roc_auc_score(labels, probs))
+    return float(2.0 * abs(auroc - 0.5))
 
 
 def _build_lag_matrix(x: np.ndarray, max_lag: int) -> np.ndarray:

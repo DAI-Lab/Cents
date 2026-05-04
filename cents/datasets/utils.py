@@ -279,3 +279,14 @@ def encode_list_column(series: pd.Series):
     encoded = encoded.map(tuple)
     mapping = dict(enumerate(vocab))  # id -> token
     return encoded, mapping
+
+def is_all_nan(arr):
+    return pd.isna(arr).all()
+
+def is_any_nan(arr):
+    return pd.isna(arr).any()
+
+def fill_with_row_mean(lst):
+    s = pd.Series(lst, dtype=float)
+    m = s.mean(skipna=True)
+    return s.fillna(m).tolist()
