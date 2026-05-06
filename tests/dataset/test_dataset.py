@@ -55,12 +55,14 @@ def test_dataset_length(
 
 
 def test_get_item_shape_1d(raw_dataset_1d):
-    ts, cond = raw_dataset_1d[0]
+    ts, static_cond, dynamic_cond = raw_dataset_1d[0]
     assert ts.shape == (16, 1)
-    assert isinstance(cond, dict)
+    assert isinstance(static_cond, dict)
+    assert isinstance(dynamic_cond, dict)
 
 
 def test_get_item_shape_2d(raw_dataset_2d):
-    ts, cond = raw_dataset_2d[0]
+    ts, static_cond, dynamic_cond = raw_dataset_2d[0]
     assert ts.shape == (16, 2)
-    assert isinstance(cond, dict)
+    assert isinstance(static_cond, dict)
+    assert isinstance(dynamic_cond, dict)

@@ -90,6 +90,7 @@ def calculate_banded_mse(
         Dict with keys "band_1" … "band_N", each containing
         {"mean": float, "std": float, "range": [lo, hi]}.
     """
+    print(real_data.shape, syn_data.shape)
     assert real_data.shape == syn_data.shape, "real_data and syn_data must have the same shape"
     N, T, D = real_data.shape
 

@@ -15,11 +15,12 @@ def patch_all(monkeypatch):
     dummy_plot = lambda *args, **kwargs: (None, None)
     monkeypatch.setattr(eval_mod, "dynamic_time_warping_dist", lambda a, b: (0.0, 0.0))
     monkeypatch.setattr(eval_mod, "calculate_mmd", lambda a, b: (0.0, 0.0))
+    monkeypatch.setattr(eval_mod, "calculate_banded_mse", lambda a, b: {})
     monkeypatch.setattr(eval_mod, "Context_FID", lambda a, b: 0.0)
     monkeypatch.setattr(
         eval_mod, "discriminative_score_metrics", lambda a, b: (0.0, None, None)
     )
-    monkeypatch.setattr(eval_mod, "predictive_score_metrics", lambda a, b: 0.0)
+    monkeypatch.setattr(eval_mod, "predictive_score_metrics", lambda a, b, trtr=False: 0.0)
 
     dummy_plot = lambda *args, **kwargs: (None, None)
     dummy_vis = lambda *args, **kwargs: []
@@ -36,7 +37,7 @@ class DummyDataset:
                 "context": [0, 1, 0],
             }
         )
-        self.context_vars = ["context"]
+        self.static_context_vars = ["context"]
         self.name = "dummy"
 
     def get_combined_rarity(self):
@@ -107,9 +108,10 @@ def test_run_evaluation_and_evaluate_model(evaluator):
         def eval(self):
             return self
 
-        def generate(self, ctx):
-            batch_size = next(iter(ctx.values())).shape[0]
-            return torch.zeros((batch_size, 1, 1))
+        def generate(self, static_ctx, dynamic_ctx):
+            all_tensors = list(static_ctx.values()) + list(dynamic_ctx.values())
+            batch_size = next(iter(all_tensors)).shape[0] if all_tensors else 1
+            return torch.zeros((batch_size, 5, 1))
 
         def parameters(self):
             return []

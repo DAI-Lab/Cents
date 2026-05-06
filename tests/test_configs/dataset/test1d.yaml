@@ -11,4 +11,4 @@ user_group: null
 
 numeric_context_bins: 5
 context_vars:
-  context_var: 2
+  context_var: ["categorical", 2]

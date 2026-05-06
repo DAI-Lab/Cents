@@ -22,7 +22,12 @@ class SimpleTestDataset1D(TimeSeriesDataset):
         seq_len: int = 16,
         normalize: bool = True,
         scale: bool = True,
+        cfg=None,
     ):
+        
+        print(cfg)
+        if cfg is not None:
+            self.cfg = cfg
         super().__init__(
             data=data,
             time_series_column_names=["time_series_col1"],
@@ -51,7 +56,12 @@ class SimpleTestDataset2D(TimeSeriesDataset):
         seq_len: int = 16,
         normalize: bool = True,
         scale: bool = True,
+        cfg=None,
     ):
+        
+        print(cfg)
+        if cfg is not None:
+            self.cfg = cfg
         super().__init__(
             data=data,
             time_series_column_names=["time_series_col1", "time_series_col2"],
@@ -111,26 +121,26 @@ def raw_df_2d():
 @pytest.fixture
 def raw_dataset_1d(raw_df_1d):
     """Dataset with normalize=False (keeps data in raw form)."""
-    ds = SimpleTestDataset1D(raw_df_1d, normalize=False, scale=False)
+    ds = SimpleTestDataset1D(raw_df_1d, normalize=False, scale=False, cfg=load_dataset_config("test1d"))
     return ds
 
 
 @pytest.fixture
 def normalized_dataset_1d(raw_df_1d):
     """Dataset with normalize=True (automatically normalizes on init)."""
-    ds = SimpleTestDataset1D(raw_df_1d, normalize=True, scale=True)
+    ds = SimpleTestDataset1D(raw_df_1d, normalize=True, scale=True, cfg=load_dataset_config("test1d"))
     return ds
 
 
 @pytest.fixture
 def raw_dataset_2d(raw_df_2d):
-    ds = SimpleTestDataset2D(raw_df_2d, normalize=False, scale=False)
+    ds = SimpleTestDataset2D(raw_df_2d, normalize=False, scale=False, cfg=load_dataset_config("test2d"))
     return ds
 
 
 @pytest.fixture
 def normalized_dataset_2d(raw_df_2d):
-    ds = SimpleTestDataset2D(raw_df_2d, normalize=True, scale=True)
+    ds = SimpleTestDataset2D(raw_df_2d, normalize=True, scale=True, cfg=load_dataset_config("test2d"))
     return ds
 
 
