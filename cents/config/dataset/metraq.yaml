@@ -1,0 +1,54 @@
+name: metraq
+geography: null
+normalize: True
+scale: False
+use_learned_normalizer: True
+threshold: 8
+seq_len: 24
+shuffle: True
+skip_heavy_processing: False
+max_samples: null
+path: "./data/metraq"
+numeric_context_bins: 1
+reduce_cardinality: False
+time_series_dims: 1
+normalizer_stats_mode: group
+# Normalizer conditions only on these (e.g. per-station); diffusion still gets full context_vars
+normalizer_group_vars: ["sensor_name"]
+max_z_threshold: 15.0
+
+# Targets (what becomes the merged "timeseries" dims)
+# NOTE: use PMcoarse instead of PM10
+time_series_columns: ["PM2.5"]
+
+# Raw CSV columns to load
+# Keep wd/WSPM because we need them to engineer wind_u/wind_v
+# Keep PM10 because we need it to engineer PMcoarse
+data_columns:
+  - "entry_date"
+  - "magnitude_name"
+  - "sensor_name"
+  - "value"
+  # - "utm_x"
+  # - "utm_y"
+
+context_vars:
+  # static categorical
+  year: ["categorical", 6]
+  month: ["categorical", 12]
+  weekday: ["categorical", 7]
+  sensor_name: ["categorical", 24]
+  # utm_x: ["continuous", null]
+  # utm_y: ["continuous", null]
+
+  # dynamic time-series context
+  # WS and WD are decomposed into wind_u/wind_v in preprocessing to handle
+  # the circularity of wind direction (WD=355° ≈ WD=5°, but z-score would give opposite signs).
+  T: ["time_series", null]
+  # wind_u: ["time_series", null]
+  # wind_v: ["time_series", null]
+  # wd_valid: ["time_series", null]
+  # RH, AP, R dropped — per-sample correlation with PM2.5 < 0.025 across all stations
+  # Traffic: TI = vehicles/hour (Kriging interpolation); SP = avg speed km/h
+  TI: ["time_series", null]
+  SP: ["time_series", null]

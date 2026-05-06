@@ -1,13 +1,36 @@
+import warnings
 from functools import partial
-from typing import Dict, Tuple
+from itertools import product
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from dtaidistance import dtw
-from sklearn.linear_model import Ridge
-from sklearn.metrics import mutual_info_score, r2_score
+from scipy.stats import f as f_dist
+from scipy.stats import wasserstein_distance
+from sklearn.linear_model import LogisticRegression, Ridge
+from sklearn.metrics import mutual_info_score, r2_score, roc_auc_score
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from statsmodels.tsa.tsatools import lagmat
+
+_cfs_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+class _CFSDiscriminator(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int):
+        super().__init__()
+        self.gru = nn.GRU(input_dim, hidden_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        _, h_n = self.gru(x)
+        return self.fc(h_n.squeeze(0))
 
 from cents.eval.eval_utils import (
     gaussian_kernel_matrix,
@@ -44,6 +67,56 @@ def dynamic_time_warping_dist(X: np.ndarray, Y: np.ndarray) -> Tuple[float, floa
 
     dtw_distances = np.array(dtw_distances)
     return np.mean(dtw_distances), np.std(dtw_distances)
+
+
+def calculate_banded_mse(
+    real_data: np.ndarray,
+    syn_data: np.ndarray,
+    n_bands: int = 5,
+) -> Dict[str, Any]:
+    """
+    Compute MSE between real and synthetic time series broken down by amplitude band.
+
+    Band boundaries are quantile-derived from the real data, so each band contains
+    an equal number of real observations. Per-band MSE is averaged over samples
+    that have at least one timestep in the band.
+
+    Args:
+        real_data: Real time series (N, T, D).
+        syn_data:  Synthetic time series (N, T, D).
+        n_bands:   Number of quantile bands (default 5).
+
+    Returns:
+        Dict with keys "band_1" … "band_N", each containing
+        {"mean": float, "std": float, "range": [lo, hi]}.
+    """
+    assert real_data.shape == syn_data.shape, "real_data and syn_data must have the same shape"
+    N, T, D = real_data.shape
+
+    edges = np.percentile(real_data.reshape(-1), np.linspace(0, 100, n_bands + 1))
+    edges[-1] += 1e-8  # make upper bound inclusive for max value
+
+    sq_err = (real_data - syn_data) ** 2  # (N, T, D)
+    results: Dict[str, Any] = {}
+
+    for i in range(n_bands):
+        lo, hi = edges[i], edges[i + 1]
+        in_band = (real_data >= lo) & (real_data < hi)  # (N, T, D)
+
+        band_mses = []
+        for n in range(N):
+            mask = in_band[n]  # (T, D)
+            if mask.sum() == 0:
+                continue
+            band_mses.append(float(sq_err[n][mask].mean()))
+
+        results[f"band_{i + 1}"] = {
+            "mean": float(np.mean(band_mses)) if band_mses else float("nan"),
+            "std": float(np.std(band_mses)) if band_mses else float("nan"),
+            "range": [round(float(lo), 4), round(float(hi), 4)],
+        }
+
+    return results
 
 
 def calculate_period_bound_mse(
@@ -147,12 +220,37 @@ def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
     Calculate the FID score between original and generated data representations using TS2Vec embeddings.
 
     Args:
-        ori_data: Original time series data.
-        generated_data: Generated time series data.
+        ori_data: Original time series data (N, seq_len) or (N, seq_len, dims).
+        generated_data: Generated time series data, same shape convention.
 
     Returns:
         float: FID score between the original and generated data representations.
     """
+    ori_data = np.asarray(ori_data, dtype=np.float32)
+    generated_data = np.asarray(generated_data, dtype=np.float32)
+    # TS2Vec expects (n_instance, n_timestamps, n_features); ensure 3D
+    if ori_data.ndim == 2:
+        ori_data = ori_data[:, :, np.newaxis]
+    if generated_data.ndim == 2:
+        generated_data = generated_data[:, :, np.newaxis]
+    if ori_data.ndim != 3 or generated_data.ndim != 3:
+        warnings.warn(
+            f"Context_FID: expected 2D or 3D arrays, got ori_data.ndim={ori_data.ndim}, generated_data.ndim={generated_data.ndim}; returning nan."
+        )
+        return float("nan")
+    # Require at least one non–all-NaN row so TS2Vec.fit() does not infinite-loop
+    ori_valid = ~np.isnan(ori_data).all(axis=2).all(axis=1)
+    n_valid = int(ori_valid.sum())
+    if n_valid == 0:
+        warnings.warn(
+            "Context_FID: ori_data has no valid (non–all-NaN) rows; returning nan."
+        )
+        return float("nan")
+    # Allow single-sample (TS2Vec will get 1 batch); only reject when 0 valid
+    if np.isnan(ori_data).any() or np.isnan(generated_data).any():
+        warnings.warn(
+            "Context_FID: ori_data or generated_data contain NaN; FID may be unreliable."
+        )
     model = TS2Vec(
         input_dims=ori_data.shape[-1],
         device=0,
@@ -161,14 +259,307 @@ def Context_FID(ori_data: np.ndarray, generated_data: np.ndarray) -> float:
         output_dims=320,
         max_train_length=50000,
     )
+
+    fit_log = model.fit(ori_data, verbose=False)
     model.fit(ori_data, verbose=False)
-    ori_represenation = model.encode(ori_data, encoding_window="full_series")
-    gen_represenation = model.encode(generated_data, encoding_window="full_series")
+
+    ori_rep = model.encode(ori_data, encoding_window="full_series")
+    gen_rep = model.encode(generated_data, encoding_window="full_series")
+
     idx = np.random.permutation(ori_data.shape[0])
-    ori_represenation = ori_represenation[idx]
-    gen_represenation = gen_represenation[idx]
-    results = calculate_fid(ori_represenation, gen_represenation)
-    return results
+    ori_rep = ori_rep[idx]
+    gen_rep = gen_rep[idx]
+
+    if not np.isfinite(ori_rep).all() or not np.isfinite(gen_rep).all():
+        return float("nan")
+
+    return calculate_fid(ori_rep, gen_rep)
+
+
+def compute_cfs(
+    x_real: np.ndarray,
+    x_synth: np.ndarray,
+    c: np.ndarray,
+    iterations: int = 2000,
+    batch_size: int = 128,
+    test_ratio: float = 0.2,
+) -> float:
+    """
+    Compute Context Faithfulness Score (CFS).
+
+    Trains a GRU to distinguish real (x, c) pairs from synthetic (x, c) pairs,
+    then returns 2 * |AUROC - 0.5|.
+
+    Args:
+        x_real:     (N, T, D_x) real time series
+        x_synth:    (N, T, D_x) synthetic time series
+        c:          (N, T, D_c) shared context (same for real and synthetic)
+        iterations: number of training steps
+        batch_size: training batch size
+        test_ratio: fraction of data held out for AUROC evaluation
+
+    Returns:
+        float: CFS in [0, 1]. 0 = indistinguishable (perfect), 1 = fully separable (failed).
+    """
+    N, T, _ = x_real.shape
+
+    # Concatenate signal and context along feature dim: (N, T, D_x+D_c)
+    real_seq = np.concatenate([x_real, c], axis=-1).astype(np.float32)
+    synth_seq = np.concatenate([x_synth, c], axis=-1).astype(np.float32)
+
+    # Drop samples with NaN
+    valid = ~(np.isnan(real_seq).any(axis=(1, 2)) | np.isnan(synth_seq).any(axis=(1, 2)))
+    real_seq, synth_seq = real_seq[valid], synth_seq[valid]
+    N = len(real_seq)
+
+    if N < 4:
+        warnings.warn("compute_cfs: insufficient valid samples; returning nan.")
+        return float("nan")
+
+    # Train/test split
+    idx = np.random.RandomState(42).permutation(N)
+    test_n = max(1, int(N * test_ratio))
+    train_idx, test_idx = idx[test_n:], idx[:test_n]
+
+    train_real, test_real = real_seq[train_idx], real_seq[test_idx]
+    train_synth, test_synth = synth_seq[train_idx], synth_seq[test_idx]
+
+    input_dim = real_seq.shape[-1]
+    hidden_dim = int(input_dim * 2)
+    model = _CFSDiscriminator(input_dim, hidden_dim).to(_cfs_device)
+    optimizer = optim.Adam(model.parameters())
+    criterion = nn.BCEWithLogitsLoss()
+
+    n_train = len(train_real)
+    for _ in range(iterations):
+        idx_r = np.random.randint(0, n_train, batch_size)
+        idx_s = np.random.randint(0, n_train, batch_size)
+
+        xr = torch.tensor(train_real[idx_r]).to(_cfs_device)
+        xs = torch.tensor(train_synth[idx_s]).to(_cfs_device)
+
+        optimizer.zero_grad()
+        logits_r = model(xr)
+        logits_s = model(xs)
+        loss = criterion(logits_r, torch.ones_like(logits_r)) + \
+               criterion(logits_s, torch.zeros_like(logits_s))
+        loss.backward()
+        optimizer.step()
+
+    with torch.no_grad():
+        xr_test = torch.tensor(test_real).to(_cfs_device)
+        xs_test = torch.tensor(test_synth).to(_cfs_device)
+        prob_r = torch.sigmoid(model(xr_test)).cpu().numpy().squeeze()
+        prob_s = torch.sigmoid(model(xs_test)).cpu().numpy().squeeze()
+
+    probs = np.concatenate([prob_r, prob_s])
+    labels = np.concatenate([np.ones(len(prob_r)), np.zeros(len(prob_s))])
+
+    if len(np.unique(labels)) < 2:
+        warnings.warn("compute_cfs: test set has only one class; returning nan.")
+        return float("nan")
+
+    auroc = float(roc_auc_score(labels, probs))
+    return float(2.0 * abs(auroc - 0.5))
+
+
+def _build_lag_matrix(x: np.ndarray, max_lag: int) -> np.ndarray:
+    """Return (T-max_lag, max_lag) lag matrix with rows [x_{t-1}, ..., x_{t-L}]."""
+    return lagmat(x, maxlag=max_lag, trim="forward", original="ex")[max_lag:]
+
+
+def _compute_f_stats_batch(
+    x_arr: np.ndarray,
+    c_arr: np.ndarray,
+    max_lag: int,
+    pairs: List[Tuple[int, int]],
+) -> np.ndarray:
+    """Compute mean F-statistic per sample for the given (dx, dc) pairs."""
+    N = x_arr.shape[0]
+    f_per_sample = []
+    for i in range(N):
+        f_vals = []
+        for dx, dc in pairs:
+            xi = x_arr[i, :, dx]
+            ci = c_arr[i, :, dc]
+
+            if np.isnan(xi).any() or np.isnan(ci).any():
+                continue
+
+            X_x = _build_lag_matrix(xi, max_lag)  # (T-max_lag, max_lag)
+            X_c = _build_lag_matrix(ci, max_lag)   # (T-max_lag, max_lag)
+            y = xi[max_lag:]
+
+            ones = np.ones((len(y), 1))
+            X_r = np.hstack([ones, X_x])              # restricted: own lags only
+            X_u = np.hstack([ones, X_x, X_c])         # unrestricted: own + c lags
+
+            beta_r, _, _, _ = np.linalg.lstsq(X_r, y, rcond=None)
+            beta_u, _, _, _ = np.linalg.lstsq(X_u, y, rcond=None)
+
+            rss_r = float(np.sum((y - X_r @ beta_r) ** 2))
+            rss_u = float(np.sum((y - X_u @ beta_u) ** 2))
+
+            df1 = max_lag
+            df2 = len(y) - 2 * max_lag - 1
+
+            if df2 <= 0 or rss_u < 1e-12:
+                continue
+
+            F = ((rss_r - rss_u) / df1) / (rss_u / df2)
+            f_vals.append(F)
+
+        if f_vals:
+            f_per_sample.append(float(np.mean(f_vals)))
+
+    return np.array(f_per_sample)
+
+
+def compute_gcp(
+    x_real: np.ndarray,
+    x_synth: np.ndarray,
+    c_real: np.ndarray,
+    c_synth: np.ndarray,
+    max_lag: int = 5,
+    alpha: float = 0.05,
+) -> Tuple[float, Dict]:
+    """
+    Compute Granger Causality Preservation (GCP).
+
+    Measures how well synthetic data preserves the Granger-causal structure from
+    context c → signal x, via Wasserstein distance between F-statistic distributions.
+
+    Args:
+        x_real:  (N, T, D_x) real signal
+        x_synth: (N, T, D_x) synthetic signal
+        c_real:  (N, T, D_c) context for real data
+        c_synth: (N, T, D_c) context for synthetic data
+        max_lag: maximum lag order (capped at T // 10 for short series)
+        alpha:   significance threshold for diagnostic sig-rate computation
+
+    Returns:
+        gcp:         float >= 0. 0 = perfect preservation. Higher = more divergence.
+        diagnostics: dict with sig_rate_real, sig_rate_synth, sig_rate_delta
+    """
+    N, T, D_x = x_real.shape
+    D_c = c_real.shape[-1]
+
+    # Cap lag for short series
+    max_lag = min(max_lag, max(1, T // 10))
+
+    pairs = list(product(range(D_x), range(D_c)))
+
+    F_real = _compute_f_stats_batch(x_real, c_real, max_lag, pairs)
+    F_synth = _compute_f_stats_batch(x_synth, c_synth, max_lag, pairs)
+
+    if len(F_real) == 0 or len(F_synth) == 0:
+        warnings.warn("compute_gcp: no valid F-statistics computed; returning nan.")
+        return float("nan"), {}
+
+    gcp = float(wasserstein_distance(F_real, F_synth))
+
+    # Diagnostics: significance rates
+    df2 = T - 2 * max_lag - 1
+    if df2 > 0:
+        pvals_real = f_dist.sf(F_real, max_lag, df2)
+        pvals_synth = f_dist.sf(F_synth, max_lag, df2)
+        sig_real = float(np.mean(pvals_real < alpha))
+        sig_synth = float(np.mean(pvals_synth < alpha))
+    else:
+        sig_real = sig_synth = float("nan")
+
+    diagnostics = {
+        "sig_rate_real": sig_real,
+        "sig_rate_synth": sig_synth,
+        "sig_rate_delta": float(abs(sig_real - sig_synth)) if not np.isnan(sig_real) else float("nan"),
+    }
+
+    return gcp, diagnostics
+
+
+def compute_context_recovery_score(
+    real_data: np.ndarray,
+    syn_data: np.ndarray,
+    context_labels: Dict[str, np.ndarray],
+    continuous_vars: Optional[List[str]] = None,
+    test_ratio: float = 0.2,
+) -> Tuple[float, Dict[str, Dict]]:
+    """
+    Context Recovery Score: measures whether static context is reflected in generated outputs.
+
+    Trains a predictor f: timeseries -> context_label on real data, then evaluates
+    accuracy on synthetic data conditioned on the same labels.  High score means
+    the model correctly encodes the conditioning variable in the output.
+
+    For categorical variables: classification accuracy (chance = 1/n_classes).
+    For continuous variables: R² (0 = no recovery, 1 = perfect).
+
+    Args:
+        real_data:      (N, T, D) real time series
+        syn_data:       (N, T, D) synthetic time series (same conditioning as real)
+        context_labels: {name: (N,) array of integer labels or float values}
+        continuous_vars: names of continuous context variables; all others treated as categorical
+        test_ratio:     fraction of real data held out for real_baseline evaluation
+
+    Returns:
+        overall_score: mean synth_score across all context variables
+        per_var: {name: {"synth_score": float, "real_baseline": float, "type": str}}
+    """
+    if continuous_vars is None:
+        continuous_vars = []
+
+    N, T, D = real_data.shape
+
+    def _features(data: np.ndarray) -> np.ndarray:
+        """Mean + std pool over time → (N, 2*D) fixed-size representation."""
+        return np.concatenate([data.mean(axis=1), data.std(axis=1)], axis=-1)
+
+    X_real = _features(real_data)
+    X_synth = _features(syn_data)
+
+    rng = np.random.RandomState(42)
+    idx = rng.permutation(N)
+    test_size = max(1, int(N * test_ratio))
+    train_idx = idx[test_size:]
+    test_idx = idx[:test_size]
+
+    per_var: Dict[str, Dict] = {}
+    scores: List[float] = []
+
+    for name, labels in context_labels.items():
+        labels_f = labels.astype(float)
+        if np.isnan(labels_f).any():
+            per_var[name] = {"synth_score": float("nan"), "real_baseline": float("nan"), "type": "unknown"}
+            continue
+
+        if name in continuous_vars:
+            y = labels_f
+            clf = Ridge(alpha=1e-3, fit_intercept=True)
+            clf.fit(X_real[train_idx], y[train_idx])
+            real_baseline = float(r2_score(y[test_idx], clf.predict(X_real[test_idx])))
+            synth_score = float(r2_score(y, clf.predict(X_synth)))
+            score_type = "r2"
+        else:
+            y = labels.astype(int)
+            n_classes = len(np.unique(y))
+            if n_classes < 2:
+                per_var[name] = {"synth_score": float("nan"), "real_baseline": float("nan"), "type": "accuracy"}
+                continue
+            clf = make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000, random_state=42))
+            clf.fit(X_real[train_idx], y[train_idx])
+            real_baseline = float(np.mean(clf.predict(X_real[test_idx]) == y[test_idx]))
+            synth_score = float(np.mean(clf.predict(X_synth) == y))
+            score_type = "accuracy"
+
+        per_var[name] = {
+            "synth_score": synth_score,
+            "real_baseline": real_baseline,
+            "type": score_type,
+        }
+        scores.append(synth_score)
+
+    overall = float(np.mean(scores)) if scores else float("nan")
+    return overall, per_var
 
 
 def compute_mig(

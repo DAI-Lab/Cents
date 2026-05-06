@@ -1,0 +1,30 @@
+name: commercial
+geography: null
+user_group: all
+normalize: True
+scale: False
+use_learned_normalizer: True
+threshold: 8
+seq_len: 24
+time_series_dims: 1
+shuffle: True
+skip_heavy_processing: False  # Skip rarity computation (for faster loading/DDP)
+max_samples: null  # Limit dataset size (null = use all data)
+path: "./data/commercial/csv"
+time_series_columns: "energy_meter"
+data_columns: ["dataid","energy_meter","timestamp"]
+metadata_columns: ["building_id", "site_id", "primaryspaceusage", "sqft", "yearbuilt", "sub_primaryspaceusage"]
+numeric_context_bins: 5
+reduce_cardinality: False
+normalizer_stats_mode: group
+normalizer_group_vars: null
+
+context_vars:
+  year: ["categorical", 2]
+  month: ["categorical", 12]
+  weekday: ["categorical", 7]
+  site_id: ["categorical", 19]
+  primaryspaceusage: ["categorical", 16]
+  sqft: ["categorical", null]
+  yearbuilt: ["categorical", null]
+  sub_primaryspaceusage: ["categorical", 104]

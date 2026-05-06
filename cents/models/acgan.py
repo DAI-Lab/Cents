@@ -14,11 +14,13 @@ from typing import Any, Optional, Tuple
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from omegaconf import DictConfig
 
 from cents.models.base import GenerativeModel
-from cents.models.context import ContextModule
+from cents.models.context import MLPContextModule, SepMLPContextModule  # Import to trigger registration
+from cents.models.context_registry import get_context_module_cls
 from cents.models.model_utils import total_correlation
 from cents.models.registry import register_model
 
@@ -43,9 +45,10 @@ class Generator(nn.Module):
         embedding_dim: int,
         final_window_length: int,
         time_series_dims: int,
-        context_module: ContextModule,
+        context_module_type: str,
         context_vars: Optional[dict] = None,
         base_channels: int = 256,
+        continuous_vars: Optional[list] = None,
     ):
         super().__init__()
         self.noise_dim = noise_dim
@@ -56,7 +59,7 @@ class Generator(nn.Module):
         self.base_channels = base_channels
 
         self.context_vars = context_vars
-        self.context_module = context_module
+        self.context_module = get_context_module_cls(context_module_type)(context_vars, embedding_dim, continuous_vars=continuous_vars)
 
         in_dim = noise_dim + (embedding_dim if context_vars else 0)
         self.fc = nn.Linear(in_dim, self.final_window_length * base_channels)
@@ -194,21 +197,37 @@ class ACGAN(GenerativeModel):
         # self.context_module = ContextModule(
         #     cfg.dataset.context_vars, cfg.model.cond_emb_dim
         # )
+        continuous_vars = getattr(cfg.dataset, "continuous_context_vars", None) or []
+        # Get context module type from context config
+        from cents.utils.utils import get_context_config
+        context_cfg = get_context_config()
+        context_module_type = context_cfg.static_context.type
+        
         self.generator = Generator(
             noise_dim=cfg.model.noise_dim,
             embedding_dim=cfg.model.cond_emb_dim,
             final_window_length=cfg.dataset.seq_len,
             time_series_dims=cfg.dataset.time_series_dims,
-            context_module=self.context_module,
+            context_module_type=context_module_type,
             context_vars=cfg.dataset.context_vars,
+            continuous_vars=continuous_vars,
         )
+        # Filter out continuous variables from context_vars for discriminator (only categorical needed)
+        categorical_context_vars = {k: v for k, v in cfg.dataset.context_vars.items() if k not in continuous_vars}
         self.discriminator = Discriminator(
             window_length=cfg.dataset.seq_len,
             time_series_dims=cfg.dataset.time_series_dims,
-            context_var_n_categories=cfg.dataset.context_vars,
+            context_var_n_categories=categorical_context_vars,
         )
         self.adv_loss = nn.BCEWithLogitsLoss()
         self.aux_loss = nn.CrossEntropyLoss()
+        
+        # Get continuous variables from config to distinguish them in loss computation
+        self.continuous_context_vars = getattr(cfg.dataset, "continuous_context_vars", None) or []
+        if isinstance(self.continuous_context_vars, (list, tuple)):
+            self.continuous_context_vars = set(self.continuous_context_vars)
+        else:
+            self.continuous_context_vars = set([self.continuous_context_vars]) if self.continuous_context_vars else set()
 
     def forward(self, noise: torch.Tensor, context_vars: dict):
         """
@@ -260,7 +279,15 @@ class ACGAN(GenerativeModel):
             if self.cfg.model.include_auxiliary_losses
             else 0.0
         )
-        g_ctx = sum(self.aux_loss(logits_ctx[v], ctx[v]) for v in logits_ctx)
+        # Context reconstruction loss: MSE for continuous, CSE for categorical
+        g_ctx = 0.0
+        for v in logits_ctx:
+            if v in self.continuous_context_vars:
+                # Continuous variable: use MSE loss
+                g_ctx += F.mse_loss(logits_ctx[v], ctx[v].float())
+            else:
+                # Categorical variable: use Cross-Entropy loss
+                g_ctx += self.aux_loss(logits_ctx[v], ctx[v].long())
 
         h, _ = self.context_module(ctx)
         tc_term = (

@@ -7,20 +7,24 @@ threshold: 8
 seq_len: 96
 time_series_dims: 1
 shuffle: True
+skip_heavy_processing: False  # Skip rarity computation (for faster loading/DDP)
+max_samples: null  # Limit dataset size (null = use all data)
 path: "./data/pecanstreet/csv"
-time_series_columns: ["grid", "solar"]
+time_series_columns: ["grid"]
 data_columns: ["dataid","local_15min","car1","grid","solar"]
 metadata_columns: ["dataid","building_type","solar","car1","city","state","total_square_footage","house_construction_year"]
 user_group: all # non_pv_users, all, pv_users
 numeric_context_bins: 5
+normalizer_stats_mode: group
 
-context_vars: # for each desired context variable, add the name and number of categories
-  month: 12
-  weekday: 7
-  building_type: 3
-  has_solar: 2 # note that the metadata csv file column name is 'solar', which is renamed to avoid conflicts with the 'solar' column in the data csv.
-  car1: 2
-  city: 7
-  state: 3
-  total_square_footage: 5
-  house_construction_year: 5
+
+context_vars:
+  month: ["categorical", 12]
+  weekday: ["categorical", 7]
+  building_type: ["categorical", 3]
+  has_solar: ["categorical", 2]
+  car1: ["categorical", 2]
+  city: ["categorical", 7]
+  state: ["categorical", 3]
+  total_square_footage: ["categorical", null]
+  house_construction_year: ["categorical", null]

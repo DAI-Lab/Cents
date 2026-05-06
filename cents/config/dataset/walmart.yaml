@@ -1,0 +1,37 @@
+name: walmart
+geography: null
+normalize: True
+scale: False
+use_learned_normalizer: True
+threshold: 8
+seq_len: 28
+shuffle: True
+skip_heavy_processing: False
+max_samples: null
+path: "./data/walmart"
+numeric_context_bins: 1
+reduce_cardinality: False
+time_series_dims: 1
+normalizer_stats_mode: group
+# Normalizer conditions on category × store to capture per-group sales distributions
+normalizer_group_vars: ["cat_id", "store_id"]
+max_z_threshold: 15.0
+
+# Target: daily unit sales
+time_series_columns: ["sales"]
+
+context_vars:
+  # Static categorical — characterise the window by when it starts
+  year: ["categorical", 6]       # 2011–2016
+  month: ["categorical", 12]
+  # Static categorical — item / store identity
+  cat_id: ["categorical", 3]     # FOODS, HOBBIES, HOUSEHOLD
+  dept_id: ["categorical", 7]    # e.g. FOODS_1 … HOUSEHOLD_2
+  store_id: ["categorical", 10]  # CA_1 … WI_3
+  state_id: ["categorical", 3]   # CA, TX, WI
+
+  # Dynamic time-series context (co-occurring with target, length = seq_len)
+  sell_price: ["time_series", null]    # weekly price broadcast to daily, z-scored
+  snap: ["time_series", null]          # binary SNAP eligibility for the item's state
+  event_binary: ["time_series", null]  # 1 if a named calendar event falls on that day
+  weekday: ["time_series", null]        # day of week encoded as 0 (Mon) – 6 (Sun), z-scored

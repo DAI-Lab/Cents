@@ -42,65 +42,86 @@ class Predictor(nn.Module):
         return y_hat
 
 
-def predictive_score_metrics(ori_data, generated_data):
-    no, seq_len, dim = ori_data.shape
-
-    ori_time, ori_max_seq_len = extract_time(ori_data)
-    generated_time, generated_max_seq_len = extract_time(generated_data)
-    max([ori_max_seq_len, generated_max_seq_len])
-
+def _train_predictor(data, time, dim, iterations, batch_size):
+    """Train a GRU predictor on data and return the model."""
     hidden_dim = max(int(dim / 2), 1)
-    iterations = 5000
-    batch_size = 128
-
     model = Predictor(input_dim=dim, hidden_dim=hidden_dim).to(device)
     criterion = nn.L1Loss()
     optimizer = optim.Adam(model.parameters())
 
-    for itt in tqdm(
-        range(iterations),
-        desc="[Cents] Training Predictive Score Model",
-        total=iterations,
-    ):
-        idx = np.random.permutation(len(generated_data))
+    for _ in tqdm(range(iterations), desc="[Cents] Training Predictive Score Model", total=iterations):
+        idx = np.random.permutation(len(data))
         train_idx = idx[:batch_size]
 
-        X_mb = [
-            generated_data[i][:-1, :] for i in train_idx
-        ]  # Use all dimensions for input
-        T_mb = [generated_time[i] - 1 for i in train_idx]
-        Y_mb = [
-            generated_data[i][1:, :].reshape(-1, dim) for i in train_idx
-        ]  # Predict all dimensions
-
-        X_mb = torch.tensor(np.array(X_mb), dtype=torch.float32).to(device)
-        T_mb = torch.tensor(np.array(T_mb), dtype=torch.int64).to(device)
-        Y_mb = torch.tensor(np.array(Y_mb), dtype=torch.float32).to(device)
+        X_mb = torch.tensor(np.array([data[i][:-1, :] for i in train_idx]), dtype=torch.float32).to(device)
+        T_mb = torch.tensor(np.array([max(time[i] - 1, 1) for i in train_idx]), dtype=torch.int64).to(device)
+        Y_mb = torch.tensor(np.array([data[i][1:, :].reshape(-1, dim) for i in train_idx]), dtype=torch.float32).to(device)
 
         optimizer.zero_grad()
-        y_pred = model(X_mb, T_mb)
-        loss = criterion(y_pred, Y_mb)
+        loss = criterion(model(X_mb, T_mb), Y_mb)
         loss.backward()
         optimizer.step()
 
-    X_mb = [ori_data[i][:-1, :] for i in range(no)]
-    T_mb = [ori_time[i] - 1 for i in range(no)]
-    Y_mb = [ori_data[i][1:, :].reshape(-1, dim) for i in range(no)]
+    return model
 
-    X_mb = torch.tensor(np.array(X_mb), dtype=torch.float32).to(device)
-    T_mb = torch.tensor(np.array(T_mb), dtype=torch.int64).to(device)
-    Y_mb = torch.tensor(np.array(Y_mb), dtype=torch.float32).to(device)
+
+def _eval_mae(model, data, time, dim):
+    """Evaluate a predictor's MAE on data."""
+    no = len(data)
+    X_mb = torch.tensor(np.array([data[i][:-1, :] for i in range(no)]), dtype=torch.float32).to(device)
+    T_mb = torch.tensor(np.array([max(time[i] - 1, 1) for i in range(no)]), dtype=torch.int64).to(device)
+    Y_mb = torch.tensor(np.array([data[i][1:, :].reshape(-1, dim) for i in range(no)]), dtype=torch.float32).to(device)
 
     with torch.no_grad():
         y_pred = model(X_mb, T_mb)
 
-    MAE_temp = 0
-    for i in range(no):
-        MAE_temp += mean_absolute_error(Y_mb[i].cpu().numpy(), y_pred[i].cpu().numpy())
+    mae = sum(
+        mean_absolute_error(Y_mb[i].cpu().numpy(), y_pred[i].cpu().numpy())
+        for i in range(no)
+    ) / no
+    return mae
 
-    predictive_score = MAE_temp / no
 
-    return predictive_score
+def predictive_score_metrics(ori_data, generated_data, trtr: bool = False):
+    """
+    Compute predictive score.
+
+    Trains a GRU predictor on synthetic data (TSTR) and evaluates one-step-ahead
+    MAE on real data. When trtr=True, also trains on real data and returns the MAE
+    delta (TSTR_MAE - TRTR_MAE) alongside both individual MAEs.
+
+    Args:
+        ori_data:       Real time series (N, T, D).
+        generated_data: Synthetic time series (N, T, D).
+        trtr:           If True, additionally train on real data for TRTR comparison.
+
+    Returns:
+        float if trtr=False: TSTR MAE.
+        dict  if trtr=True:  {"tstr_mae": float, "trtr_mae": float, "delta": float}.
+    """
+    no, seq_len, dim = ori_data.shape
+    ori_time, _ = extract_time(ori_data)
+    generated_time, _ = extract_time(generated_data)
+
+    iterations = 5000
+    batch_size = 128
+
+    # Train on synthetic, test on real (TSTR)
+    synth_model = _train_predictor(generated_data, generated_time, dim, iterations, batch_size)
+    tstr_mae = _eval_mae(synth_model, ori_data, ori_time, dim)
+
+    if not trtr:
+        return tstr_mae
+
+    # Train on real, test on real (TRTR)
+    real_model = _train_predictor(ori_data, ori_time, dim, iterations, batch_size)
+    trtr_mae = _eval_mae(real_model, ori_data, ori_time, dim)
+
+    return {
+        "tstr_mae": tstr_mae,
+        "trtr_mae": trtr_mae,
+        "delta": tstr_mae - trtr_mae,
+    }
 
 
 def extract_time(data):

@@ -1,17 +1,28 @@
-strategy: auto
-accelerator: auto
-devices: 1
+strategy: ddp_find_unused_parameters_true
+accelerator: gpu
+devices: 1,
 log_every_n_steps: 1
 hidden_dim: 512
 embedding_dim: 256
-n_epochs: 2000
+n_epochs: 500
 batch_size: 4096
 lr: 3e-4
 save_cycle: 5000
 eval_after_training: False
+loss_type: mse  # Options: "mse" or "gaussian_nll"
+
+# If true (default), targets are scaled by global mu/sigma stats and network predicts in scaled space (then unscaled in forward).
+# If false, network predicts mu in asinh space and log(sigma) directly (no global preprocessing); can be more stable for some datasets (e.g. commercial).
+use_global_stats_preprocessing: true
+# When use_global_stats_preprocessing=false: mu is predicted as asinh(mu); clamp to [-max_asinh_mu, max_asinh_mu]. sinh(10) ~ 11013.
+max_asinh_mu: 10
+
+# Floor predicted sigma and scale range so (x - mu) / sigma and (z - zmin) / rng never explode
+min_sigma: 0.1          # sigma_effective = max(pred_sigma, min_sigma)
+min_scale_range: 0.25    # rng_effective = max(zmax - zmin, min_scale_range)
 
 checkpoint:
   save_last: False
   save_top_k: 0
   every_n_train_steps: null
-  every_n_epochs: null
+  every_n_epochs: 500

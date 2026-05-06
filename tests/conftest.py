@@ -4,8 +4,8 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 import pytest
-from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
+from cents.utils.config_loader import load_yaml
 
 from cents.datasets.timeseries_dataset import TimeSeriesDataset
 from cents.trainer import Trainer
@@ -135,32 +135,25 @@ def normalized_dataset_2d(raw_df_2d):
 
 
 def load_top_level_config() -> DictConfig:
-    config_dir = os.path.join(ROOT_DIR, "tests", "test_configs")
-    with initialize_config_dir(config_dir=config_dir, version_base=None):
-        cfg = compose(config_name="test_config", overrides=[])
-    return cfg
+    path = os.path.join(ROOT_DIR, "tests", "test_configs", "test_config.yaml")
+    return load_yaml(path)
 
 
 def load_dataset_config(case: str) -> DictConfig:
-    config_dir = os.path.join(ROOT_DIR, "tests", "test_configs", "dataset")
-    with initialize_config_dir(config_dir=config_dir, version_base=None):
-        ds_cfg = compose(config_name=case, overrides=[])
+    path = os.path.join(ROOT_DIR, "tests", "test_configs", "dataset", f"{case}.yaml")
+    ds_cfg = load_yaml(path)
     OmegaConf.set_struct(ds_cfg, False)
     return ds_cfg
 
 
 def load_model_config(model_type: str) -> DictConfig:
-    config_dir = os.path.join(ROOT_DIR, "tests", "test_configs", "model")
-    with initialize_config_dir(config_dir=config_dir, version_base=None):
-        model_cfg = compose(config_name=model_type, overrides=[])
-    return model_cfg
+    path = os.path.join(ROOT_DIR, "tests", "test_configs", "model", f"{model_type}.yaml")
+    return load_yaml(path)
 
 
 def load_trainer_config(trainer_name: str) -> DictConfig:
-    config_dir = os.path.join(ROOT_DIR, "tests", "test_configs", "trainer")
-    with initialize_config_dir(config_dir=config_dir, version_base=None):
-        trainer_cfg = compose(config_name=trainer_name, overrides=[])
-    return trainer_cfg
+    path = os.path.join(ROOT_DIR, "tests", "test_configs", "trainer", f"{trainer_name}.yaml")
+    return load_yaml(path)
 
 
 @pytest.fixture

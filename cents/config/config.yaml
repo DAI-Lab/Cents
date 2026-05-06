@@ -1,31 +1,5 @@
-defaults:
-  - model: null
-  - dataset: pecanstreet
-  - evaluator: default
-  - trainer: null
-  - _self_
-
 device: auto
-job_name: ${model.name}_${dataset.name}_${dataset.user_group}
-run_dir: outputs/${job_name}/${now:%Y-%m-%d_%H-%M-%S}
 model_ckpt: null
-hydra:
-  job_logging:
-    version: 1
-    formatters:
-      simple:
-        format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    handlers:
-      console:
-        class: logging.StreamHandler
-        formatter: simple
-        level: INFO
-    root:
-      handlers: [console]
-      level: INFO
-  run:
-    dir: ${run_dir}
-
 
 wandb:
   enabled: false

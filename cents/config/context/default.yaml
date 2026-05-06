@@ -1,0 +1,20 @@
+# Context configuration
+# This file defines the context modules used across the codebase
+
+static_context:
+  type: mlp  # Options: "mlp", "sep_mlp", "transformer"
+  # TransformerStaticContextModule hyperparameters (ignored by mlp/sep_mlp):
+  # n_heads: 4
+  # n_layers: 2
+  # dropout: 0.1
+  # dim_feedforward: 256
+
+# Normalizer: stats head configuration for the normalizer
+normalizer:
+  stats_head_type: mlp  # Stats head type (e.g., "mlp")
+  n_layers: 5
+  # hidden_dim: 512
+
+# Dynamic context: context module used by the normalizer for time series context variables
+dynamic_context:
+  type: null  # Context module type for dynamic context (e.g., "cnn")

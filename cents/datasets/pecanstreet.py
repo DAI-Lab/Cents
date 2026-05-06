@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig
+from cents.utils.config_loader import load_yaml, apply_overrides
 
 from cents.datasets.timeseries_dataset import TimeSeriesDataset
 
@@ -33,6 +33,8 @@ class PecanStreetDataset(TimeSeriesDataset):
         self,
         cfg: Optional[DictConfig] = None,
         overrides: Optional[List[str]] = None,
+        force_retrain_normalizer: bool = False,
+        run_dir: Optional[str] = None,
     ):
         """
         Initialize and preprocess the PecanStreet dataset.
@@ -51,10 +53,9 @@ class PecanStreetDataset(TimeSeriesDataset):
             FileNotFoundError: If required CSV files are missing.
         """
         if cfg is None:
-            with initialize_config_dir(
-                config_dir=os.path.join(ROOT_DIR, "config/dataset"), version_base=None
-            ):
-                cfg = compose(config_name="pecanstreet", overrides=overrides)
+            cfg = load_yaml(os.path.join(ROOT_DIR, "config", "dataset", "pecanstreet.yaml"))
+            if overrides:
+                cfg = apply_overrides(cfg, overrides)
 
         self.cfg = cfg
         self.name = cfg.name
@@ -62,8 +63,6 @@ class PecanStreetDataset(TimeSeriesDataset):
         self.normalize = cfg.normalize
         self.threshold = (-1 * int(cfg.threshold), int(cfg.threshold))
         self.time_series_dims = cfg.time_series_dims
-
-        self.cfg.time_series_columns = ["grid", "solar"]
 
         self.include_generation = self.time_series_dims > 1
 
@@ -75,7 +74,7 @@ class PecanStreetDataset(TimeSeriesDataset):
 
         self._load_data()
         self._set_user_flags()
-
+        
         ts_cols: List[str] = self.cfg.time_series_columns[: self.time_series_dims]
 
         super().__init__(
@@ -85,6 +84,10 @@ class PecanStreetDataset(TimeSeriesDataset):
             seq_len=self.cfg.seq_len,
             normalize=self.cfg.normalize,
             scale=self.cfg.scale,
+            skip_heavy_processing=cfg.get('skip_heavy_processing', False),
+            size=cfg.get('max_samples', None),
+            force_retrain_normalizer=force_retrain_normalizer,
+            run_dir=run_dir,
         )
 
     def _load_data(self) -> None:

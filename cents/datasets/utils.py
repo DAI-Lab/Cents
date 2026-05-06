@@ -18,7 +18,7 @@ def split_timeseries(
     if n_dim != len(time_series_columns):
         raise ValueError("shape mismatch")
     for i, col in enumerate(time_series_columns):
-        df[col] = df["timeseries"].apply(lambda x: x[:, i])
+        df[col] = df["timeseries"].apply(lambda x: x[:, i].tolist())
     return df.drop(columns=["timeseries"])
 
 
@@ -108,17 +108,23 @@ def split_dataset(dataset: Dataset, val_split: float = 0.1) -> Tuple[Dataset, Da
 
 
 def encode_context_variables(
-    data: pd.DataFrame, columns_to_encode: List[str], bins: int
+    data: pd.DataFrame, columns_to_encode: List[str], bins: int, 
+    numeric_cols: List[str] = None, continuous_vars: List[str] = None,
+    time_series_cols: List[str] = None,
+    categorical_time_series: Dict[str, int] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Dict[int, Any]]]:
     """
     Encodes specified columns in the DataFrame either by binning numeric columns
     or by converting categorical/string columns to integer codes. For 'weekday'
     and 'month' columns, encoding follows chronological order.
+    Continuous variables are skipped and kept as-is.
 
     Args:
         data (pd.DataFrame): The input DataFrame containing the data.
         columns_to_encode (List[str]): List of column names to encode.
         bins (int): Number of bins for numeric columns.
+        numeric_cols (List[str], optional): Columns to treat as numeric for binning.
+        continuous_vars (List[str], optional): Columns to keep as continuous (skip encoding).
 
     Returns:
         Tuple[pd.DataFrame, Dict[str, Dict[int, Any]]]:
@@ -127,6 +133,7 @@ def encode_context_variables(
     """
     encoded_data = data.copy()
     mapping: Dict[str, Dict[int, Any]] = {}
+    continuous_vars = continuous_vars or []
 
     # Define the chronological order for weekdays and months
     weekdays_order = [
@@ -154,9 +161,25 @@ def encode_context_variables(
     ]
 
     for col in columns_to_encode:
-        if pd.api.types.is_numeric_dtype(encoded_data[col]):
+        # Skip continuous variables - they should remain as float values
+        if col in categorical_time_series:
+            encoded_data[col], mapping[col] = encode_list_column(encoded_data[col])
+        elif col in time_series_cols or col in continuous_vars:
+            continue
+        elif numeric_cols and col in numeric_cols:
+            print("ENCODING NUMERIC COL", col)
             # Numeric column: Perform binning
-            binned = pd.cut(encoded_data[col], bins=bins, include_lowest=True)
+            # Handle NaN values by filling with median before binning
+            if encoded_data[col].isna().all():
+                # Entire column is NaN - fill with 0 and create single bin
+                print(f"  Warning: {col} is entirely NaN, filling with 0")
+                encoded_data[col] = 0
+            elif encoded_data[col].isna().any():
+                print(f"  Warning: {col} has {encoded_data[col].isna().sum()} NaN values, filling with median")
+                median_val = encoded_data[col].median()
+                encoded_data[col] = encoded_data[col].fillna(median_val if pd.notna(median_val) else 0)
+            
+            binned = pd.cut(encoded_data[col], bins=bins, include_lowest=True, duplicates='drop')
             encoded_data[col] = binned.cat.codes  # Assign integer codes starting from 0
             bin_intervals = binned.cat.categories
             # Create the mapping from integer code to bin interval
@@ -217,19 +240,53 @@ def convert_generated_data_to_df(
 
     n_samples = data_np.shape[0]
 
-    if decode:
-        if mapping is None:
-            raise ValueError("Mapping must be provided when decode=True.")
-        cond_vars = {
-            var: mapping[var][code.item()] for var, code in context_vars.items()
-        }
-    else:
-        cond_vars = {var: int(code.item()) for var, code in context_vars.items()}
+    def _get_code_at(code: Any, i: int) -> Any:
+        if isinstance(code, torch.Tensor):
+            if code.dim() == 2 and code.shape[0] == n_samples:
+                # Dynamic (time-series) context: return as numpy array
+                return code[i].cpu().numpy()
+            if code.dim() == 1 and code.shape[0] == n_samples:
+                return code[i].item()
+        return code.item() if isinstance(code, torch.Tensor) else code
 
     records = []
     for i in range(n_samples):
-        record = cond_vars.copy()
+        record = {}
+        for var, code in context_vars.items():
+            v = _get_code_at(code, i)
+            if decode:
+                if mapping is None:
+                    raise ValueError("Mapping must be provided when decode=True.")
+                record[var] = mapping[var][v]
+            elif isinstance(v, np.ndarray):
+                record[var] = v.tolist()
+            else:
+                record[var] = v if isinstance(v, float) else int(v)
         record["timeseries"] = data_np[i]
         records.append(record)
 
     return pd.DataFrame.from_records(records)
+
+def encode_list_column(series: pd.Series):
+    count = 0
+    for x in series:
+        for t in x:
+            if pd.isna(t):
+                count += 1
+    vocab = sorted({t for x in series for t in x})
+    tok2id = {t: i for i, t in enumerate(vocab)}
+    encoded = series.apply(lambda x: [tok2id[t] for t in x])
+    encoded = encoded.map(tuple)
+    mapping = dict(enumerate(vocab))  # id -> token
+    return encoded, mapping
+
+def is_all_nan(arr):
+    return pd.isna(arr).all()
+
+def is_any_nan(arr):
+    return pd.isna(arr).any()
+
+def fill_with_row_mean(lst):
+    s = pd.Series(lst, dtype=float)
+    m = s.mean(skipna=True)
+    return s.fillna(m).tolist()

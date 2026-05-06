@@ -9,12 +9,14 @@ Note: Please ensure compliance with the repository's license and credit the orig
 """
 
 import math
+from typing import Optional
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from einops import rearrange, reduce, repeat
 from torch import nn
+
 
 
 def linear_beta_schedule(timesteps: int) -> torch.Tensor:
@@ -51,6 +53,20 @@ def cosine_beta_schedule(timesteps: int, s: float = 0.004) -> torch.Tensor:
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0, 0.999)
 
+
+def cosine_beta_schedule_logsnr(
+    timesteps: int,
+    logsnr_min: float = -8.0,
+    logsnr_max: float = 15.0,
+    eps: float = 1e-5,
+) -> torch.Tensor:
+    t = torch.linspace(0, 1, timesteps + 1, dtype=torch.float32)
+    logsnr = logsnr_max + 0.5 * (logsnr_min - logsnr_max) * (1 - torch.cos(math.pi * t))
+
+    alpha_bar = torch.sigmoid(logsnr).clamp(eps, 1.0 - eps)
+
+    betas = 1 - (alpha_bar[1:] / alpha_bar[:-1])
+    return torch.clip(betas, 0, 0.999)
 
 def exists(x):
     return x is not None
@@ -134,7 +150,6 @@ class LearnablePositionalEncoding(nn.Module):
             x: [batch size, sequence length, embed dim]
             output: [batch size, sequence length, embed dim]
         """
-        # print(x.shape)
         x = x + self.pe
         return self.dropout(x)
 
@@ -213,14 +228,18 @@ class Transpose(nn.Module):
 class Conv_MLP(nn.Module):
     def __init__(self, in_dim, out_dim, resid_pdrop=0.0):
         super().__init__()
-        self.sequential = nn.Sequential(
-            Transpose(shape=(1, 2)),
-            nn.Conv1d(in_dim, out_dim, 3, stride=1, padding=1),
-            nn.Dropout(p=resid_pdrop),
-        )
+        self.conv = nn.Conv1d(in_dim, out_dim, 3, stride=1, padding=1)
+        if self.conv.weight.requires_grad:
+            self.conv.weight.register_hook(lambda grad: grad.contiguous())
+        self.drop = nn.Dropout(p=resid_pdrop)
 
     def forward(self, x):
-        return self.sequential(x).transpose(1, 2)
+        x = x.transpose(1, 2).contiguous()   # (B, C, T) contiguous
+        x = self.conv(x)
+        x = self.drop(x)
+        out = x.transpose(1, 2).contiguous()  # back to (B, T, C), contiguous
+        return out
+
 
 
 class Transformer_MLP(nn.Module):
@@ -265,15 +284,16 @@ class GELU2(nn.Module):
 class AdaLayerNorm(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
-        self.emb = SinusoidalPosEmb(n_embd)
+        # self.emb = SinusoidalPosEmb(n_embd)
         self.silu = nn.SiLU()
         self.linear = nn.Linear(n_embd, n_embd * 2)
+
+        nn.init.zeros_(self.linear.bias)
+        nn.init.zeros_(self.linear.weight)
         self.layernorm = nn.LayerNorm(n_embd, elementwise_affine=False)
 
-    def forward(self, x, timestep, label_emb=None):
-        emb = self.emb(timestep)
-        if label_emb is not None:
-            emb = emb + label_emb
+    def forward(self, x, emb):
+        # emb: (B, n_embd) - Pre-computed and combined (time + label)
         emb = self.linear(self.silu(emb)).unsqueeze(1)
         scale, shift = torch.chunk(emb, 2, dim=2)
         x = self.layernorm(x) * (1 + scale) + shift
@@ -325,6 +345,8 @@ class TrendBlock(nn.Module):
 
     def forward(self, input):
         b, c, h = input.shape
+        if not input.is_contiguous():
+            input = input.contiguous()
         x = self.trend(input).transpose(1, 2)
         trend_vals = torch.matmul(x.transpose(1, 2), self.poly_space.to(x.device))
         trend_vals = trend_vals.transpose(1, 2)
@@ -553,16 +575,10 @@ class EncoderBlock(nn.Module):
         activate="GELU",
     ):
         super().__init__()
-
         self.ln1 = AdaLayerNorm(n_embd)
-        self.ln2 = nn.LayerNorm(n_embd)
-        self.attn = FullAttention(
-            n_embd=n_embd,
-            n_head=n_head,
-            attn_pdrop=attn_pdrop,
-            resid_pdrop=resid_pdrop,
-        )
-
+        self.ln2 = AdaLayerNorm(n_embd)
+        self.attn = FullAttention(n_embd, n_head, attn_pdrop, resid_pdrop)
+        
         assert activate in ["GELU", "GELU2"]
         act = nn.GELU() if activate == "GELU" else GELU2()
 
@@ -573,10 +589,11 @@ class EncoderBlock(nn.Module):
             nn.Dropout(resid_pdrop),
         )
 
-    def forward(self, x, timestep, mask=None, label_emb=None):
-        a, att = self.attn(self.ln1(x, timestep, label_emb), mask=mask)
+    def forward(self, x, cond_emb, mask=None):
+        # cond_emb is the combined time+label embedding
+        a, att = self.attn(self.ln1(x, cond_emb), mask=mask)
         x = x + a
-        x = x + self.mlp(self.ln2(x))  # only one really use encoder_output
+        x = x + self.mlp(self.ln2(x, cond_emb))
         return x, att
 
 
@@ -607,10 +624,10 @@ class Encoder(nn.Module):
             ]
         )
 
-    def forward(self, input, t, padding_masks=None, label_emb=None):
+    def forward(self, input, cond_emb, padding_masks=None):
         x = input
-        for block_idx in range(len(self.blocks)):
-            x, _ = self.blocks[block_idx](x, t, mask=padding_masks, label_emb=label_emb)
+        for block in self.blocks:
+            x, _ = block(x, cond_emb, mask=padding_masks)
         return x
 
 
@@ -628,11 +645,12 @@ class DecoderBlock(nn.Module):
         mlp_hidden_times=4,
         activate="GELU",
         condition_dim=1024,
+        has_dynamic_ctx=False,
     ):
         super().__init__()
 
         self.ln1 = AdaLayerNorm(n_embd)
-        self.ln2 = nn.LayerNorm(n_embd)
+        self.ln2 = AdaLayerNorm(n_embd)
 
         self.attn1 = FullAttention(
             n_embd=n_embd,
@@ -647,6 +665,20 @@ class DecoderBlock(nn.Module):
             attn_pdrop=attn_pdrop,
             resid_pdrop=resid_pdrop,
         )
+        # Cross-attention for temporally-aligned dynamic context — only created when dynamic
+        # context is actually present (has_dynamic_ctx=True). Saves ~495K params when absent.
+        if has_dynamic_ctx:
+            self.ln_dyn = AdaLayerNorm(n_embd)
+            self.attn_dyn = CrossAttention(
+                n_embd=n_embd,
+                condition_embd=condition_dim,
+                n_head=n_head,
+                attn_pdrop=attn_pdrop,
+                resid_pdrop=resid_pdrop,
+            )
+        else:
+            self.ln_dyn = None
+            self.attn_dyn = None
 
         self.ln1_1 = AdaLayerNorm(n_embd)
 
@@ -654,9 +686,7 @@ class DecoderBlock(nn.Module):
         act = nn.GELU() if activate == "GELU" else GELU2()
 
         self.trend = TrendBlock(n_channel, n_channel, n_embd, n_feat, act=act)
-        # self.decomp = MovingBlock(n_channel)
         self.seasonal = FourierLayer(d_model=n_embd)
-        # self.seasonal = SeasonBlock(n_channel, n_channel)
 
         self.mlp = nn.Sequential(
             nn.Linear(n_embd, mlp_hidden_times * n_embd),
@@ -668,14 +698,27 @@ class DecoderBlock(nn.Module):
         self.proj = nn.Conv1d(n_channel, n_channel * 2, 1)
         self.linear = nn.Linear(n_embd, n_feat)
 
-    def forward(self, x, encoder_output, timestep, mask=None, label_emb=None):
-        a, att = self.attn1(self.ln1(x, timestep, label_emb), mask=mask)
+    def forward(self, x, encoder_output, cond_emb, dyn_ctx=None, mask=None):
+        a, att = self.attn1(self.ln1(x, cond_emb), mask=mask)
         x = x + a
-        a, att = self.attn2(self.ln1_1(x, timestep), encoder_output, mask=mask)
+        a, att = self.attn2(self.ln1_1(x, cond_emb), encoder_output, mask=mask)
         x = x + a
-        x1, x2 = self.proj(x).chunk(2, dim=1)
+        if dyn_ctx is not None and self.attn_dyn is not None:
+            a, _ = self.attn_dyn(self.ln_dyn(x, cond_emb), dyn_ctx)
+            x = x + a
+        
+        # FIX: chunk() returns views that are often non-contiguous. 
+        # Since self.proj and self.trend use Conv1d, this causes the DDP stride mismatch.
+        x_proj = self.proj(x)
+        x1, x2 = x_proj.chunk(2, dim=1)
+        
+        # Make contiguous before passing to specialized blocks
+        x1 = x1.contiguous()
+        x2 = x2.contiguous()
+        
         trend, season = self.trend(x1), self.seasonal(x2)
-        x = x + self.mlp(self.ln2(x))
+        
+        x = x + self.mlp(self.ln2(x, cond_emb))
         m = torch.mean(x, dim=1, keepdim=True)
         return x - m, self.linear(m), trend, season
 
@@ -693,6 +736,7 @@ class Decoder(nn.Module):
         mlp_hidden_times=4,
         block_activate="GELU",
         condition_dim=512,
+        has_dynamic_ctx=False,
     ):
         super().__init__()
         self.d_model = n_embd
@@ -709,20 +753,24 @@ class Decoder(nn.Module):
                     mlp_hidden_times=mlp_hidden_times,
                     activate=block_activate,
                     condition_dim=condition_dim,
+                    has_dynamic_ctx=has_dynamic_ctx,
                 )
-                for _ in range(n_layer)
+        for _ in range(n_layer)
             ]
         )
 
-    def forward(self, x, t, enc, padding_masks=None, label_emb=None):
+    def forward(self, x, cond_emb, enc, dyn_ctx=None, padding_masks=None):
         b, c, _ = x.shape
-        # att_weights = []
         mean = []
-        season = torch.zeros((b, c, self.d_model), device=x.device)
-        trend = torch.zeros((b, c, self.n_feat), device=x.device)
-        for block_idx in range(len(self.blocks)):
-            x, residual_mean, residual_trend, residual_season = self.blocks[block_idx](
-                x, enc, t, mask=padding_masks, label_emb=label_emb
+        # Initialize accumulating tensors on the correct device
+        season = torch.zeros((b, c, x.shape[-1]), device=x.device)
+        # Note: FourierLayer returns same dim as input x (n_embd)
+
+        trend = torch.zeros((b, c, self.blocks[0].linear.out_features), device=x.device)
+
+        for block in self.blocks:
+            x, residual_mean, residual_trend, residual_season = block(
+                x, enc, cond_emb, dyn_ctx=dyn_ctx, mask=padding_masks
             )
             season += residual_season
             trend += residual_trend
@@ -747,11 +795,31 @@ class Transformer(nn.Module):
         block_activate="GELU",
         max_len=2048,
         conv_params=None,
+        cond_dim=None,
+        has_dynamic_ctx=False,
         **kwargs
     ):
         super().__init__()
         self.emb = Conv_MLP(n_feat, n_embd, resid_pdrop=resid_pdrop)
         self.inverse = Conv_MLP(n_embd, n_feat, resid_pdrop=resid_pdrop)
+
+        self.cond_dim = cond_dim
+        if cond_dim is not None:
+            # Map static context embedding (B, cond_dim) -> (B, n_embd)
+            self.cond_proj = nn.Linear(cond_dim, n_embd)
+            # Map dynamic context sequence (B, T, cond_dim) -> (B, T, n_embd); only when needed
+            self.dyn_ctx_proj = nn.Linear(cond_dim, n_embd) if has_dynamic_ctx else None
+        else:
+            self.cond_proj = None
+            self.dyn_ctx_proj = None
+
+        self.time_emb = SinusoidalPosEmb(n_embd)
+
+        self.cond_mix_mlp = nn.Sequential(
+            nn.Linear(n_embd * 2, n_embd),
+            nn.SiLU(),
+            nn.Linear(n_embd, n_embd),
+        )
 
         if conv_params is None or conv_params[0] is None:
             if n_feat < 32 and n_channel < 64:
@@ -804,34 +872,57 @@ class Transformer(nn.Module):
             mlp_hidden_times,
             block_activate,
             condition_dim=n_embd,
+            has_dynamic_ctx=has_dynamic_ctx,
         )
         self.pos_dec = LearnablePositionalEncoding(
             n_embd, dropout=resid_pdrop, max_len=max_len
         )
 
-    def forward(self, input, t, padding_masks=None, return_res=False):
+    def forward(self, input, t, padding_masks=None, return_res=False, cond=None, dyn_ctx=None):
+        # cond: (B, cond_dim) static context or None
+        # dyn_ctx: (B, T, cond_dim) dynamic context sequence or None
+        # Ensure float32 so conv/linear (float32 params) never see double input
+        if input.is_floating_point():
+            input = input.float()
+        if cond is not None and cond.is_floating_point():
+            cond = cond.float()
+        if dyn_ctx is not None and dyn_ctx.is_floating_point():
+            dyn_ctx = dyn_ctx.float()
+        t_emb = self.time_emb(t)
+
+        label_emb = None
+        if (cond is not None) and (self.cond_proj is not None):
+            label_emb = self.cond_proj(cond)  # (B, n_embd)
+            total_cond_emb = self.cond_mix_mlp(torch.concat([t_emb, label_emb], dim=1))
+        else:
+            total_cond_emb = t_emb
+
+        # Project dynamic context sequence to n_embd for cross-attention
+        dyn_ctx_emb = None
+        if dyn_ctx is not None and self.dyn_ctx_proj is not None:
+            dyn_ctx_emb = self.dyn_ctx_proj(dyn_ctx)  # (B, T, n_embd)
+
         emb = self.emb(input)
         inp_enc = self.pos_enc(emb)
-        enc_cond = self.encoder(inp_enc, t, padding_masks=padding_masks)
+
+        enc_cond = self.encoder(inp_enc, total_cond_emb, padding_masks=padding_masks)
 
         inp_dec = self.pos_dec(emb)
         output, mean, trend, season = self.decoder(
-            inp_dec, t, enc_cond, padding_masks=padding_masks
+            inp_dec, total_cond_emb, enc_cond, dyn_ctx=dyn_ctx_emb, padding_masks=padding_masks
         )
 
         res = self.inverse(output)
-        res_m = torch.mean(res, dim=1, keepdim=True)
-        season_error = (
-            self.combine_s(season.transpose(1, 2)).transpose(1, 2) + res - res_m
-        )
-        trend = self.combine_m(mean) + res_m + trend
+
+        res_m = torch.mean(res, dim=1, keepdim=True).contiguous()
+        combine_m_out = self.combine_m(mean).contiguous()
+        combine_s_out = self.combine_s(season.transpose(1, 2)).transpose(1, 2).contiguous()
+        season_error = (combine_s_out + res - res_m).contiguous()
+        trend = (combine_m_out + res_m + trend).contiguous()
 
         if return_res:
-            return (
-                trend,
-                self.combine_s(season.transpose(1, 2)).transpose(1, 2),
-                res - res_m,
-            )
+            out_res = res - res_m
+            return trend, combine_s_out, out_res
 
         return trend, season_error
 

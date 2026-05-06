@@ -2,7 +2,7 @@ precision: "16-mixed"
 accelerator: auto
 devices: auto
 strategy: ddp_find_unused_parameters_true
-max_epochs: 5000
+max_epochs: 1000
 batch_size: 1024
 sampling_batch_size: 4096
 gradient_accumulate_every: 1

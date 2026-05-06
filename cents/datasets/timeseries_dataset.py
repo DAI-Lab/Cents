@@ -8,14 +8,16 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from hydra import compose, initialize_config_dir
 from pytorch_lightning.callbacks import ModelCheckpoint
 from sklearn.cluster import KMeans
 from torch.utils.data import DataLoader, Dataset
+from omegaconf import ListConfig, OmegaConf
+import pickle
 
 from cents.datasets.utils import encode_context_variables
 from cents.models.normalizer import Normalizer
-from cents.utils.utils import _ckpt_name, get_normalizer_training_config
+from cents.utils.config_loader import load_yaml, apply_overrides
+from cents.utils.utils import _ckpt_name, get_normalizer_training_config, get_context_config
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -50,62 +52,116 @@ class TimeSeriesDataset(Dataset):
         normalize: bool = True,
         scale: bool = True,
         overrides: Dict[str, Any] = {},
+        skip_heavy_processing: bool = False,
+        size: int = None,
+        categorical_time_series: Dict[str, int] = None,
+        force_retrain_normalizer: bool = False,
+        run_dir: Any = None,
     ):
         # Initialize basic attributes
-        self.time_series_column_names = (
-            time_series_column_names
-            if isinstance(time_series_column_names, list)
-            else [time_series_column_names]
-        )
-        self.time_series_dims = len(self.time_series_column_names)
+        # Handle OmegaConf ListConfig objects
+        if not isinstance(time_series_column_names, list):
+            time_series_column_names = list(time_series_column_names)
+        if isinstance(context_var_column_names, ListConfig):
+            context_var_column_names = list(context_var_column_names)
+
+        self.time_series_column_names = time_series_column_names
+        self.time_series_dims = self.cfg.time_series_dims
         self.context_vars = context_var_column_names or []
         self.seq_len = seq_len
 
         # Load dataset-level config if not already set
         if not hasattr(self, "cfg"):
-            with initialize_config_dir(
-                config_dir=os.path.join(ROOT_DIR, "config", "dataset"),
-                version_base=None,
-            ):
-                overrides = [
-                    f"seq_len={seq_len}",
-                    f"time_series_dims={len(self.time_series_column_names)}",
-                ]
-                cfg = compose(config_name="default", overrides=overrides)
-                cfg.time_series_columns = self.time_series_column_names
-                self.numeric_context_bins = cfg.numeric_context_bins
-                context_vars = self._get_context_var_dict(data)
-                cfg.context_vars = context_vars
-                self.cfg = cfg
+            cfg = load_yaml(os.path.join(ROOT_DIR, "config", "dataset", "default.yaml"))
+            # dynamic overrides for required fields
+            dyn = [
+                f"seq_len={seq_len}",
+                f"time_series_dims={len(self.time_series_column_names)}",
+            ]
+            cfg = apply_overrides(cfg, dyn)
+            cfg.time_series_columns = self.time_series_column_names
+            self.numeric_context_bins = cfg.numeric_context_bins
+            self.cfg = cfg
 
+        self.context_var_dict = self.cfg.context_vars
+        self.numeric_cols = [k for k, v in self.cfg.context_vars.items() if v[0] == "categorical" and v[1] is None]
         self.numeric_context_bins = self.cfg.numeric_context_bins
-        if not hasattr(self, "threshold"):
-            self.threshold = (-self.cfg.threshold, self.cfg.threshold)
+
+        for k in self.numeric_cols:
+            self.context_var_dict[k] = ["categorical", self.numeric_context_bins]
+
         if not hasattr(self, "name"):
             self.name = "custom"
 
+        # Split context vars into static and dynamic once (no future re-splits)
+        self.continuous_vars = [k for k, v in self.cfg.context_vars.items() if v[0] == "continuous"]
+        categorical_vars = [k for k, v in self.cfg.context_vars.items() if v[0] == "categorical"]
+        self.dynamic_context_vars = [k for k, v in self.cfg.context_vars.items() if v[0] == "time_series"]
+        self.static_context_vars = categorical_vars + self.continuous_vars
+
         self.normalize = normalize
         self.scale = scale
+        self.force_retrain_normalizer = force_retrain_normalizer
+        self.run_dir = Path(run_dir) if run_dir is not None else None
 
-        if self.scale:
-            assert self.normalize, "Normalization must be enabled if scaling is enabled"
+        # Store categorical time series info
+        self.categorical_time_series = categorical_time_series or {}
 
         # Preprocess and optionally encode context
         self.data = self._preprocess_data(data)
+
+        if self.continuous_vars:
+            self._normalize_continuous_vars()
+
+        if size is not None:
+            self.data = self.data.sample(size)
+            print(f"Sampled {size} rows from dataset")
         if self.context_vars:
             self.data, self.context_var_codes = self._encode_context_vars(self.data)
         self._save_context_var_codes()
 
+
+        self.context_cfg = get_context_config()
+        self.dynamic_module_type = self.context_cfg.dynamic_context.type
+        self.static_module_type = getattr(self.context_cfg.normalizer, "context_type", "mlp")
+        self.stats_head_type = self.context_cfg.normalizer.stats_head_type
+
+        is_ddp_subprocess = self._is_ddp_subprocess()
         if self.normalize:
             self._init_normalizer()
-            self.data = self._normalizer.transform(self.data)
-
+            cache_path = self._get_normalization_cache_path()
+            if cache_path.exists():
+                print(f"[{'DDP Subprocess' if is_ddp_subprocess else 'Main Process'}] Loading pre-normalized data from cache", cache_path)
+                with open(cache_path, 'rb') as f:
+                    self.data = pickle.load(f)
+            else:
+                # Normalize (only main process or if cache doesn't exist)
+                if not is_ddp_subprocess:
+                    print("[Main Process] Normalizing data...")
+                self.data = self._normalizer.transform(self.data)
+                # Save to cache for subprocesses (only main process)
+                if not is_ddp_subprocess:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(cache_path, 'wb') as f:
+                        pickle.dump(self.data, f)
+                    print(f"[Main Process] Cached normalized data for subprocesses")
         self.data = self.merge_timeseries_columns(self.data)
         self.data = self.data.reset_index()
-        self.data = self.get_frequency_based_rarity()
-        self.data = self.get_clustering_based_rarity()
-        self.data = self.get_combined_rarity()
 
+        # Check if we should skip heavy processing for DDP
+        if is_ddp_subprocess and skip_heavy_processing:
+            print("skipped rarity computation for DDP compatibility")
+            cache_path = self._get_rarity_cache_path()
+            if self._load_rarity_cache(cache_path):
+                self._rarity_computed = True
+        else:
+            print("Computing rarity features...")
+            self.data = self.get_frequency_based_rarity()
+            self.data = self.get_clustering_based_rarity()
+            self.data = self.get_combined_rarity()
+            rarity_cache_path = self._get_rarity_cache_path()
+            self._save_rarity_cache(rarity_cache_path)
+            self._rarity_computed = True
     @abstractmethod
     def _preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
         """
@@ -137,20 +193,52 @@ class TimeSeriesDataset(Dataset):
             idx (int): Sample index.
 
         Returns:
-            Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+            Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
                 - timeseries: Tensor of shape (seq_len, dims).
-                - context_vars: Dict of context variable tensors.
+                - static_context_vars: Dict of static context tensors (categorical long, continuous float).
+                - dynamic_context_vars: Dict of dynamic (time_series) context tensors.
         """
         sample = self.data.iloc[idx]
         timeseries = torch.tensor(sample["timeseries"], dtype=torch.float32)
-        context_vars_dict = {
-            var: torch.tensor(sample[var], dtype=torch.long)
-            for var in self.context_vars
-        }
-        return timeseries, context_vars_dict
+
+        static_context_vars_dict = {}
+        for var in self.static_context_vars:
+            if var in self.continuous_vars:
+                val = sample[var]
+                if isinstance(val, (float, int)) and (not isinstance(val, bool) and (np.isnan(val) or np.isinf(val))):
+                    raise ValueError(
+                        f"NaN/Inf detected in continuous variable '{var}' in dataset at index {idx}. "
+                        f"Value: {val}. This should not happen if normalization was done correctly."
+                    )
+                static_context_vars_dict[var] = torch.tensor(val, dtype=torch.float32)
+            else:
+                static_context_vars_dict[var] = torch.tensor(sample[var], dtype=torch.long)
+
+        dynamic_context_vars_dict = {}
+        for var in self.dynamic_context_vars:
+            arr = np.asarray(sample[var])
+            if var in self.categorical_time_series:
+                dynamic_context_vars_dict[var] = torch.from_numpy(arr).long()
+            else:
+                dynamic_context_vars_dict[var] = torch.from_numpy(arr).float()
+
+        return timeseries, static_context_vars_dict, dynamic_context_vars_dict
+
+    def __getstate__(self):
+        """
+        Make the dataset picklable for DataLoader worker processes by dropping
+        non-picklable attributes (e.g., attached Lightning normalizer module).
+
+        Note: Training workers only need access to the preprocessed `self.data`.
+        The normalizer is not used during batching, so it is safe to omit here.
+        """
+        state = self.__dict__.copy()
+        if state.get("_normalizer", None) is not None:
+            state["_normalizer"] = None
+        return state
 
     def get_train_dataloader(
-        self, batch_size: int, shuffle: bool = True, num_workers: int = 4
+        self, batch_size: int, shuffle: bool = True, num_workers: int = 8, persistent_workers: bool = True
     ) -> DataLoader:
         """
         Create a PyTorch DataLoader for training.
@@ -159,12 +247,15 @@ class TimeSeriesDataset(Dataset):
             batch_size (int): Batch size.
             shuffle (bool): Whether to shuffle the data.
             num_workers (int): Number of worker processes.
+            persistent_workers (bool): Whether to keep workers alive between epochs.
 
         Returns:
             DataLoader: Configured data loader.
         """
+
+        self._normalize_continuous_vars()
         return DataLoader(
-            self, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers
+            self, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, persistent_workers=persistent_workers
         )
 
     def split_timeseries(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -220,6 +311,12 @@ class TimeSeriesDataset(Dataset):
                         raise ValueError("Incorrect array shape.")
                 else:
                     raise ValueError("Array must have 2 dims.")
+        
+        # For categorical time series, ensure they remain as integers
+        for col in self.time_series_column_names:
+            if col in self.categorical_time_series:
+                df[col] = df[col].apply(lambda x: x.astype(np.int32))
+        
         df["timeseries"] = df.apply(
             lambda r: np.hstack([r[c] for c in self.time_series_column_names]), axis=1
         )
@@ -244,11 +341,24 @@ class TimeSeriesDataset(Dataset):
         df = self._normalizer.inverse_transform(df)
         return self.merge_timeseries_columns(df) if merged else df
 
+    def apply_pretrained_normalizer(self) -> None:
+        """
+        Transform self.data with the attached pretrained normalizer (e.g. after
+        dataset._normalizer = data_generator.normalizer). Use when normalize=False
+        was set to avoid training but you still want real data in normalized space.
+        """
+        if getattr(self, "_normalizer", None) is None:
+            return
+        df_split = self.split_timeseries(self.data.copy())
+        self.data = self.merge_timeseries_columns(self._normalizer.transform(df_split))
+        self.data = self.data.reset_index(drop=True)
+
     def _encode_context_vars(
         self, data: pd.DataFrame
     ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
         """
         Encode and bin numeric or categorical context variables.
+        Continuous variables are kept as-is.
 
         Args:
             data (pd.DataFrame): Input DataFrame.
@@ -256,11 +366,55 @@ class TimeSeriesDataset(Dataset):
         Returns:
             Tuple of encoded DataFrame and mapping codes.
         """
-        return encode_context_variables(
+        encoded_data, mapping = encode_context_variables(
             data=data,
             columns_to_encode=self.context_vars,
             bins=self.numeric_context_bins,
+            numeric_cols=self.numeric_cols,
+            continuous_vars=self.continuous_vars,
+            time_series_cols=self.dynamic_context_vars,
+            categorical_time_series=self.categorical_time_series,
         )
+        
+        return encoded_data, mapping
+
+    def _normalize_continuous_vars(self):
+        """
+        Normalize continuous context variables in the dataset using z-score normalization.
+        This is done once during dataset initialization, so models receive pre-normalized values.
+        """
+        if not self.continuous_vars:
+            return
+        
+        # Store stats for potential inverse transform if needed
+        self.continuous_var_stats = {}
+        
+        for var_name in self.continuous_vars:
+            if var_name in self.data.columns:
+                values = self.data[var_name]
+                # Compute mean and std
+                mean_val = float(values.mean())
+                std_val = float(values.std())
+                
+                # Avoid zero std
+                if std_val < 1e-8:
+                    std_val = 1.0
+                    print(f"[Dataset] Warning: {var_name} has zero std, using std=1.0")
+                
+                # Store stats for reference and for sampling in original range
+                self.continuous_var_stats[var_name] = {
+                    'mean': mean_val,
+                    'std': std_val,
+                    'min': float(values.min()),
+                    'max': float(values.max()),
+                }
+                
+                # Normalize the values in-place: (x - mean) / std
+                self.data[var_name] = (values - mean_val) / std_val
+                
+                print(f"[Dataset] Normalized {var_name}: mean={mean_val:.4f}, std={std_val:.4f}")
+            else:
+                print(f"[Dataset] Warning: Continuous variable {var_name} not found in data columns")
 
     def _get_context_var_dict(self, data: pd.DataFrame) -> Dict[str, int]:
         """
@@ -273,8 +427,9 @@ class TimeSeriesDataset(Dataset):
             dict: {var_name: num_categories}
         """
         context_dict = {}
+        numeric_cols = getattr(self.cfg, 'numeric_cols', [])
         for var in self.context_vars:
-            if pd.api.types.is_numeric_dtype(data[var]):
+            if var in numeric_cols:
                 binned = pd.cut(
                     data[var], bins=self.numeric_context_bins, include_lowest=True
                 )
@@ -309,8 +464,21 @@ class TimeSeriesDataset(Dataset):
             dict: Random context index tensors.
         """
         ctx = {}
-        for var, n in self._get_context_var_dict(self.data).items():
-            ctx[var] = torch.randint(0, n, (), dtype=torch.long)
+        
+        for var, info in self.context_var_dict.items():
+            if info[0] == "categorical":
+                ctx[var] = torch.randint(0, info[1], (), dtype=torch.long)
+            elif info[0] == "continuous":
+                # Sample from original [min, max] then z-score to match training data
+                stats = getattr(self, "continuous_var_stats", {}).get(var)
+                if stats is not None and "min" in stats and "max" in stats:
+                    x_raw = np.random.uniform(stats["min"], stats["max"])
+                    x_norm = (x_raw - stats["mean"]) / stats["std"]
+                    ctx[var] = torch.tensor(x_norm, dtype=torch.float32)
+                else:
+                    raise ValueError(f"Continuous variable {var} has no stats")
+            else:
+                raise ValueError(f"Invalid context variable type: {info[0]}")
         return ctx
 
     def get_context_var_combination_rarities(
@@ -338,12 +506,19 @@ class TimeSeriesDataset(Dataset):
         Returns:
             pd.DataFrame: DataFrame with 'is_frequency_rare' column.
         """
-        freq = self.data.groupby(self.context_vars).size().reset_index(name="count")
+        # Continuous vars are floats (e.g. UTM coordinates) — grouping by them would create
+        # one group per unique value, making rarity meaningless. Use only discrete vars.
+        continuous = set(getattr(self, "continuous_vars", []))
+        groupby_vars = [v for v in self.context_vars if v not in continuous]
+        if not groupby_vars:
+            self.data["is_frequency_rare"] = False
+            return self.data
+        freq = self.data.groupby(groupby_vars).size().reset_index(name="count")
         threshold = freq["count"].quantile(0.1)
         freq["is_frequency_rare"] = freq["count"] < threshold
         self.data = self.data.merge(
-            freq[self.context_vars + ["is_frequency_rare"]],
-            on=self.context_vars,
+            freq[groupby_vars + ["is_frequency_rare"]],
+            on=groupby_vars,
             how="left",
         )
         return self.data
@@ -406,6 +581,94 @@ class TimeSeriesDataset(Dataset):
         )
         return self.data
 
+    def _ensure_rarity_computed(self):
+        """
+        Compute rarity features lazily to avoid DDP issues.
+        """
+        if not self._rarity_computed:
+            cache_path = self._get_rarity_cache_path()
+            if self._load_rarity_cache(cache_path):
+                self._rarity_computed = True
+            else:
+                self.data = self.get_frequency_based_rarity()
+                self.data = self.get_clustering_based_rarity()
+                self.data = self.get_combined_rarity()
+                self._save_rarity_cache(cache_path)
+                self._rarity_computed = True
+
+    def _get_rarity_cache_path(self) -> str:
+        """Get cache file path for rarity features."""
+        import hashlib
+        context_cfg = get_context_config()
+        context_module_type = context_cfg.static_context.type
+        cache_key = f"{self.name}_{len(self.data)}_{self.seq_len}_{str(sorted(self.context_vars))}_{context_module_type or ''}"
+        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
+        if self.run_dir is not None:
+            cache_dir = self.run_dir / "cache" / "rarity"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            return str(cache_dir / f"rarity_{cache_hash}.pkl")
+        cache_dir = os.path.join(ROOT_DIR, "cache", "rarity")
+        os.makedirs(cache_dir, exist_ok=True)
+        return os.path.join(cache_dir, f"rarity_{cache_hash}.pkl")
+    
+    def _get_normalization_cache_path(self):
+        """Get cache file path for normalized data."""
+        import hashlib
+        from pathlib import Path
+        context_cfg = get_context_config()
+        context_module_type = context_cfg.dynamic_context.type
+        stats_head_type = context_cfg.normalizer.stats_head_type
+        cache_key = f"{self.name}_{len(self.data)}_{self.seq_len}_{self.normalize}_{self.scale}_{context_module_type or ''}_{stats_head_type or ''}"
+        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
+        if self.run_dir is not None:
+            cache_dir = self.run_dir / "cache" / "normalized_data"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            return cache_dir / f"normalized_{cache_hash}.pkl"
+        cache_dir = Path(ROOT_DIR) / "cache" / "normalized_data"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / f"normalized_{cache_hash}.pkl"
+
+    def _save_rarity_cache(self, cache_path: str) -> None:
+        """Save rarity features to cache."""
+        import pickle
+        rarity_data = {
+            'is_frequency_rare': self.data.get('is_frequency_rare'),
+            'is_pattern_rare': self.data.get('is_pattern_rare'),
+            'is_rare': self.data.get('is_rare'),
+            'cluster': self.data.get('cluster')
+        }
+        with open(cache_path, 'wb') as f:
+            pickle.dump(rarity_data, f)
+        print(f"Saved rarity cache to {cache_path}")
+
+    def _load_rarity_cache(self, cache_path: str) -> bool:
+        """Load rarity features from cache."""
+        import pickle
+        if not os.path.exists(cache_path):
+            return False
+        try:
+            with open(cache_path, 'rb') as f:
+                rarity_data = pickle.load(f)
+            for col, data in rarity_data.items():
+                if data is not None:
+                    self.data[col] = data
+            return True
+        except Exception as e:
+            print(f"Failed to load rarity cache: {e}")
+            return False
+
+    def _is_ddp_subprocess(self) -> bool:
+        """Detect if we're running in a DDP subprocess."""
+        import os
+        # Check for DDP-related environment variables
+        ddp_indicators = [
+            'LOCAL_RANK' in os.environ,
+            'WORLD_SIZE' in os.environ,
+            'RANK' in os.environ,
+            os.environ.get('CUDA_VISIBLE_DEVICES', '').count(',') > 0,  # Multiple GPUs
+        ]
+        return any(ddp_indicators)
+
     def _init_normalizer(self) -> None:
         """
         Initialize or load a cached Normalizer for this dataset.
@@ -413,23 +676,43 @@ class TimeSeriesDataset(Dataset):
         On first run, trains a new Normalizer and writes a single state dict to cache.
         On subsequent runs, loads that file. If loading fails, deletes the corrupted cache and retrains.
         """
-        normalizer_dir = (
-            Path.home() / ".cache" / "cents" / "checkpoints" / self.name / "normalizer"
-        )
+        if self.run_dir is not None:
+            normalizer_dir = self.run_dir / "normalizer"
+        else:
+            normalizer_dir = (
+                Path.home() / ".cache" / "cents" / "checkpoints" / self.name / "normalizer"
+            )
         normalizer_dir.mkdir(parents=True, exist_ok=True)
-        cache_path = normalizer_dir / _ckpt_name(
-            self.name, "normalizer", self.time_series_dims
-        )
 
         ncfg = get_normalizer_training_config()
+        if hasattr(self.cfg, "normalizer_use_global_stats_preprocessing"):
+            ncfg = OmegaConf.merge(
+                ncfg,
+                OmegaConf.create({"use_global_stats_preprocessing": self.cfg.normalizer_use_global_stats_preprocessing}),
+            )
+        use_global = ncfg.get("use_global_stats_preprocessing", True)
+
+        cache_path = normalizer_dir / _ckpt_name(
+            self.name,
+            "normalizer",
+            self.time_series_dims,
+            static_module_type=self.static_module_type,
+            stats_head_type=self.stats_head_type,
+            dynamic_module_type=self.dynamic_module_type,
+            use_global_stats_preprocessing=use_global,
+        )
+
+        print(f"[Cents] cache_path: {cache_path}")
+
         self._normalizer = Normalizer(
             dataset_cfg=self.cfg,
             normalizer_training_cfg=ncfg,
             dataset=self,
+            context_cfg=self.context_cfg,
         )
 
-        # attempt to load existing state dict
-        if cache_path.exists():
+        # attempt to load existing state dict (unless force_retrain_normalizer is True)
+        if cache_path.exists() and not self.force_retrain_normalizer:
             try:
                 state = torch.load(cache_path, map_location="cpu")
                 sd = state.get("state_dict", state)
@@ -442,9 +725,12 @@ class TimeSeriesDataset(Dataset):
                     cache_path.unlink()
                 except OSError:
                     pass
+        elif self.force_retrain_normalizer and cache_path.exists():
+            print(f"[Cents] Force retrain enabled, ignoring cached normalizer at {cache_path}")
 
         # train and cache a single state dict
         print("[Cents] Training normalizer…")
+        print(f"[Cents] devices: {ncfg.devices}")
         trainer = pl.Trainer(
             max_epochs=ncfg.n_epochs,
             accelerator=ncfg.accelerator,

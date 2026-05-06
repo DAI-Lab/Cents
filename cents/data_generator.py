@@ -7,8 +7,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import pytorch_lightning as pl
 import torch
 from huggingface_hub import hf_hub_download
-from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig, ListConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 import cents.models
 from cents.datasets.utils import convert_generated_data_to_df
@@ -18,7 +17,9 @@ from cents.utils.utils import (
     get_device,
     get_normalizer_training_config,
     parse_dims_from_name,
+    get_context_config,
 )
+from cents.utils.config_loader import load_yaml, apply_overrides
 
 PKG_ROOT = Path(__file__).resolve().parent
 CONF_DIR = PKG_ROOT / "config"
@@ -46,16 +47,18 @@ class DataGenerator:
 
     def __init__(
         self,
-        model_name: str,
+        model_name: str = None,
+        model_type: str = None,
         device: str = None,
         cfg: DictConfig = None,
+        dataset = None,
         model: Optional[pl.LightningModule] = None,
         normalizer: Optional[Normalizer] = None,
     ):
         self.device = get_device(device)
         self.cfg = cfg
         self._ctx_buff: Dict[str, torch.Tensor] = {}
-
+        self.dataset = dataset
         if model is not None:
             self.model = model.to(self.device).eval()
             self.normalizer = normalizer
@@ -71,28 +74,40 @@ class DataGenerator:
             self.model = None
             self.normalizer = None
             self.load_pretrained(model_name)
+        elif model_type is not None:
+            # Init without loading - user will call load_from_checkpoint separately
+            self.model_type = model_type
+            self.model = None
+            self.normalizer = None
+            if dataset is not None:
+                self.cfg = cfg or OmegaConf.create({})
+                if not hasattr(self.cfg, 'dataset'):
+                    self.cfg.dataset = dataset.cfg
+                if not hasattr(self.cfg, 'model'):
+                    self.cfg.model = load_yaml(CONF_DIR / "model" / f"{model_type}.yaml")
+                self.set_dataset_spec(
+                    self.cfg.dataset, self._read_ctx_codes(self.cfg.dataset.name)
+                )
         else:
-            raise ValueError("Must provide either model_name or model instance.")
+            raise ValueError("Must provide either model_name, model_type, or model instance.")
 
     def _default_cfg(self) -> DictConfig:
         """
-        Load the default Hydra config for this model_name.
-
-        Returns:
-            Composed DictConfig from 'config/config.yaml'.
+        Build a minimal default config (model + dataset) without Hydra.
         """
-        # Extract dimensions from model name
         dims = parse_dims_from_name(self.model_name)
         time_series_dims = int(dims)
 
-        with initialize_config_dir(str(CONF_DIR), version_base=None):
-            return compose(
-                config_name="config",
-                overrides=[
-                    f"model={self.model_type}",
-                    f"dataset.time_series_dims={time_series_dims}",
-                ],
-            )
+        model_cfg = load_yaml(CONF_DIR / "model" / f"{self.model_type}.yaml")
+        dataset_cfg = load_yaml(CONF_DIR / "dataset" / "default.yaml")
+        dataset_cfg = apply_overrides(
+            dataset_cfg, [f"time_series_dims={time_series_dims}"]
+        )
+
+        cfg = OmegaConf.create({})
+        cfg.model = model_cfg
+        cfg.dataset = dataset_cfg
+        return cfg
 
     def set_dataset_spec(
         self, dataset_cfg: DictConfig, ctx_codes: Dict[str, Dict[int, str]]
@@ -107,13 +122,15 @@ class DataGenerator:
         self.cfg.dataset = dataset_cfg
         self.ctx_code_book = ctx_codes
 
-    def set_context(self, auto_fill_missing: bool = False, **context_vars: int):
+    def set_context(self, auto_fill_missing: bool = False, **context_vars: Union[int, float]):
         """
         Define a context vector for subsequent generation calls.
 
         Args:
             auto_fill_missing: If True, randomly sample missing context variables.
             **context_vars: Named codes for each context variable.
+                For categorical variables: integer codes (int).
+                For continuous variables: float values (float).
 
         Raises:
             RuntimeError: If dataset spec has not been set.
@@ -125,33 +142,46 @@ class DataGenerator:
             )
 
         required = self.cfg.dataset.context_vars
+        continuous_vars = getattr(self.cfg.dataset, "continuous_context_vars", None) or []
         if auto_fill_missing:
             for var, n in required.items():
-                context_vars.setdefault(var, random.randrange(n))
-        else:
+                if var in continuous_vars:
+                    # For continuous variables, sample from a reasonable range
+                    # This is a simple default - users should provide actual values
+                    context_vars[var] = random.uniform(0.0, 1.0)
+                else:
+                    context_vars.setdefault(var, random.randrange(n))
+        elif context_vars:
             missing = set(required) - set(context_vars)
             if missing:
                 raise ValueError(f"Missing context vars: {missing}")
 
+        self._ctx_buff = {}
         for var, code in context_vars.items():
-            max_cat = self.cfg.dataset.context_vars[var]
-            if not (0 <= code < max_cat):
-                raise ValueError(
-                    f"Context '{var}' must be in [0, {max_cat}); got {code}."
-                )
-
-        self._ctx_buff = {
-            var: torch.tensor(code, device=self.device)
-            for var, code in context_vars.items()
-        }
+            if var in continuous_vars:
+                # Continuous variables: use float tensor (no validation needed)
+                self._ctx_buff[var] = torch.tensor(code, dtype=torch.float32, device=self.device)
+            else:
+                # Categorical variables: validate and use long tensor
+                if var in required:
+                    max_cat = required[var]
+                    if not (0 <= code < max_cat):
+                        raise ValueError(
+                            f"Context '{var}' must be in [0, {max_cat}); got {code}."
+                        )
+                self._ctx_buff[var] = torch.tensor(code, dtype=torch.long, device=self.device)
 
     @torch.no_grad()
-    def generate(self, n: int = 128) -> "pd.DataFrame":
+    def generate(self, n: int = 128, stochastic_round: bool = False) -> "pd.DataFrame":
         """
         Produce n synthetic samples under the previously set context.
 
         Args:
             n: Number of samples to generate.
+            stochastic_round: If True, round output to non-negative integers using
+                stochastic rounding (floor + bernoulli on fractional part). Applied
+                after inverse_transform so normalizer stats are unaffected. Useful
+                for count-valued datasets (e.g. Walmart unit sales).
 
         Returns:
             DataFrame with context columns + 'timeseries'.
@@ -163,13 +193,24 @@ class DataGenerator:
             raise RuntimeError(
                 "No model loaded. Call `load_from_checkpoint(...)` first."
             )
-        if not self._ctx_buff:
-            raise RuntimeError("No context set – call `set_context()` first.")
 
         ctx_batch = {k: v.repeat(n) for k, v in self._ctx_buff.items()}
-        ts = self.model.generate(ctx_batch)
+        ts = self.model.generate(ctx_batch, n=n)
         df = convert_generated_data_to_df(ts, self._ctx_buff, decode=False)
-        return self.normalizer.inverse_transform(df) if self.normalizer else df
+        df = self.normalizer.inverse_transform(df) if self.normalizer else df
+
+        if stochastic_round:
+            import numpy as np
+
+            def _stochastic_round(x):
+                x = np.clip(x, 0, None)
+                floor = np.floor(x).astype(int)
+                frac = x - floor
+                return floor + (np.random.random(x.shape) < frac).astype(int)
+
+            df["timeseries"] = df["timeseries"].apply(_stochastic_round)
+
+        return df
 
     def load_from_checkpoint(
         self,
@@ -195,7 +236,9 @@ class DataGenerator:
         ckpt_path, state = self._resolve_ckpt(model_ckpt)
         ModelCls = get_model_cls(self.model_type)
 
+
         if ckpt_path.suffix == ".ckpt":
+            print(f"[Cents] Loading model from checkpoint: {ckpt_path}")
             self.model = (
                 ModelCls.load_from_checkpoint(
                     cfg=self.cfg,
@@ -217,7 +260,8 @@ class DataGenerator:
             self.normalizer = Normalizer(
                 dataset_cfg=self.cfg.dataset,
                 normalizer_training_cfg=get_normalizer_training_config(),
-                dataset=None,
+                dataset=self.dataset,
+                context_cfg=get_context_config(),
             )
             state = torch.load(normalizer_ckpt, map_location=device)
             sd = state.get("state_dict", state)

@@ -2,23 +2,31 @@ precision: "16-mixed"
 accelerator: auto
 devices: auto
 strategy: ddp_find_unused_parameters_true
-gradient_accumulate_every: 2
+gradient_accumulate_every: 4
 log_every_n_steps: 1
-batch_size: 1024
+batch_size: 512
 max_epochs: 5000
 base_lr: 1e-4
+warmup_epochs: 100        # linear warmup from 1% to 100% of base_lr over first N epochs
 eval_after_training: False
 
 checkpoint:
-  save_last: False
-  save_top_k: 0
+  save_last: True       # Save final model
+  save_top_k: 0         # 0 = only periodic saves; use >0 to also save top-k by metric
   every_n_train_steps: null
-  every_n_epochs: null
+  every_n_epochs: 250   # Save a distinct checkpoint every 250 epochs (250, 500, 750, ...)
 
 lr_scheduler_params:
   factor: 0.5
   patience: 200
-  min_lr: 1.0e-5
+  min_lr: 1.0e-6
   threshold: 1.0e-1
   threshold_mode: rel
   verbose: false
+
+intermediate_fid:
+  enabled: True
+  every_n_epochs: 20    # check context-FID every N epochs
+  n_samples: 3500       # number of samples to generate (subsample of dataset)
+  fast_timesteps: 50    # DDIM steps to use (vs 200 default) for speed
+  top_k: 3              # keep top-k FID checkpoints + their neighbors

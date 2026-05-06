@@ -11,6 +11,9 @@ n_steps: 1000
 sampling_timesteps: 1000
 sampling_batch_size: 1
 loss_type: l1 #l2
+training_objective: x0
+loss_weighting: min_snr
+min_snr_gamma: 5.0
 beta_schedule: cosine #linear
 n_heads: 4
 mlp_hidden_times: 4
