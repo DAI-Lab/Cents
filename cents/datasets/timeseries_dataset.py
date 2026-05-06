@@ -66,7 +66,7 @@ class TimeSeriesDataset(Dataset):
             context_var_column_names = list(context_var_column_names)
 
         self.time_series_column_names = time_series_column_names
-        self.time_series_dims = self.cfg.time_series_dims
+        self.time_series_dims = len(time_series_column_names)
         self.context_vars = context_var_column_names or []
         self.seq_len = seq_len
 
@@ -618,7 +618,15 @@ class TimeSeriesDataset(Dataset):
         context_cfg = get_context_config()
         context_module_type = context_cfg.dynamic_context.type
         stats_head_type = context_cfg.normalizer.stats_head_type
-        cache_key = f"{self.name}_{len(self.data)}_{self.seq_len}_{self.normalize}_{self.scale}_{context_module_type or ''}_{stats_head_type or ''}"
+        try:
+            ts_parts = []
+            for col in self.time_series_column_names:
+                ts_parts.extend(np.asarray(arr, dtype=np.float32).flatten() for arr in self.data[col].values)
+            ts_bytes = np.concatenate(ts_parts).tobytes() if ts_parts else b""
+            data_hash = hashlib.md5(ts_bytes).hexdigest()[:8]
+        except Exception:
+            data_hash = "nohash"
+        cache_key = f"{self.name}_{len(self.data)}_{self.seq_len}_{self.normalize}_{self.scale}_{self.time_series_dims}_{context_module_type or ''}_{stats_head_type or ''}_{data_hash}"
         cache_hash = hashlib.md5(cache_key.encode()).hexdigest()[:8]
         if self.run_dir is not None:
             cache_dir = self.run_dir / "cache" / "normalized_data"
@@ -727,6 +735,14 @@ class TimeSeriesDataset(Dataset):
                     pass
         elif self.force_retrain_normalizer and cache_path.exists():
             print(f"[Cents] Force retrain enabled, ignoring cached normalizer at {cache_path}")
+
+        # Unconditional normalizer: no model to train, just compute global stats from data
+        if self._normalizer.normalizer_model is None:
+            print("[Cents] Unconditional normalizer: computing global statistics (no model training).")
+            self._normalizer.setup()
+            torch.save(self._normalizer.state_dict(), cache_path)
+            print(f"[Cents] Saved normalizer to {cache_path}")
+            return
 
         # train and cache a single state dict
         print("[Cents] Training normalizer…")

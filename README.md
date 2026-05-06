@@ -39,7 +39,7 @@ poetry install
 Once installed, activate the virtual environment:
 
 ```bash
-poetry shell
+poetry env activate
 ```
 
 This gives you a clean, reproducible setup for development.

@@ -59,7 +59,7 @@ class Generator(nn.Module):
         self.base_channels = base_channels
 
         self.context_vars = context_vars
-        self.context_module = get_context_module_cls(context_module_type)(context_vars, embedding_dim, continuous_vars=continuous_vars)
+        self.context_module = get_context_module_cls(context_module_type)(context_vars, embedding_dim)
 
         in_dim = noise_dim + (embedding_dim if context_vars else 0)
         self.fc = nn.Linear(in_dim, self.final_window_length * base_channels)

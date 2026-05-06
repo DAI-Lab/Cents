@@ -492,13 +492,13 @@ class Evaluator:
         real_data_subset = dataset.data.iloc[indices].reset_index(drop=True)
         continuous_vars = getattr(dataset, "continuous_vars", [])
         static_context_vars = {}
-        for name in dataset.static_context_vars:
+        for name in getattr(dataset, "static_context_vars", []):
             vals = real_data_subset[name].values
             dtype = torch.float32 if name in continuous_vars else torch.long
             static_context_vars[name] = torch.tensor(vals, dtype=dtype, device=self.device)
         dynamic_context_vars = {}
         categorical_ts = getattr(dataset, "categorical_time_series", {})
-        for name in dataset.dynamic_context_vars:
+        for name in getattr(dataset, "dynamic_context_vars", []):
             vals = real_data_subset[name].values
             # Dynamic module expects tensors (training path uses torch.from_numpy in dataset __getitem__)
             if len(vals) and hasattr(vals[0], "__len__") and not isinstance(vals[0], (str, bytes)):

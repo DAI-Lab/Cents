@@ -148,7 +148,7 @@ class _NormalizerModule(nn.Module):
 
     def forward(self, static_context_vars_dict: dict = None, dynamic_context_vars_dict: dict = None):
         embeddings = []
-        
+
         # Process static context variables
         if self.static_cond_module is not None:
             if static_context_vars_dict:
@@ -159,7 +159,7 @@ class _NormalizerModule(nn.Module):
                 }
                 static_embedding, _ = self.static_cond_module(static_context_vars_dict)
                 embeddings.append(static_embedding)
-        
+
         # Process dynamic context variables
         if self.dynamic_cond_module is not None:
             if dynamic_context_vars_dict:
@@ -172,7 +172,7 @@ class _NormalizerModule(nn.Module):
                 if torch.isnan(dynamic_embedding).any() or torch.isinf(dynamic_embedding).any():
                     raise ValueError(f"NaN/Inf detected in dynamic embedding.")
                 embeddings.append(dynamic_embedding)
-        
+
         # Combine embeddings
         if len(embeddings) == 2:
             combined = torch.cat(embeddings, dim=1)
@@ -181,7 +181,7 @@ class _NormalizerModule(nn.Module):
             embedding = embeddings[0]
         else:
             raise ValueError("No context variables provided")
-        
+
         return self.stats_head(embedding)
 
 
@@ -291,31 +291,39 @@ class Normalizer(NormalizerModel):
                 seq_len=dynamic_seq_len,
             )
         
-        self.normalizer_model = _NormalizerModule(
-            static_cond_module=self.static_context_module,
-            dynamic_cond_module=self.dynamic_context_module,
-            hidden_dim=512,
-            time_series_dims=self.time_series_dims,
-            do_scale=self.do_scale,
-            stats_head_type=self.stats_head_type,
-            n_layers=context_cfg.normalizer.n_layers,
-        )
+        has_context = bool(self.static_context_module or self.dynamic_context_module)
+        if has_context:
+            self.normalizer_model = _NormalizerModule(
+                static_cond_module=self.static_context_module,
+                dynamic_cond_module=self.dynamic_context_module,
+                hidden_dim=512,
+                time_series_dims=self.time_series_dims,
+                do_scale=self.do_scale,
+                stats_head_type=self.stats_head_type,
+                n_layers=context_cfg.normalizer.n_layers,
+            )
+        else:
+            self.normalizer_model = None
 
         # Will be populated in setup()
         self.sample_stats = []
         self._verify_parameters()
 
     def _verify_parameters(self):
+        if self.normalizer_model is None:
+            print("[Normalizer] Unconditional mode: no context vars, will use global statistics only.")
+            return
+
         all_param_names = [name for name, _ in self.named_parameters()]
         context_param_names = [name for name in all_param_names if 'cond_module' in name or 'context_module' in name]
         stats_head_param_names = [name for name in all_param_names if 'stats_head' in name]
-        
+
         if not context_param_names:
             raise RuntimeError(
                 "Context module parameters not found! "
                 f"Found parameter names: {all_param_names[:10]}..."
             )
-        
+
         print(f"[Normalizer] Found {len(context_param_names)} context module parameters")
         print(f"[Normalizer] Found {len(stats_head_param_names)} stats head parameters")
         print(f"[Normalizer] Total trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
@@ -383,6 +391,14 @@ class Normalizer(NormalizerModel):
         Returns:
             Tuple of (pred_mu_real, pred_sigma_real, pred_z_min, pred_z_max, pred_log_sigma_raw).
         """
+        if self.normalizer_model is None:
+            dev = self.global_mu_mean.device
+            mu = self.global_mu_mean.expand(1, self.time_series_dims).to(dev)
+            sigma = torch.exp(self.global_log_sigma_mean).clamp(min=self.min_sigma).expand(1, self.time_series_dims).to(dev)
+            zeros = torch.zeros(1, self.time_series_dims, device=dev)
+            log_sigma = self.global_log_sigma_mean.expand(1, self.time_series_dims).to(dev)
+            return mu, sigma, zeros, zeros, log_sigma
+
         pred_mu_raw, pred_sigma, pred_zmin, pred_zmax, pred_log_sigma_raw = self.normalizer_model(static_context_vars_dict, dynamic_context_vars_dict)
 
         pred_mu_real = self._raw_mu_to_real(pred_mu_raw)
