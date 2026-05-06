@@ -21,9 +21,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Poetry
-        run: |
-          curl -sSL https://install.python-poetry.org | python3 -
-          echo "${{ runner.tool_cache }}/.local/bin" >> $GITHUB_PATH
+        run: pip install poetry
 
       - name: Configure Poetry (disable virtualenv creation)
         run: poetry config virtualenvs.create false
